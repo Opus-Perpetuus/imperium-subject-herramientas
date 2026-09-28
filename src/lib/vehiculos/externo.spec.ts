@@ -40,4 +40,14 @@ describe("nombre_vehiculo", () => {
     const vacio = fake_fetch(200, { data: { name: "" } });
     expect(await nombre_vehiculo(ctx(), "veh1", "Snapshot", { env: ENV, fetchImpl: vacio.fetchImpl })).toBe("Snapshot");
   });
+
+  test("un gateway que no contesta se abandona a los 1.5 s, no a los 8 del cliente", async () => {
+    const colgado = ((_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_ok, fallo) => init?.signal?.addEventListener("abort", () => fallo(init.signal!.reason)))) as typeof fetch;
+    const t0 = performance.now();
+    expect(await nombre_vehiculo(ctx(), "veh1", "Snapshot", { env: ENV, fetchImpl: colgado })).toBe("Snapshot");
+    const ms = performance.now() - t0;
+    expect(ms).toBeGreaterThanOrEqual(1_400);
+    expect(ms).toBeLessThan(3_000);
+  });
 });

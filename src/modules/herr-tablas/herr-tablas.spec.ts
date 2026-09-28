@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+  MemoryKirletDataClient,
   create_kirlet_test_context,
   define_subject,
   validate_page_descriptor_renderable,
@@ -7,6 +8,7 @@ import {
   type NoxPageDescriptor,
   type NoxUiNode,
 } from "@opus-perpetuus/imperium-core-kit";
+import { LIMITE_FILAS } from "../../lib/comun.ts";
 import { herr_cierres_module } from "../herr-cierres/herr-cierres.routes.ts";
 import { herr_registros_module } from "../herr-registros/herr-registros.routes.ts";
 import { herr_tablas_module } from "./herr-tablas.routes.ts";
@@ -129,6 +131,14 @@ describe("esquema por CRUD", () => {
     expect(con_cambio.status).toBe(200);
     expect(con_cambio.data.version_esquema).toBe(2);
   });
+
+  test("created_by lo fija el servidor", async () => {
+    const creada = await call("POST", "/herr-tablas", { name: "Abonos", created_by: "intruso" });
+    expect(creada.status).toBe(201);
+    expect(creada.data.created_by).not.toBe("intruso");
+    const editada = await call("PATCH", `/herr-tablas/${creada.data.id}`, { created_by: "intruso" });
+    expect(editada.data.created_by).toBe(creada.data.created_by);
+  });
 });
 
 describe("registros", () => {
@@ -193,6 +203,88 @@ describe("registros", () => {
     const opciones = await call("GET", `/herr-registros?tabla_id=${tabla.id}&as=options`);
     expect(opciones.data.map((o: { label: string }) => o.label).sort()).toEqual(["2026-01-02", "2026-01-03"]);
     expect((await call("GET", "/herr-registros")).data.length).toBe(3);
+  });
+
+  test("los calculados de un registro cuentan al propio registro, como el resumen", async () => {
+    const tabla = await call("POST", "/herr-tablas", {
+      name: "Abonos",
+      campos: [
+        { clave: "pagado", etiqueta: "Abono", tipo: "dinero" },
+        { clave: "n", etiqueta: "N", tipo: "calculado", formula: "cuentasi(1)", decimales: 0 },
+        { clave: "acum", etiqueta: "Acumulado", tipo: "calculado", formula: "{suma:pagado}", decimales: 0 },
+      ],
+    });
+    const a = await call("POST", "/herr-registros", { tabla_id: tabla.data.id, valores: { pagado: "100" } });
+    expect(a.data.calculados).toEqual({ n: "1", acum: "100" });
+    const b = await call("POST", "/herr-registros", { tabla_id: tabla.data.id, valores: { pagado: "50" } });
+    expect(b.data.calculados).toEqual({ n: "2", acum: "150" });
+    const b2 = await call("PATCH", `/herr-registros/${b.data.id}`, { valores: { pagado: "60" } });
+    expect(b2.data.calculados).toEqual({ n: "2", acum: "160" });
+    const resumen = await call("GET", `/herr-tablas/${tabla.data.id}/resumen`);
+    expect(resumen.data.agregados.n.maximo).toBe(2);
+    expect(resumen.data.agregados.acum.maximo).toBe(160);
+  });
+
+  test("created_by lo fija el servidor", async () => {
+    const tabla = await tabla_de_plantilla("gastos");
+    const valores = { fecha: "2026-01-01", concepto: "x", monto: "1" };
+    const r = await call("POST", "/herr-registros", { tabla_id: tabla.id, valores, created_by: "intruso" });
+    expect(r.status).toBe(201);
+    expect(r.data.created_by).not.toBe("intruso");
+    const editado = await call("PATCH", `/herr-registros/${r.data.id}`, { created_by: "intruso" });
+    expect(editado.data.created_by).toBe(r.data.created_by);
+  });
+
+  test("las fotos se guardan como adjunto y en la fila queda su URL", async () => {
+    const tabla = await tabla_de_plantilla("gastos");
+    const r = await call("POST", "/herr-registros", {
+      tabla_id: tabla.id,
+      valores: { fecha: "2026-01-01", concepto: "x", monto: "1", comprobante: "data:image/png;base64,iVBORw0KGgo=" },
+    });
+    expect(r.status).toBe(201);
+    const url = r.data.valores.comprobante as string;
+    expect(url.startsWith("/api/p/files/")).toBe(true);
+    const editado = await call("PATCH", `/herr-registros/${r.data.id}`, {
+      valores: { ...r.data.valores, concepto: "y" },
+    });
+    expect(editado.data.valores.comprobante).toBe(url);
+    const pdf = await call("POST", "/herr-registros", {
+      tabla_id: tabla.id,
+      valores: { fecha: "2026-01-01", concepto: "x", monto: "1", comprobante: "data:application/pdf;base64,JVBERg==" },
+    });
+    expect(pdf.status).toBe(400);
+  });
+
+  test("fecha se guarda como día y fecha y hora en la hora del negocio", async () => {
+    const tabla = await call("POST", "/herr-tablas", {
+      name: "Visitas",
+      campos: [
+        { clave: "dia", etiqueta: "Día", tipo: "fecha" },
+        { clave: "llegada", etiqueta: "Llegada", tipo: "fecha_hora" },
+      ],
+    });
+    const r = await call("POST", "/herr-registros/captura", {
+      tabla_id: tabla.data.id,
+      dia: "2026-08-07T06:00:00.000Z",
+      llegada: "2026-08-08T04:00:00.000Z",
+    });
+    expect(r.data.valores).toEqual({ dia: "2026-08-07", llegada: "2026-08-07T22:00" });
+    const tal_cual = await call("POST", "/herr-registros/captura", {
+      tabla_id: tabla.data.id,
+      dia: "2026-08-07",
+      llegada: "2026-08-07T22:00",
+    });
+    expect(tal_cual.data.valores).toEqual({ dia: "2026-08-07", llegada: "2026-08-07T22:00" });
+  });
+
+  test("una fecha y hora con forma ISO pero imposible es 400, no 500", async () => {
+    const tabla = await call("POST", "/herr-tablas", {
+      name: "Visitas",
+      campos: [{ clave: "llegada", etiqueta: "Llegada", tipo: "fecha_hora" }],
+    });
+    const r = await call("POST", "/herr-registros/captura", { tabla_id: tabla.data.id, llegada: "2026-13-45T25:99Z" });
+    expect(r.status).toBe(400);
+    expect(String(r.json.message)).toContain("«Llegada» no es una fecha y hora válida");
   });
 
   test("captura plana desde el formulario: alta y edición", async () => {
@@ -261,7 +353,7 @@ describe("cierre", () => {
     expect(uno.valores).toMatchObject({
       fecha: "2026-01-02",
       pagado: "3000",
-      // Guardado valía "0.00" (era la única fila); al cerrar se reevalúa con la tabla entera.
+      // Guardado valía "3000.00" (la segunda fila aún no existía); al cerrar se reevalúa con la tabla entera.
       acumulado: "4500.00",
       abonado: "4500.00",
       restante: "500.00",
@@ -271,6 +363,34 @@ describe("cierre", () => {
     expect(uno.custom_data.registro_id).toBeDefined();
 
     expect((await call("POST", `/herr-tablas/${tabla.id}/cerrar`)).status).toBe(409);
+  });
+
+  test("con más filas que LIMITE_FILAS cierra todas, sin recortar", async () => {
+    server.stop();
+    const data = new MemoryKirletDataClient(SUBJECT.schema());
+    server = create_kirlet_test_context(SUBJECT, { data });
+    const tabla = await call("POST", "/herr-tablas", {
+      name: "Notas",
+      campos: [{ clave: "nota", etiqueta: "Nota", tipo: "texto" }],
+    });
+    const total = LIMITE_FILAS + 3;
+    for (let i = 0; i < total; i++) {
+      await data.insert("herr_registros", {
+        id: `registro-${String(i).padStart(5, "0")}`,
+        name: `n${i}`,
+        tabla_id: tabla.data.id,
+        valores: { nota: `n${i}` },
+        is_active: true,
+        created_at: "t",
+        updated_at: "t",
+      });
+    }
+    expect((await call("GET", `/herr-tablas/${tabla.data.id}/resumen`)).data.total_filas).toBe(total);
+    const cierre = await call("POST", `/herr-tablas/${tabla.data.id}/cerrar`);
+    expect(cierre.status).toBe(200);
+    expect(cierre.data.filas).toBe(total);
+    expect(await data.count("herr_registros", { tabla_id: tabla.data.id, is_active: true })).toBe(0);
+    expect(await data.count("herr_cierres", { cierre_id: cierre.data.cierre_id })).toBe(total);
   });
 
   test("una tabla no cerrable da 409", async () => {
@@ -285,6 +405,8 @@ describe("cierre", () => {
     expect((await call("PATCH", "/herr-cierres/nada", { name: "x" })).status).toBe(400);
     expect((await call("PUT", "/herr-cierres", { id: "nada", name: "x" })).status).toBe(400);
     expect((await call("PUT", "/herr-cierres/batch", [{ id: "nada", name: "x" }])).status).toBe(400);
+    expect((await call("DELETE", "/herr-cierres/nada")).status).toBe(400);
+    expect((await call("DELETE", "/herr-cierres/id/nada")).status).toBe(400);
   });
 });
 

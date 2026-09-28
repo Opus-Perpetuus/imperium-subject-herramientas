@@ -6,6 +6,7 @@ import {
   intencion_por_id,
   type Datos,
 } from "./intenciones.ts";
+import { normalizar_ligero } from "./normalizador.ts";
 import { puntuar, type Candidato } from "./puntuador.ts";
 
 /**
@@ -30,9 +31,9 @@ export type OpcionesInterpretar = {
   activas?: string[];
 };
 
-/** Datos del extractor (números) como texto, sin los nulos. */
-function datos_extraidos(texto: string): Datos {
-  const d = extraer_datos(texto);
+/** Datos del extractor (números) como texto, sin los nulos; las cifras del domicilio no son monto. */
+function datos_extraidos(texto: string, domicilio = ""): Datos {
+  const d = extraer_datos(texto, domicilio);
   const out: Datos = {};
   if (d.cantidad != null) out.cantidad = String(d.cantidad);
   if (d.hora) out.hora = d.hora;
@@ -41,9 +42,13 @@ function datos_extraidos(texto: string): Datos {
   return out;
 }
 
+/** «…y devuelvo el cambio»: la liquidación salda también el fondo de cambio. */
+const DEVUELVE_CAMBIO = /\b(?:devuelvo|devolver|devuelve|regreso|regresar|regresa)(?: tambien)? (?:el )?(?:fondo de )?cambio\b/;
+
 /** Alinea los nombres del extractor con los que espera cada intención. */
-function alinear(intencion: string, datos: Datos): Datos {
+function alinear(intencion: string, datos: Datos, texto: string): Datos {
   const out = { ...datos };
+  if (intencion === "cobro_registrar" && DEVUELVE_CAMBIO.test(normalizar_ligero(texto))) out.devolver_cambio = "true";
   if (intencion === "llamar" && !out.contacto && out.nombre) out.contacto = out.nombre;
   if (intencion === "buscar" && !out.busqueda && out.nombre) out.busqueda = out.nombre;
   return out;
@@ -82,10 +87,8 @@ export function interpretar(texto: string, opciones: OpcionesInterpretar = {}): 
       respuesta: p.mensaje ?? "No pude hacer eso. No reconozco la orden.",
     };
   }
-  const datos = alinear(elegida, {
-    ...datos_extraidos(texto),
-    ...(registro?.intencion === elegida ? registro.datos : {}),
-  });
+  const capturados = registro?.intencion === elegida ? registro.datos : {};
+  const datos = alinear(elegida, { ...datos_extraidos(texto, capturados.domicilio), ...capturados }, texto);
   const falta = (intencion_por_id(elegida)?.requiere ?? []).find((clave) => !datos[clave]);
   if (falta) {
     return {

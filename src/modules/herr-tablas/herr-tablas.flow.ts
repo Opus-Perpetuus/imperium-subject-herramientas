@@ -5,7 +5,7 @@ import {
   type DomainRow,
   type KirletCtx,
 } from "@opus-perpetuus/imperium-core-kit";
-import { campo_busqueda, falla, fila_o_404, filas_de, texto } from "../../lib/comun.ts";
+import { LIMITE_FILAS, campo_busqueda, falla, fila_o_404, texto } from "../../lib/comun.ts";
 import { buscar, construir_indice, texto_buscable } from "../../lib/formulas/busqueda.ts";
 import { calcular_valores, calculados_de, numero_de, valores_resumen } from "../../lib/formulas/calculadora.ts";
 import { claves_resumen_archivo, planear_cierre } from "../../lib/formulas/cierre.ts";
@@ -45,8 +45,23 @@ export async function tabla_activa(ctx: Datos, id: string): Promise<DomainRow> {
   return fila_o_404(ctx, "herr_tablas", id, "La tabla");
 }
 
+/**
+ * Todos los registros activos de la tabla, leídos por páginas de
+ * `LIMITE_FILAS`: el cierre, el resumen y los agregados necesitan la tabla
+ * entera, nunca un recorte.
+ */
 export async function registros_de(ctx: Datos, tabla_id: string): Promise<DomainRow[]> {
-  return filas_de(ctx, "herr_registros", { tabla_id, is_active: true });
+  const todos: DomainRow[] = [];
+  for (;;) {
+    const pagina = await ctx.data.findMany("herr_registros", {
+      where: { tabla_id, is_active: true },
+      orderBy: { id: "asc" },
+      limit: LIMITE_FILAS,
+      offset: todos.length,
+    });
+    todos.push(...pagina);
+    if (pagina.length < LIMITE_FILAS) return todos;
+  }
 }
 
 /** Capturados y calculados juntos: así los ve el motor y así los indexa la búsqueda. */
@@ -77,7 +92,7 @@ export async function etiquetas_referencia(
   const out = new Map<string, Map<string, string>>();
   for (const campo of spec.campos) {
     if (campo.tipo !== "referencia" || !campo.tabla_ref_id) continue;
-    const filas = await filas_de({ data }, "herr_registros", { tabla_id: campo.tabla_ref_id, is_active: true });
+    const filas = await registros_de({ data }, campo.tabla_ref_id);
     out.set(
       campo.clave,
       new Map(

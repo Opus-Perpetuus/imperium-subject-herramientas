@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { identificar_por_nombre, parece_numero, type Contacto } from "./emparejador.ts";
+import { identificar_por_nombre, parece_numero, telefono_comparable, type Contacto } from "./emparejador.ts";
 
 const agenda: Contacto[] = [
   { clave: "k1", nombre: "Rafael Muñoz", telefono: "+525512345678" },
@@ -39,5 +39,13 @@ describe("identificar_por_nombre", () => {
 
   test("agenda vacía: todo el mundo es desconocido", () => {
     expect(identificar_por_nombre("Rafael Muñoz", []).conocido).toBe(false);
+  });
+});
+
+describe("telefono_comparable", () => {
+  test("ignora formato y prefijo de país", () => {
+    expect(telefono_comparable("+52 1 (55) 1234-5678")).toBe("5512345678");
+    expect(telefono_comparable("5512345678")).toBe("5512345678");
+    expect(telefono_comparable("")).toBe("");
   });
 });

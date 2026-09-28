@@ -6,8 +6,8 @@ import {
   type DomainRow,
   type KirletCtx,
 } from "@opus-perpetuus/imperium-core-kit";
-import { campo_busqueda, filas_de, normalizar, texto } from "../../lib/comun.ts";
-import { ACCIONES_DESCONOCIDOS, AMBITOS, ORIGENES } from "../../lib/telefono/decision.ts";
+import { campo_busqueda, con_defecto, filas_de, normalizar, sin_vacios, texto } from "../../lib/comun.ts";
+import { ACCIONES_DESCONOCIDOS, AMBITOS, ORIGENES, REGLAS_POR_DEFECTO } from "../../lib/telefono/decision.ts";
 import { herr_telefono_flow, nombre_llamada } from "./herr-telefono.flow.ts";
 import { herr_telefono_pages } from "./herr-telefono.pages.ts";
 import { herr_telefono_tables } from "./herr-telefono.tables.ts";
@@ -24,6 +24,19 @@ const BASE_FIELDS: Record<string, CrudFieldSpec> = {
   custom_data: { type: "json" },
   payload: { type: "json" },
 };
+
+/** Valores de un perfil nuevo; también los que toma un campo NOT NULL que llega vacío. */
+const PERFIL_POR_DEFECTO = { ...REGLAS_POR_DEFECTO, es_activa: false };
+
+/**
+ * El autor lo fija el servidor: lo que mande el cliente se ignora al crear y no
+ * se puede cambiar. Las columnas NOT NULL sin valor por defecto que llegan
+ * vacías conservan lo guardado.
+ */
+function sin_autor(patch: DomainRow, no_nulas: readonly string[]): DomainRow {
+  const { created_by: _, ...resto } = patch;
+  return sin_vacios(resto, ["name", "is_active", ...no_nulas]);
+}
 
 /** Valor vacío o uno del catálogo; lo demás es 400. */
 function opcion_de(valores: readonly string[], etiqueta: string): CrudFieldSpec["validate"] {
@@ -50,44 +63,44 @@ const perfiles = define_crud({
   fields: {
     name: { type: "string", required: true, search: true },
     ...BASE_FIELDS,
-    activo: { type: "boolean" },
-    ambito: { type: "string", validate: opcion_de(AMBITOS, "ambito") },
-    accion_desconocidos: { type: "string", validate: opcion_de(ACCIONES_DESCONOCIDOS, "accion_desconocidos") },
-    retardo_s: { type: "number" },
-    anuncio_activo: { type: "boolean" },
-    anuncio_plantilla: { type: "string" },
-    anuncio_repeticiones: { type: "number" },
-    anunciar_desconocidos: { type: "boolean" },
+    activo: { type: "boolean", normalize: con_defecto(PERFIL_POR_DEFECTO.activo) },
+    ambito: {
+      type: "string",
+      normalize: con_defecto(PERFIL_POR_DEFECTO.ambito),
+      validate: opcion_de(AMBITOS, "ambito"),
+    },
+    accion_desconocidos: {
+      type: "string",
+      normalize: con_defecto(PERFIL_POR_DEFECTO.accion_desconocidos),
+      validate: opcion_de(ACCIONES_DESCONOCIDOS, "accion_desconocidos"),
+    },
+    retardo_s: { type: "number", normalize: con_defecto(PERFIL_POR_DEFECTO.retardo_s) },
+    anuncio_activo: { type: "boolean", normalize: con_defecto(PERFIL_POR_DEFECTO.anuncio_activo) },
+    anuncio_plantilla: { type: "string", normalize: con_defecto(PERFIL_POR_DEFECTO.anuncio_plantilla) },
+    anuncio_repeticiones: { type: "number", normalize: con_defecto(PERFIL_POR_DEFECTO.anuncio_repeticiones) },
+    anunciar_desconocidos: { type: "boolean", normalize: con_defecto(PERFIL_POR_DEFECTO.anunciar_desconocidos) },
     anuncio_idioma: { type: "string" },
-    whatsapp_activo: { type: "boolean" },
-    whatsapp_plantilla: { type: "string" },
-    conduciendo_activo: { type: "boolean" },
-    es_activa: { type: "boolean" },
+    whatsapp_activo: { type: "boolean", normalize: con_defecto(PERFIL_POR_DEFECTO.whatsapp_activo) },
+    whatsapp_plantilla: { type: "string", normalize: con_defecto(PERFIL_POR_DEFECTO.whatsapp_plantilla) },
+    conduciendo_activo: { type: "boolean", normalize: con_defecto(PERFIL_POR_DEFECTO.conduciendo_activo) },
+    es_activa: { type: "boolean", normalize: con_defecto(PERFIL_POR_DEFECTO.es_activa) },
   },
   options_map: { value: "id", label: "name" },
   hooks: {
-    before_create: (_ctx, row) => ({
-      activo: false,
-      ambito: "nadie",
-      accion_desconocidos: "permitir",
-      retardo_s: 5,
-      anuncio_activo: true,
-      anuncio_plantilla: "Llamada de {nombre}",
-      anuncio_repeticiones: 2,
-      anunciar_desconocidos: true,
-      whatsapp_activo: true,
-      whatsapp_plantilla: "Llamada de WhatsApp de {nombre}",
-      conduciendo_activo: false,
-      es_activa: false,
+    before_create: (ctx, row) => ({
+      ...PERFIL_POR_DEFECTO,
       ...row,
+      is_active: row.is_active ?? true,
+      created_by: ctx.actor,
       search_field: campo_busqueda(row.name, row.description, row.ambito),
     }),
     after_create: async (ctx, row) => {
       if (row.es_activa === true) await desactivar_otros(ctx, String(row.id));
     },
     before_update: (_ctx, _id, patch, existing) => {
-      const fila = { ...existing, ...patch };
-      return { ...patch, search_field: campo_busqueda(fila.name, fila.description, fila.ambito) };
+      const cambios = sin_autor(patch, []);
+      const fila = { ...existing, ...cambios };
+      return { ...cambios, search_field: campo_busqueda(fila.name, fila.description, fila.ambito) };
     },
     after_update: async (ctx, row) => {
       if (row.es_activa === true) await desactivar_otros(ctx, String(row.id));
@@ -109,20 +122,24 @@ const contactos = define_crud({
     regla_id: { type: "string", required: true },
     telefono: { type: "string", search: true },
     clave: { type: "string", search: true },
-    modo: { type: "string", validate: opcion_de(MODOS, "modo") },
+    modo: { type: "string", normalize: con_defecto("seleccionado"), validate: opcion_de(MODOS, "modo") },
   },
   options_map: { value: "id", label: "name" },
   hooks: {
-    before_create: (_ctx, row) => ({
+    before_create: (ctx, row) => ({
       modo: "seleccionado",
       ...row,
+      is_active: row.is_active ?? true,
+      created_by: ctx.actor,
       // Sin clave de la agenda del teléfono, el nombre normalizado identifica al contacto.
       clave: texto(row.clave) || normalizar(row.name),
       search_field: campo_busqueda(row.name, row.telefono, row.modo),
     }),
     before_update: (_ctx, _id, patch, existing) => {
-      const fila = { ...existing, ...patch };
-      return { ...patch, search_field: campo_busqueda(fila.name, fila.telefono, fila.modo) };
+      const cambios = sin_autor(patch, ["regla_id"]);
+      const fila = { ...existing, ...cambios };
+      if ("clave" in cambios && !texto(cambios.clave)) cambios.clave = normalizar(fila.name);
+      return { ...cambios, search_field: campo_busqueda(fila.name, fila.telefono, fila.modo) };
     },
   },
 });
@@ -144,23 +161,26 @@ const llamadas = define_crud({
     decision: { type: "string", required: true, validate: opcion_de(DECISIONES, "decision") },
     motivo: { type: "string" },
     fecha_hora: { type: "string" },
-    origen: { type: "string", validate: opcion_de(ORIGENES, "origen") },
-    conduciendo: { type: "boolean" },
+    origen: { type: "string", normalize: con_defecto("telefono"), validate: opcion_de(ORIGENES, "origen") },
+    conduciendo: { type: "boolean", normalize: con_defecto(false) },
   },
   options_map: { value: "id", label: "name" },
   hooks: {
-    before_create: (_ctx, row) => {
+    before_create: (ctx, row) => {
       const llamante = { conocido: false, nombre: texto(row.contacto_nombre), numero: texto(row.numero) };
       const fila: DomainRow = {
         origen: "telefono",
         conduciendo: false,
-        fecha_hora: row.created_at,
         ...row,
+        is_active: row.is_active ?? true,
+        fecha_hora: texto(row.fecha_hora) || row.created_at,
+        created_by: ctx.actor,
       };
       fila.name = texto(row.name) || nombre_llamada(texto(row.decision), llamante);
       fila.search_field = campo_busqueda(fila.name, fila.numero, fila.contacto_nombre, fila.motivo);
       return fila;
     },
+    before_update: (_ctx, _id, patch) => sin_autor(patch, ["decision", "fecha_hora"]),
   },
 });
 

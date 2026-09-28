@@ -1,10 +1,11 @@
 import { define_routes, now_iso, type DomainRow, type KirletCtx } from "@opus-perpetuus/imperium-core-kit";
-import { LIMITE_FILAS, falla, fila_o_404, texto } from "../../lib/comun.ts";
+import { LIMITE_FILAS, falla, fila_o_404, solo_dia, texto } from "../../lib/comun.ts";
 import {
   evento_desde,
   fecha_valida,
   hoy_en_zona,
   inicio_fin,
+  instante_local,
   ordenar_eventos,
   zona_valida,
 } from "../../lib/agenda/recordatorio.ts";
@@ -18,11 +19,31 @@ export function zona_de(fila: DomainRow): string {
 
 /** `?desde&hasta` como `AAAA-MM-DD`; sin ellos, hoy en la zona del usuario (`?tz=`). */
 function rango_pedido(ctx: KirletCtx): { desde: string; hasta: string } {
-  const desde = texto(ctx.query.get("desde")) || hoy_en_zona(zona_valida(ctx.query.get("tz")));
-  const hasta = texto(ctx.query.get("hasta")) || desde;
+  const desde = texto(solo_dia(ctx.query.get("desde"))) || hoy_en_zona(zona_valida(ctx.query.get("tz")));
+  const hasta = texto(solo_dia(ctx.query.get("hasta"))) || desde;
   if (!fecha_valida(desde) || !fecha_valida(hasta)) falla(400, "desde y hasta deben ser fechas AAAA-MM-DD");
   if (hasta < desde) falla(400, "hasta debe ser igual o posterior a desde");
   return { desde, hasta };
+}
+
+/**
+ * `?desde&hasta` como instantes: un ISO con hora se toma tal cual y un
+ * `AAAA-MM-DD` es el día completo en la zona `?tz=`. Sin `desde`, desde ahora
+ * (lo ya vencido no se programa); sin `hasta`, hasta el fin del día de `desde`.
+ */
+function instantes_pedidos(ctx: KirletCtx): { desde: string; hasta: string } {
+  const zona = zona_valida(ctx.query.get("tz"));
+  const limite = (valor: string, fin: boolean): number => {
+    if (fecha_valida(valor)) return instante_local(valor, fin ? 1440 : 0, zona).getTime() - (fin ? 1 : 0);
+    const ms = /^\d{4}-\d{2}-\d{2}T/.test(valor) ? Date.parse(valor) : Number.NaN;
+    if (Number.isNaN(ms)) falla(400, "desde y hasta deben ser fechas AAAA-MM-DD o instantes ISO");
+    return ms;
+  };
+  const pedido_desde = texto(ctx.query.get("desde"));
+  const desde = pedido_desde ? limite(pedido_desde, false) : Date.now();
+  const hasta = limite(texto(ctx.query.get("hasta")) || hoy_en_zona(zona, new Date(desde)), true);
+  if (hasta < desde) falla(400, "hasta debe ser igual o posterior a desde");
+  return { desde: new Date(desde).toISOString(), hasta: new Date(hasta).toISOString() };
 }
 
 export async function eventos_en_rango(ctx: KirletCtx, desde: string, hasta: string): Promise<DomainRow[]> {
@@ -41,11 +62,18 @@ export const herr_agenda_flow = define_routes({
     return { data, total_elementos: data.length };
   },
 
-  /** Avisos pendientes de los eventos del rango, para que el teléfono programe sus alarmas. */
+  /** Avisos pendientes que suenan dentro del rango, para que el teléfono programe sus alarmas. */
   "GET /herr-agenda/recordatorios": async (ctx) => {
-    const { desde, hasta } = rango_pedido(ctx);
-    const data = (await eventos_en_rango(ctx, desde, hasta))
-      .filter((e) => e.hecho !== true && texto(e.recordatorio_en))
+    const { desde, hasta } = instantes_pedidos(ctx);
+    const filas = await ctx.data.findMany("herr_agenda", {
+      where: { is_active: true, recordatorio_en: { gte: desde, lte: hasta } },
+      limit: LIMITE_FILAS,
+    });
+    const data = filas
+      .filter((e) => {
+        const aviso = texto(e.recordatorio_en);
+        return e.hecho !== true && aviso >= desde && aviso <= hasta;
+      })
       .map((e) => ({
         evento_id: e.id,
         name: e.name,

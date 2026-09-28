@@ -102,6 +102,10 @@ describe("errores", () => {
   test("un resultado infinito no es representable", () => {
     expect(error_de("10 ^ 400")).toBe("Resultado no representable");
   });
+
+  test("una fórmula anidada sin fin es error de fórmula, no excepción", () => {
+    expect(error_de("(".repeat(20000) + "1" + ")".repeat(20000))).toBe("Fórmula demasiado anidada");
+  });
 });
 
 describe("texto", () => {
@@ -203,6 +207,8 @@ describe("agregados", () => {
     expect(parsear_agregado("pagado")).toBeNull();
     expect(parsear_agregado("total:pagado")).toBeNull();
     expect(parsear_agregado("suma:")).toBeNull();
+    expect(parsear_agregado("constructor:pagado")).toBeNull();
+    expect(parsear_agregado("tostring:pagado")).toBeNull();
   });
 
   test("una columna vacía da cero", () => {

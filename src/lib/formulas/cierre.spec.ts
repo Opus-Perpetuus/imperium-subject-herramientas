@@ -29,7 +29,8 @@ const fila = (id: string, valores: Record<string, string>): Registro => ({
   updated_at: "2026-08-07T11:00:00.000Z",
 });
 
-const CERRADO = "2026-08-07T22:00:00.000Z";
+/** 22:00 del 7 de agosto en la Ciudad de México (UTC-6). */
+const CERRADO = "2026-08-08T04:00:00.000Z";
 
 describe("cierre del día", () => {
   test("el esquema de archivo incluye campos, resúmenes, fijos y sello", () => {

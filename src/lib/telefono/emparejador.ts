@@ -18,6 +18,11 @@ export function parece_numero(value: string): boolean {
   return /^\+?\d+$/.test(value.replace(/[\s().-]/g, ""));
 }
 
+/** Solo los dígitos, y de ellos los 10 últimos: «+52 1 55 1234 5678» y «5512345678» casan. */
+export function telefono_comparable(value: unknown): string {
+  return texto(value).replace(/\D/g, "").slice(-10);
+}
+
 /**
  * Identifica a quien llama por WhatsApp a partir del título de la notificación.
  *

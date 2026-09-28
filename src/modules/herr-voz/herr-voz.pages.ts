@@ -174,7 +174,7 @@ export function construir_asistente(rows: Array<Record<string, unknown>>): NoxPa
     text: "Escribe la orden como la dirías",
     props: {
       description:
-        "Escuchar y hablar lo hace la app Android de Imperium; aquí la orden se escribe. Ejemplos: «anota un pedido de 250 en la calle 5», «saqué de cambio 200», «cuánto llevo hoy», «terminar jornada».",
+        "Escuchar y hablar lo hace la app Android de Imperium; aquí la orden se escribe. Ejemplos: «anota un pedido de 250 en la calle 5», «saqué de cambio 200», «cuánto llevo hoy», «terminar jornada». Lo que escribe datos primero se pregunta: revisa la respuesta, marca «Confirmo» y vuelve a enviar.",
     },
   };
   const formulario: NoxUiNode = {
@@ -182,12 +182,15 @@ export function construir_asistente(rows: Array<Record<string, unknown>>): NoxPa
     props: {
       // Relativo a la app: el lanzador antepone `/api/m/subject-herramientas`.
       invoke: { method: "POST", action: "api://herr-voz/ejecutar" },
-      body: { confirmado: true },
     },
     children: [
       {
         component: "nox.input-text",
         props: { name: "orden", label: "Orden", placeholder: "anota un pedido de 250 en la calle 5", required: true },
+      },
+      {
+        component: "nox.input-checkbox",
+        props: { name: "confirmado", label: "Confirmo", value: false, help: "Sin marcar, el asistente solo dice lo que entendió." },
       },
       { component: "nox.button", text: "Ejecutar" },
     ],

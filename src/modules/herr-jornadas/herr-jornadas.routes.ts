@@ -1,6 +1,7 @@
 import { define_crud, define_module, type DomainRow, type KirletCtx } from "@opus-perpetuus/imperium-core-kit";
-import { campo_busqueda, fecha_hoy, numero, texto } from "../../lib/comun.ts";
-import { ajustes_vehiculo, calcular } from "../../lib/jornadas/jornada.ts";
+import { campo_busqueda, falla, fecha_hoy, solo_dia, texto } from "../../lib/comun.ts";
+import { calcular } from "../../lib/jornadas/jornada.ts";
+import { ajustes_vehiculo, jornada_activa } from "../../lib/reparto/servicios.ts";
 import { herr_jornadas_flow } from "./herr-jornadas.flow.ts";
 import { herr_jornadas_pages } from "./herr-jornadas.pages.ts";
 import { herr_jornadas_tables } from "./herr-jornadas.tables.ts";
@@ -14,7 +15,7 @@ async function derivados(ctx: KirletCtx, fila: DomainRow): Promise<DomainRow> {
   return {
     name,
     search_field: campo_busqueda(name, fila.vehiculo_nombre, fila.estado, fila.notas),
-    ...calcular(fila, numero(ajustes?.tanque_litros)),
+    ...calcular(fila, ajustes),
   };
 }
 
@@ -45,7 +46,7 @@ export const herr_jornadas_module = define_module({
         created_by: { type: "string" },
         custom_data: { type: "json" },
         payload: { type: "json" },
-        fecha: { type: "string", search: true },
+        fecha: { type: "string", search: true, normalize: solo_dia },
         hora_inicio: { type: "string" },
         hora_fin: { type: "string" },
         vehiculo_id: { type: "string" },
@@ -75,16 +76,22 @@ export const herr_jornadas_module = define_module({
         before_create: async (ctx: KirletCtx, row: DomainRow) => {
           const fila: DomainRow = {
             ...row,
+            created_by: ctx.actor,
             fecha: texto(row.fecha) || fecha_hoy(),
             estado: texto(row.estado) || "abierta",
             tramos: row.tramos ?? [],
           };
+          if (fila.estado === "abierta" && (await jornada_activa(ctx))) falla(409, "Ya hay una jornada abierta", "conflict");
           return { ...fila, ...(await derivados(ctx, fila)) };
         },
-        before_update: async (ctx: KirletCtx, _id: string, patch: DomainRow, existing: DomainRow) => ({
-          ...patch,
-          ...(await derivados(ctx, { ...existing, ...patch })),
-        }),
+        before_update: async (ctx: KirletCtx, id: string, patch: DomainRow, existing: DomainRow) => {
+          const { created_by: _autor, ...resto } = patch;
+          if (resto.estado === "abierta" && existing.estado !== "abierta") {
+            const activa = await jornada_activa(ctx);
+            if (activa && String(activa.id) !== id) falla(409, "Ya hay una jornada abierta", "conflict");
+          }
+          return { ...resto, ...(await derivados(ctx, { ...existing, ...resto })) };
+        },
       },
     }),
   ],

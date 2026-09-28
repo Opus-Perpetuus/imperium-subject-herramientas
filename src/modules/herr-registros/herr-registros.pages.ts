@@ -121,10 +121,9 @@ export const herr_registros_pages: KirletPageDecl[] = [
               },
               {
                 name: "valores",
-                component: "input-code-editor",
+                component: "input-json",
                 label: "Valores",
                 help: "JSON clave → valor con las claves de los campos de la tabla",
-                code_editor_language: "json",
                 column_span: "full",
               },
             ],

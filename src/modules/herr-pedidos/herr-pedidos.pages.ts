@@ -67,9 +67,8 @@ export const herr_pedidos_pages: KirletPageDecl[] = [
               { name: "productos", component: "input-textarea", label: "Productos", column_span: "full" },
               {
                 name: "productos_json",
-                component: "input-code-editor",
+                component: "input-json",
                 label: "Detalle de productos (datos) — si se borra, no pasa nada",
-                code_editor_language: "json",
                 column_span: "full",
               },
               { name: "detalle", component: "input-textarea", label: "Detalle", column_span: "full" },

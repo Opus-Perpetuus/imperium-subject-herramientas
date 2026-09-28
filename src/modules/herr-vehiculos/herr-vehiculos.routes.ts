@@ -13,14 +13,21 @@ function preparar(row: DomainRow, existing: DomainRow = {}): DomainRow {
   return row;
 }
 
-/** Sin `name`, el snapshot se resuelve contra subject-vehiculos; sin gateway, queda el id. */
+/**
+ * Sin `name`, el snapshot se resuelve contra subject-vehiculos; sin gateway, queda el id.
+ * Unos ajustes borrados del mismo vehículo se reutilizan (mismo id y calibración):
+ * `vehiculo_id` es UNIQUE y la fila inactiva sigue en la tabla.
+ */
 async function preparar_alta(ctx: KirletCtx, row: DomainRow): Promise<DomainRow> {
   const vehiculo_id = texto(row.vehiculo_id);
-  if (await ctx.data.findOne("herr_vehiculos", { vehiculo_id })) {
+  const previa = await ctx.data.findOne("herr_vehiculos", { vehiculo_id });
+  if (previa && previa.is_active !== false) {
     falla(409, "Ese vehículo ya tiene ajustes de reparto", "conflict");
   }
   const name = texto(row.name) || (await nombre_vehiculo(ctx, vehiculo_id));
-  return preparar({ created_by: ctx.actor, ...row, name, velocimetro: row.velocimetro ?? true });
+  if (!previa) return preparar({ ...row, name, created_by: ctx.actor });
+  await ctx.data.delete("herr_vehiculos", { id: String(previa.id) });
+  return preparar({ ...previa, ...row, id: previa.id, created_at: previa.created_at, is_active: true, name, created_by: ctx.actor });
 }
 
 export const herr_vehiculos_module = define_module({
@@ -72,6 +79,7 @@ export const herr_vehiculos_module = define_module({
       hooks: {
         before_create: preparar_alta,
         before_update: (_ctx, _id, patch, existing) => {
+          delete patch.created_by;
           // La clave no se cambia: en PG chocaría con el UNIQUE y saldría un 500.
           if ("vehiculo_id" in patch) {
             if (texto(patch.vehiculo_id) !== texto(existing.vehiculo_id)) {

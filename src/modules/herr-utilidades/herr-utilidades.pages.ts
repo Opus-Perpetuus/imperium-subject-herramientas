@@ -15,6 +15,9 @@ es la misma lista que devuelve \`GET /herr-utilidades/capacidades\`.
 - **Desde el servidor de otra app:**
   \`call_subject("subject-herramientas", "POST /herr-utilidades/markdown", { body: { texto } })\`
   del kit. Solo realm interno; ambas apps deben estar instaladas.
+- **Quién:** las rutas \`/herr-utilidades/*\` las puede llamar cualquier usuario
+  interno con sesión, aunque no tenga el menú de Herramientas (sin sesión
+  interna, 401). Las demás exigen el permiso de su herramienta.
 
 ## Markdown
 
@@ -27,9 +30,10 @@ imágenes, \`[[wiki|alias]]\` y \`#etiquetas\`.
 Con \`sanear: true\` (por defecto) el HTML pasa por el saneador del kit: las
 casillas de tarea, el \`data-wiki\`, la clase \`etiqueta\` y los \`id\` de los
 encabezados se pierden (el texto se conserva). Con \`sanear: false\` se entrega
-el HTML tal cual se genera; el texto ya va escapado, pero las URL de los
-enlaces no se filtran. El \`ast\` nunca se sanea: lleva el texto original como
-dato, así que quien lo pinte por su cuenta debe escaparlo.
+el HTML tal cual se genera: el texto ya va escapado y las URL con esquema
+ejecutable (\`javascript:\`, \`vbscript:\`, \`data:\` salvo imágenes) se omiten. El
+\`ast\` nunca se sanea: lleva el texto original como dato, así que quien lo
+pinte por su cuenta debe escaparlo.
 `;
 
 export const herr_utilidades_pages: KirletPageDecl[] = [

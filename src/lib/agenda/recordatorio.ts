@@ -1,4 +1,6 @@
-import { numero, texto } from "../comun.ts";
+import { desfase_minutos, numero, texto, ZONA_POR_DEFECTO } from "../comun.ts";
+
+export { desfase_minutos, zona_valida, ZONA_POR_DEFECTO } from "../comun.ts";
 
 /**
  * Recordatorios de la agenda. `fecha` y `inicio_minuto` se guardan aparte
@@ -7,7 +9,6 @@ import { numero, texto } from "../comun.ts";
  * aviso se calcula aquí, en la zona del usuario, para que Android solo programe.
  */
 
-export const ZONA_POR_DEFECTO = "America/Mexico_City";
 
 /** Cuánta antelación tiene el aviso; `-1` = sin aviso. */
 export const ADELANTOS = [
@@ -38,42 +39,17 @@ export type EventoAgenda = {
   recordatorio_min: number;
 };
 
+/** `AAAA-MM-DD` que existe en el calendario: `2026-02-30` no. */
 export function fecha_valida(value: unknown): boolean {
   const f = texto(value);
-  return FECHA.test(f) && !Number.isNaN(Date.parse(`${f}T00:00:00Z`));
+  if (!FECHA.test(f)) return false;
+  const [y, m, d] = f.split("-").map(Number) as [number, number, number];
+  const dia = new Date(Date.UTC(y, m - 1, d));
+  return dia.getUTCFullYear() === y && dia.getUTCMonth() === m - 1 && dia.getUTCDate() === d;
 }
 
 export function adelanto_valido(value: unknown): boolean {
   return ADELANTOS.some((a) => a.value === value);
-}
-
-/** Zona IANA utilizable, o la de por defecto si no llega o no existe. */
-export function zona_valida(value: unknown): string {
-  const zona = texto(value);
-  if (!zona) return ZONA_POR_DEFECTO;
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: zona });
-    return zona;
-  } catch {
-    return ZONA_POR_DEFECTO;
-  }
-}
-
-/** Minutos que la zona lleva respecto a UTC en ese instante (México: -360). */
-export function desfase_minutos(zona: string, instante: Date): number {
-  const partes = new Intl.DateTimeFormat("en-US", {
-    timeZone: zona,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).formatToParts(instante);
-  const v = (tipo: string) => Number(partes.find((p) => p.type === tipo)?.value ?? 0);
-  const como_utc = Date.UTC(v("year"), v("month") - 1, v("day"), v("hour"), v("minute"), v("second"));
-  return Math.round((como_utc - instante.getTime()) / 60_000);
 }
 
 /** `AAAA-MM-DD` de hoy en la zona: el servidor corre en UTC y a las 19:00 de México ya es «mañana». */

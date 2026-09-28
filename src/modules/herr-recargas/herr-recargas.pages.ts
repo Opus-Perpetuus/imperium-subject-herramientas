@@ -49,7 +49,7 @@ export const herr_recargas_pages: KirletPageDecl[] = [
                 name: "vehiculo_id",
                 component: "input-datalist",
                 label: "Vehículo",
-                help: "Del registro de vehículos",
+                help: "Del registro de vehículos; se necesita permiso de lectura en la app Vehículos",
                 optionsSource: "api://m/subject-vehiculos/vehicle?as=options&limite=1000",
               },
               { name: "fecha_hora", component: "input-datetime", label: "Fecha y hora" },

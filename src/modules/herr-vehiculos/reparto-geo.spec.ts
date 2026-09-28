@@ -153,7 +153,6 @@ describe("vehículos", () => {
     });
     expect(ok.status).toBe(201);
     expect(ok.data.search_field).toBe("moto roja veh1 abc-123 barras");
-    expect(ok.data.velocimetro).toBe(true);
 
     // Sin nombre y sin gateway (tests): el snapshot queda como el id externo.
     const sin_nombre = await call("POST", "/herr-vehiculos", { vehiculo_id: "veh2" });
@@ -176,6 +175,39 @@ describe("vehículos", () => {
 
     await call("DELETE", `/herr-vehiculos/${ok.data.id}`);
     expect((await call("GET", "/herr-vehiculos/por-vehiculo/veh1")).status).toBe(404);
+  });
+
+  test("dar de alta otra vez un vehículo borrado reutiliza sus ajustes", async () => {
+    const ok = await call("POST", "/herr-vehiculos", { vehiculo_id: "veh1", name: "Moto Roja", tanque_litros: 12 });
+    await data.update("herr_vehiculos", { id: ok.data.id }, { litros_por_paso: [2, 2, 2, 2, 2, 2] });
+    expect((await call("DELETE", `/herr-vehiculos/${ok.data.id}`)).status).toBe(200);
+
+    const otra_vez = await call("POST", "/herr-vehiculos", { vehiculo_id: "veh1", medidor: "barras" });
+    expect(otra_vez.status).toBe(201);
+    expect(otra_vez.data).toMatchObject({
+      id: ok.data.id, is_active: true, name: "Moto Roja", tanque_litros: 12, medidor: "barras", litros_por_paso: [2, 2, 2, 2, 2, 2],
+    });
+    expect(await data.count("herr_vehiculos", { vehiculo_id: "veh1" })).toBe(1);
+    expect((await call("GET", "/herr-vehiculos/por-vehiculo/veh1")).data.id).toBe(ok.data.id);
+    expect((await call("POST", "/herr-vehiculos", { vehiculo_id: "veh1" })).status).toBe(409);
+  });
+
+  test("created_by lo pone el servidor en todos los módulos", async () => {
+    const altas: Array<[string, DomainRow]> = [
+      ["herr-vehiculos", { vehiculo_id: "veh9" }],
+      ["herr-domicilios", { name: "Morelos 45" }],
+      ["herr-etiquetas", { name: "Perro" }],
+      ["herr-recargas", { vehiculo_id: "veh9", litros: 3 }],
+      ["herr-rutas", { name: "Ruta" }],
+    ];
+    for (const [recurso, body] of altas) {
+      const r = await call("POST", `/${recurso}`, { ...body, created_by: "intruso" });
+      expect(r.status).toBe(201);
+      expect(r.data.created_by).not.toBe("intruso");
+      const p = await call("PATCH", `/${recurso}/${r.data.id}`, { created_by: "intruso" });
+      expect(p.status).toBe(200);
+      expect(p.data.created_by).toBe(r.data.created_by);
+    }
   });
 });
 
@@ -326,9 +358,32 @@ describe("rutas GPS", () => {
     expect(fin.data.informe.paradas).toHaveLength(1);
     expect((await call("POST", `/herr-rutas/${id}/terminar`, {})).status).toBe(409);
 
+    // Un lote tardío tras terminar rehace también el informe guardado.
+    const tarde = [punto(500, sigue + 60_000), punto(550, sigue + 70_000)];
+    const r3 = await call("POST", `/herr-rutas/${id}/puntos`, { puntos: tarde });
+    expect(r3.data.nuevos).toBe(2);
+    const guardada = (await data.findOne("herr_rutas", { id }))!;
+    expect(guardada.distancia_m).toBe(r3.data.distancia_m);
+    expect((guardada.informe as { distancia_m: number }).distancia_m).toBe(r3.data.distancia_m);
+
     expect((await call("POST", `/herr-rutas/${id}/puntos`, { puntos: [{ t: "ayer", lat: 1, lon: 1 }] })).status).toBe(400);
     expect((await call("POST", `/herr-rutas/${id}/puntos`, {})).status).toBe(400);
     expect((await call("POST", "/herr-rutas/nadie/puntos", { puntos: [] })).status).toBe(404);
+  });
+
+  test("iniciar con jornada deja la ruta en la jornada", async () => {
+    await data.insert("herr_jornadas", { id: "j1", name: "Jornada", is_active: true, ruta_id: null, created_at: TS, updated_at: TS });
+    const inicio = await call("POST", "/herr-rutas/iniciar", { jornada_id: "j1" });
+    expect((await data.findOne("herr_jornadas", { id: "j1" }))?.ruta_id).toBe(inicio.data.id);
+  });
+
+  test("el CRUD rechaza puntos ilegibles", async () => {
+    const malos = [{ t: "ayer", lat: 20.6, lon: -103.3 }, { t: "2026-09-27T10:00:00Z" }];
+    expect((await call("POST", "/herr-rutas", { name: "Ruta", puntos: malos })).status).toBe(400);
+    const r = await call("POST", "/herr-rutas", { name: "Ruta", puntos: [punto(0, T0)] });
+    expect(r.status).toBe(201);
+    expect((await call("PATCH", `/herr-rutas/${r.data.id}`, { puntos: malos })).status).toBe(400);
+    expect((await call("PATCH", `/herr-rutas/${r.data.id}`, { puntos: "no" })).status).toBe(400);
   });
 });
 
@@ -370,6 +425,92 @@ describe("recargas", () => {
     const borrado = await call("DELETE", `/herr-recargas/${r.data.id}`);
     expect(borrado.status).toBe(200);
     expect((await call("GET", `/herr-gastos/gasto_recarga_${r.data.id}`)).status).toBe(404);
+    expect(await data.findOne("herr_gastos", { id: `gasto_recarga_${r.data.id}` })).toMatchObject({ is_active: false, cantidad: 240 });
+  });
+
+  test("editar la recarga corrige su gasto: lo crea, lo actualiza o lo desactiva", async () => {
+    const r = await call("POST", "/herr-recargas", { vehiculo_id: "veh1", litros: 5, fecha_hora: "2026-09-27T14:30:00-06:00" });
+    const gasto_id = `gasto_recarga_${r.data.id}`;
+    expect(await data.count("herr_gastos")).toBe(0);
+
+    const con_importe = await call("PATCH", `/herr-recargas/${r.data.id}`, { pesos: 120, jornada_id: "j1" });
+    expect(con_importe.status).toBe(200);
+    expect((await call("GET", `/herr-gastos/${gasto_id}`)).data).toMatchObject({
+      cantidad: 120, motivo: "Gasolina · 5 L", fecha: "2026-09-27", hora: "14:30", jornada_id: "j1", is_active: true,
+    });
+
+    await call("PATCH", `/herr-recargas/${r.data.id}`, { pesos: 150, litros: 6, fecha_hora: "2026-09-28T02:10:00Z", jornada_id: "j2" });
+    expect((await call("GET", `/herr-gastos/${gasto_id}`)).data).toMatchObject({
+      cantidad: 150, motivo: "Gasolina · 6 L", name: "Gasolina · 6 L", fecha: "2026-09-27", hora: "20:10", jornada_id: "j2",
+    });
+    expect(await data.count("herr_gastos")).toBe(1);
+
+    await call("PATCH", `/herr-recargas/${r.data.id}`, { pesos: null });
+    expect((await data.findOne("herr_gastos", { id: gasto_id }))?.is_active).toBe(false);
+    await call("PATCH", `/herr-recargas/${r.data.id}`, { pesos: 90 });
+    expect((await call("GET", `/herr-gastos/${gasto_id}`)).data).toMatchObject({ cantidad: 90, is_active: true });
+  });
+
+  test("editar recalibra con las lecturas nuevas", async () => {
+    await moto();
+    const r = await call("POST", "/herr-recargas", { vehiculo_id: "veh1", litros: 10 });
+    expect((await data.findOne("herr_vehiculos", { id: "aj1" }))!.litros_por_paso).toEqual([]);
+    await call("PATCH", `/herr-recargas/${r.data.id}`, { nivel_antes: "0/6", nivel_despues: "4/6" });
+    const calibrada = (await data.findOne("herr_vehiculos", { id: "aj1" }))!.litros_por_paso as number[];
+    expect(calibrada[0]).toBeCloseTo(2.175, 9);
+  });
+
+  test("una recarga cuyo gasto ya se liquidó no se borra ni cambia su importe", async () => {
+    const r = await call("POST", "/herr-recargas", { vehiculo_id: "veh1", pesos: 200, litros: 8 });
+    const gasto_id = `gasto_recarga_${r.data.id}`;
+    await data.update("herr_gastos", { id: gasto_id }, { descontado: true, liquidacion: "2026-09-27 20:00" });
+
+    expect((await call("PATCH", `/herr-recargas/${r.data.id}`, { pesos: 300 })).status).toBe(409);
+    expect((await call("DELETE", `/herr-recargas/${r.data.id}`)).status).toBe(409);
+    expect((await data.findOne("herr_recargas", { id: r.data.id }))).toMatchObject({ pesos: 200, is_active: true });
+    expect(await data.findOne("herr_gastos", { id: gasto_id })).toMatchObject({ cantidad: 200, is_active: true, descontado: true });
+
+    const notas = await call("PATCH", `/herr-recargas/${r.data.id}`, { pesos: 200, description: "ticket perdido" });
+    expect(notas.status).toBe(200);
+    expect((await data.findOne("herr_gastos", { id: gasto_id }))?.liquidacion).toBe("2026-09-27 20:00");
+  });
+
+  test("editar solo la descripción no vuelve a calibrar ni toca el gasto", async () => {
+    await moto();
+    const r = await call("POST", "/herr-recargas", {
+      vehiculo_id: "veh1", pesos: 240, precio_litro: 24, nivel_antes: "0/6", nivel_despues: "4/6",
+    });
+    const gasto_id = `gasto_recarga_${r.data.id}`;
+    const calibrada = (await data.findOne("herr_vehiculos", { id: "aj1" }))!.litros_por_paso;
+    await data.update("herr_gastos", { id: gasto_id }, { motivo: "Gasolina Pemex", updated_at: "t" });
+
+    expect((await call("PATCH", `/herr-recargas/${r.data.id}`, { description: "ticket en la guantera" })).status).toBe(200);
+    expect((await data.findOne("herr_vehiculos", { id: "aj1" }))!.litros_por_paso).toEqual(calibrada);
+    expect((await data.findOne("herr_gastos", { id: gasto_id }))?.motivo).toBe("Gasolina Pemex");
+
+    await call("PATCH", `/herr-recargas/${r.data.id}`, { nivel_despues: "5/6" });
+    expect((await data.findOne("herr_vehiculos", { id: "aj1" }))!.litros_por_paso).not.toEqual(calibrada);
+  });
+
+  test("reenviar la fila entera con la hora local sin zona no es un cambio: sin 409 aunque esté liquidada", async () => {
+    const r = await call("POST", "/herr-recargas", {
+      vehiculo_id: "veh1", pesos: 200, litros: 8, jornada_id: "j1", fecha_hora: "2026-09-27T20:30:00.000Z",
+    });
+    await data.update("herr_gastos", { id: `gasto_recarga_${r.data.id}` }, { descontado: true, liquidacion: "2026-09-27 20:00" });
+    const { id: _id, created_at: _alta, updated_at: _cambio, ...fila } = r.data;
+    const reenvio = await call("PATCH", `/herr-recargas/${r.data.id}`, {
+      ...fila, pesos: "200", litros: "8.0", fecha_hora: "2026-09-27T14:30", description: "sin factura",
+    });
+    expect(reenvio.status).toBe(200);
+    expect((await call("PATCH", `/herr-recargas/${r.data.id}`, { fecha_hora: "2026-09-27T15:30" })).status).toBe(409);
+  });
+
+  test("un gasto que el usuario desactivó en Gastos no se reactiva al editar la recarga", async () => {
+    const r = await call("POST", "/herr-recargas", { vehiculo_id: "veh1", pesos: 200, litros: 8 });
+    const gasto_id = `gasto_recarga_${r.data.id}`;
+    await data.update("herr_gastos", { id: gasto_id }, { is_active: false, updated_at: "t" });
+    expect((await call("PATCH", `/herr-recargas/${r.data.id}`, { pesos: 220 })).status).toBe(200);
+    expect(await data.findOne("herr_gastos", { id: gasto_id })).toMatchObject({ is_active: false, cantidad: 200 });
   });
 
   test("un vehículo sin ajustes se recarga igual, sin calibrar", async () => {
@@ -403,11 +544,16 @@ describe("recargas", () => {
     expect(lleno.data.rendimiento_exacto).toBe(30);
     expect(lleno.data.litros_estimados).toEqual({ litros: 12, aproximado: false });
 
+    // Un llenado sin odómetro entre medias: sin dos llenados seguidos con km no hay rendimiento exacto.
+    await call("POST", "/herr-recargas", { vehiculo_id: "veh1", litros: 2, tanque_lleno: true, fecha_hora: "2026-09-25T18:00:00Z" });
+    await call("POST", "/herr-recargas", { vehiculo_id: "veh1", km: 1180, litros: 3, tanque_lleno: true, fecha_hora: "2026-09-25T20:00:00Z" });
+    expect((await call("GET", "/herr-vehiculos/aj1/combustible")).data.rendimiento_exacto).toBeNull();
+
     const parcial = await call("POST", "/herr-recargas", { vehiculo_id: "veh1", litros: 2, nivel_despues: "3/6", fecha_hora: "2026-09-26T10:00:00Z" });
     const medio = await call("GET", "/herr-vehiculos/aj1/combustible");
     expect(medio.data.ultima_recarga.id).toBe(parcial.data.id);
     expect(medio.data.litros_estimados).toEqual({ litros: 6, aproximado: true });
-    expect(medio.data.recargas).toBe(3);
+    expect(medio.data.recargas).toBe(5);
     expect((await call("GET", "/herr-vehiculos/nadie/combustible")).status).toBe(404);
   });
 });

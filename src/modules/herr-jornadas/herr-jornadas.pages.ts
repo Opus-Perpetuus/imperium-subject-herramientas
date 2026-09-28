@@ -7,9 +7,9 @@ import {
   type NoxUiNode,
 } from "@opus-perpetuus/imperium-core-kit";
 import { filas_de, numero, texto } from "../../lib/comun.ts";
-import { jornada_activa } from "../../lib/jornadas/jornada.ts";
-import { vista_previa, type Parte } from "../../lib/liquidacion/liquidacion.ts";
+import type { Parte } from "../../lib/liquidacion/liquidacion.ts";
 import { ETIQUETA_ESTADO, es_abierto, es_entregado, estado_de, type Estado } from "../../lib/pedidos/estado.ts";
+import { jornada_activa, vista_liquidacion } from "../../lib/reparto/servicios.ts";
 
 const API = "api://m/subject-herramientas";
 const OWNER = "subject-herramientas";
@@ -65,7 +65,7 @@ async function pagina_jornada(args: KirletPageBuildArgs): Promise<NoxPageDescrip
   const abierta = jornada.estado === "abierta";
   const [pedidos, vp] = await Promise.all([
     filas_de(args, "herr_pedidos", { jornada_id: id, is_active: true }),
-    vista_previa(args, id),
+    vista_liquidacion(args, id),
   ]);
   const entregas = pedidos.filter((p) => es_entregado(estado_de(p))).length;
   const abiertos = pedidos
@@ -108,7 +108,7 @@ async function pagina_jornada(args: KirletPageBuildArgs): Promise<NoxPageDescrip
       : nodo("nox.empty", { title: "Sin pedidos abiertos", description: "Los pedidos capturados, surtidos o en ruta aparecen aquí." }),
     nodo("nox.toolbar", {}, [
       ...(abierta
-        ? [boton("Terminar jornada", `herr-jornadas/${id}/terminar`, { confirm: "¿Terminar la jornada?", variant: "primary" })]
+        ? [boton("Terminar jornada", `herr-jornadas/${id}/terminar`, { confirm: "¿Terminar la jornada? Se entregan los cobros pendientes.", variant: "primary" })]
         : []),
       ...iniciar,
       enlace("Ver liquidación", `/internal/herr-liquidacion?jornada=${encodeURIComponent(id)}`),
@@ -129,7 +129,7 @@ async function pagina_liquidacion(args: KirletPageBuildArgs): Promise<NoxPageDes
     ]);
   }
   const id = String(jornada.id);
-  const vp = await vista_previa(args, id);
+  const vp = await vista_liquidacion(args, id);
   const hijos: NoxUiNode[] = [
     nodo("nox.stats", {
       items: [
@@ -222,7 +222,7 @@ export const herr_jornadas_pages: KirletPageDecl[] = [
                   { value: "cerrada", label: "Cerrada" },
                 ],
               },
-              { name: "vehiculo_id", component: "input-datalist", label: "Vehículo", optionsSource: "api://m/subject-vehiculos/vehicle?as=options&limite=1000" },
+              { name: "vehiculo_id", component: "input-datalist", label: "Vehículo", optionsSource: "api://m/subject-vehiculos/vehicle?as=options&limite=1000", help: "Si la lista sale vacía, pide acceso a la app Vehículos" },
               { name: "vehiculo_nombre", component: "input-text", label: "Nombre del vehículo" },
               { name: "hora_inicio", component: "input-time", label: "Hora de inicio" },
               { name: "hora_fin", component: "input-time", label: "Hora de fin" },

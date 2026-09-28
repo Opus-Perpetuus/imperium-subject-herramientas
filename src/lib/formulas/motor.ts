@@ -59,7 +59,7 @@ export function parsear_agregado(clave: string): { tipo: TipoAgregado; campo: st
   const dos_puntos = clave.indexOf(":");
   if (dos_puntos <= 0) return null;
   const prefijo = clave.slice(0, dos_puntos).trim().toLowerCase();
-  if (!(prefijo in TIPOS_AGREGADO)) return null;
+  if (!Object.hasOwn(TIPOS_AGREGADO, prefijo)) return null;
   const campo = clave.slice(dos_puntos + 1).trim();
   return campo ? { tipo: prefijo as TipoAgregado, campo } : null;
 }
@@ -196,6 +196,7 @@ export function evaluar(formula: string, ambito: Ambito): Resultado {
     return { ok: true, valor };
   } catch (e) {
     if (e instanceof ErrorFormula) return { ok: false, error: e.message };
+    if (e instanceof RangeError) return { ok: false, error: "Fórmula demasiado anidada" };
     throw e;
   }
 }

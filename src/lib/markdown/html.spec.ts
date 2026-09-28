@@ -22,6 +22,20 @@ describe("markdown → html", () => {
     expect(html_de('[t](a"b) ![x"y](c)')).toBe('<p><a href="a&quot;b">t</a> <img src="c" alt="x&quot;y"></p>');
   });
 
+  test("una URL con esquema ejecutable no llega al href ni al src", () => {
+    expect(html_de("[x](javascript:alert)")).toBe("<p><a>x</a></p>");
+    expect(html_de("[x](JaVaScRiPt:alert) [y](vbscript:msgbox)")).toBe("<p><a>x</a> <a>y</a></p>");
+    expect(html_de("[x](java&#9;script:alert)")).toBe('<p><a href="java&amp;#9;script:alert">x</a></p>');
+    expect(a_html([{ tipo: "parrafo", contenido: [{ tipo: "enlace", texto: "x", url: " java\tscript:alert" }] }])).toBe("<p><a>x</a></p>");
+    expect(html_de("[x](data:text/html;base64,PHNjcmlwdD4=)")).toBe("<p><a>x</a></p>");
+    expect(html_de("![i](data:image/png;base64,AAAA) ![j](data:text/html;base64,AAAA)")).toBe(
+      '<p><img src="data:image/png;base64,AAAA" alt="i"> <img alt="j"></p>',
+    );
+    expect(html_de("[w](https://a.mx) [m](mailto:a@b.mx) [r](/interno)")).toBe(
+      '<p><a href="https://a.mx">w</a> <a href="mailto:a@b.mx">m</a> <a href="/interno">r</a></p>',
+    );
+  });
+
   test("tareas como casillas deshabilitadas", () => {
     expect(html_de("- [ ] pendiente\n- [x] hecha")).toBe(
       '<ul class="tareas">\n<li><input type="checkbox" disabled> pendiente</li>\n<li><input type="checkbox" disabled checked> hecha</li>\n</ul>',

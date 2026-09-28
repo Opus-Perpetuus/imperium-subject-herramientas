@@ -1,4 +1,4 @@
-import { normalizar_frase, normalizar_ligero } from "./normalizador.ts";
+import { expandir_numeros, normalizar_frase, normalizar_ligero, sin_acentos } from "./normalizador.ts";
 
 /**
  * Datos sueltos de una orden hablada: cantidad en pesos, hora, número
@@ -13,7 +13,6 @@ export type DatosExtraidos = {
   resto: string;
 };
 
-const CANTIDAD = /(?:\$\s*)?(\d+(?:[.,]\d{1,2})?)\s*(?:pesos|mxn|\$)?/gi;
 const HORA = /\b([01]?\d|2[0-3])[:\s]([0-5]\d)\b|\b([01]?\d|2[0-3])\s*(?:horas?|hrs?)\b|\b(\d{1,2})\s+y\s+(\d{1,2})\b/i;
 const NUMERO = /\b(\d+(?:[.,]\d+)?)\s*(?:litros?|l\b|pedidos?|unidades?|piezas?)/i;
 
@@ -26,19 +25,53 @@ const PREFIJOS_NOMBRE = [
 
 const dos = (n: number) => String(n).padStart(2, "0");
 
-export function extraer_cantidad(texto: string): number | null {
-  for (const m of texto.matchAll(CANTIDAD)) {
-    const v = Number(m[1]!.replace(",", "."));
-    if (Number.isFinite(v)) return v;
+/** Palabras tras las que una cifra es parte del domicilio, no dinero: «calle 5», «número 12». */
+const LUGAR = new Set([
+  "calle", "avenida", "av", "numero", "num", "colonia", "col", "domicilio", "casa", "interior",
+  "privada", "andador", "calzada", "boulevard", "blvd", "esquina",
+]);
+const MONEDA = /^(?:pesos?|mxn)$/;
+const NO_MONETARIA = /^(?:litros?|l|pedidos?|unidades?|piezas?|km|kilometros?)$/;
+const CIFRA = /^\d+(?:\.\d+)?$/;
+
+/** La orden en palabras sueltas, con los números compuestos y el decimal y la hora intactos. */
+function tokens_de(texto: string): string[] {
+  const s = sin_acentos(texto.toLowerCase())
+    .replace(/(\d),(\d{3})\b/g, "$1$2")
+    .replace(/(\d)[.,](\d{1,2})\b/g, "$1_$2")
+    .replace(/(\d):(\d)/g, "$1h$2")
+    .replace(/\$/g, " $ ")
+    .replace(/[^a-z0-9_$\s]/g, " ")
+    .replace(/_/g, ".");
+  return expandir_numeros(s.replace(/\s+/g, " ").trim()).split(" ").filter(Boolean);
+}
+
+/** Posiciones de la última aparición de `parte` dentro de `tokens`. */
+function posiciones(tokens: string[], parte: string[]): Set<number> {
+  if (!parte.length) return new Set();
+  for (let i = tokens.length - parte.length; i >= 0; i--) {
+    if (parte.every((p, k) => tokens[i + k] === p)) return new Set(parte.map((_, k) => i + k));
   }
-  // «cincuenta pesos» ya expandido a dígitos por la normalización.
-  const n = normalizar_frase(texto);
-  const m = /\b(\d+(?:\.\d+)?)\s*(?:pesos|mxn)?\b/.exec(n);
-  if (m) {
-    const v = Number(m[1]);
-    if (Number.isFinite(v)) return v;
-  }
-  return null;
+  return new Set();
+}
+
+/**
+ * Monto en pesos. Gana la cifra con «pesos» o «$»; si no hay, la primera que
+ * no sea número de calle, hora ni cantidad de otra cosa (litros, pedidos).
+ * `excluir` es un texto ya reconocido como otro dato (el domicilio): sus
+ * cifras no son dinero.
+ */
+export function extraer_cantidad(texto: string, excluir = ""): number | null {
+  const t = tokens_de(texto);
+  const fuera = posiciones(t, tokens_de(excluir));
+  const cifras = t.flatMap((tok, i) => (CIFRA.test(tok) ? [i] : []));
+  const explicita = cifras.find((i) => t[i - 1] === "$" || MONEDA.test(t[i + 1] ?? ""));
+  const elegida =
+    explicita ??
+    cifras.find(
+      (i) => !fuera.has(i) && !LUGAR.has(t[i - 1] ?? "") && t[i - 1] !== "las" && !NO_MONETARIA.test(t[i + 1] ?? ""),
+    );
+  return elegida == null ? null : Number(t[elegida]);
 }
 
 function hora_en_palabras(texto: string): string | null {
@@ -58,8 +91,9 @@ export function extraer_hora(texto: string): string | null {
   return hora_en_palabras(texto);
 }
 
+/** Número con unidad («4.2 litros», «veinte litros»): los dichos en palabras se leen como cifras. */
 export function extraer_numero(texto: string): number | null {
-  const m = NUMERO.exec(texto);
+  const m = NUMERO.exec(tokens_de(texto).join(" "));
   if (!m) return null;
   const v = Number(m[1]!.replace(",", "."));
   return Number.isFinite(v) ? v : null;
@@ -80,11 +114,11 @@ export function extraer_nombre(texto: string): string | null {
   return resto || null;
 }
 
-export function extraer_datos(texto: string): DatosExtraidos {
+export function extraer_datos(texto: string, excluir = ""): DatosExtraidos {
   const original = texto.trim();
   if (!original) return { cantidad: null, hora: null, numero: null, nombre: null, resto: "" };
   return {
-    cantidad: extraer_cantidad(original),
+    cantidad: extraer_cantidad(original, excluir),
     hora: extraer_hora(original),
     numero: extraer_numero(original),
     nombre: extraer_nombre(original),

@@ -2,8 +2,8 @@ import { contiene_frase, normalizar_frase } from "./normalizador.ts";
 
 /**
  * Frases canónicas y variantes coloquiales por intención. Se comparan ya
- * normalizadas (números en palabras expandidos: «anota un pedido» casa con
- * «anota 1 pedido»). Al resolver gana la frase más larga que aparezca.
+ * normalizadas (números en palabras expandidos: «gasto de cincuenta» casa con
+ * «gasto de 50»). Al resolver gana la frase más larga que aparezca.
  */
 export const SINONIMOS: Record<string, string[]> = {
   llamada_contestar: [

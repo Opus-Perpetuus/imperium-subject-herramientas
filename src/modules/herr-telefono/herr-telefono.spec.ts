@@ -33,7 +33,14 @@ async function perfil(extra: Record<string, unknown> = {}) {
 async function decidir(body: Record<string, unknown>) {
   const r = await call("POST", "/herr-telefono/decidir", body);
   expect(r.status).toBe(200);
-  return r.data as { accion: string; anunciar: boolean; texto_anuncio: string; retardo_s: number; silenciar_timbre: boolean };
+  return r.data as {
+    accion: string;
+    anunciar: boolean;
+    texto_anuncio: string;
+    retardo_s: number;
+    anuncio_repeticiones: number;
+    silenciar_timbre: boolean;
+  };
 }
 
 beforeEach(() => {
@@ -65,6 +72,52 @@ describe("perfiles", () => {
     expect((await call("GET", `/herr-telefono/${moto.id}`)).data.es_activa).toBe(false);
   });
 
+  test("un null del formulario toma el valor por defecto y created_by lo fija el servidor", async () => {
+    const casa = await perfil({ retardo_s: null, anuncio_repeticiones: "", ambito: null, activo: null, created_by: "otro@x" });
+    expect(casa).toMatchObject({ retardo_s: 5, anuncio_repeticiones: 2, ambito: "nadie", activo: false, created_by: "dev@local" });
+    const patch = await call("PATCH", `/herr-telefono/${casa.id}`, { retardo_s: null, created_by: "otro@x" });
+    expect(patch.data).toMatchObject({ retardo_s: 5, created_by: "dev@local" });
+    const contacto = await call("POST", "/herr-telefono/contactos", { name: "Ana", regla_id: casa.id, modo: null, created_by: "otro@x" });
+    expect(contacto.data).toMatchObject({ modo: "seleccionado", clave: "ana", created_by: "dev@local" });
+    expect((await call("PATCH", `/herr-telefono/contactos/${contacto.data.id}`, { clave: null })).data.clave).toBe("ana");
+    const llamada = await call("POST", "/herr-telefono/llamadas", { decision: "rechazada", fecha_hora: null, origen: null, conduciendo: null });
+    expect(llamada.data).toMatchObject({ fecha_hora: llamada.data.created_at, origen: "telefono", conduciendo: false, created_by: "dev@local" });
+  });
+
+  test("un null o vacío en una columna NOT NULL sin valor por defecto conserva lo guardado", async () => {
+    const llamada = await call("POST", "/herr-telefono/llamadas", {
+      decision: "rechazada",
+      fecha_hora: "2026-09-27T10:00:00.000Z",
+      is_active: null,
+    });
+    expect(llamada.data.is_active).toBe(true);
+    for (const vacio of [null, ""]) {
+      const r = await call("PATCH", `/herr-telefono/llamadas/${llamada.data.id}`, {
+        fecha_hora: vacio,
+        decision: vacio,
+        name: vacio,
+        is_active: null,
+      });
+      expect(r.status).toBe(200);
+      expect(r.data).toMatchObject({
+        fecha_hora: "2026-09-27T10:00:00.000Z",
+        decision: "rechazada",
+        name: llamada.data.name,
+        is_active: true,
+      });
+    }
+    const casa = await perfil({ is_active: null });
+    expect(casa.is_active).toBe(true);
+    expect((await call("PATCH", `/herr-telefono/${casa.id}`, { name: null, is_active: null })).data).toMatchObject({
+      name: "Casa",
+      is_active: true,
+    });
+    const contacto = await call("POST", "/herr-telefono/contactos", { name: "Ana", regla_id: casa.id, is_active: null });
+    expect(contacto.data.is_active).toBe(true);
+    const editado = await call("PATCH", `/herr-telefono/contactos/${contacto.data.id}`, { regla_id: "", name: null });
+    expect(editado.data).toMatchObject({ regla_id: casa.id, name: "Ana" });
+  });
+
   test("ámbito, acción y campos desconocidos se validan", async () => {
     expect((await call("POST", "/herr-telefono", { name: "X", ambito: "marte" })).status).toBe(400);
     expect((await call("POST", "/herr-telefono", { name: "X", accion_desconocidos: "gritar" })).status).toBe(400);
@@ -74,7 +127,7 @@ describe("perfiles", () => {
   test("sin perfil vigente la ruta lo dice y el contestador está apagado", async () => {
     expect((await call("GET", "/herr-telefono/activa")).data).toEqual({ perfil: null, seleccionados: [], rechazados: [] });
     const d = await decidir({ numero: "+525599999999", contacto_conocido: false });
-    expect(d).toMatchObject({ accion: "permitir", anunciar: false, silenciar_timbre: false, retardo_s: 5 });
+    expect(d).toMatchObject({ accion: "permitir", anunciar: false, silenciar_timbre: false, retardo_s: 5, anuncio_repeticiones: 2 });
   });
 });
 
@@ -154,6 +207,22 @@ describe("decidir", () => {
     expect(nombres).toContain("silenciada · +525599999999");
     expect(nombres).toContain("contestada · Rafael");
     expect(llamadas.data.find((l: { origen: string }) => l.origen === "whatsapp").contacto_nombre).toBe("Luisa");
+  });
+
+  test("un contacto dado de alta sin clave se reconoce por su nombre o por su teléfono", async () => {
+    const casa = await perfil({ activo: true, ambito: "seleccionados", retardo_s: 200, anuncio_repeticiones: 3 });
+    await call("POST", "/herr-telefono/contactos", { name: "Spam Seguros", regla_id: casa.id, modo: "rechazado" });
+    await call("POST", "/herr-telefono/contactos", { name: "Mamá", regla_id: casa.id, telefono: "+52 1 55 1234 5678" });
+
+    expect((await decidir({ contacto_conocido: true, contacto_nombre: "Spam Seguros" })).accion).toBe("rechazar");
+    // La clave de Android no casa, pero el nombre sí.
+    expect((await decidir({ contacto_conocido: true, contacto_clave: "k9", contacto_nombre: "spam  seguros" })).accion).toBe("rechazar");
+    expect((await decidir({ contacto_nombre: "Spam Seguros", origen: "whatsapp" })).accion).toBe("rechazar");
+
+    const mama = await decidir({ contacto_conocido: true, contacto_nombre: "Mamá" });
+    expect(mama).toMatchObject({ accion: "contestar", retardo_s: 60, anuncio_repeticiones: 3 });
+    expect((await decidir({ numero: "5512345678", contacto_conocido: false })).accion).toBe("contestar");
+    expect((await decidir({ numero: "5500000000", contacto_conocido: false })).accion).toBe("permitir");
   });
 
   test("conduciendo fuerza el contestador y rechaza desconocidos solo si el perfil lo tiene activado", async () => {

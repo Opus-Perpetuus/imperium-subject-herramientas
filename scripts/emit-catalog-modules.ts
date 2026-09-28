@@ -4,9 +4,9 @@
  *
  *   bun run scripts/emit-catalog-modules.ts > /tmp/modules.json
  *
- * Un módulo con tabla propia produce una entrada con sus columnas (sin las
- * base); un módulo sin tabla (utilidades, inicio) produce una entrada sin
- * columnas para que el núcleo le dé menú y grants.
+ * Solo los módulos con tabla propia: uno sin tabla (inicio, utilidades) va
+ * como hoja con `resources` en `menus[]` del catálogo, porque el núcleo trata
+ * `modules[].table` como identificador SQL.
  */
 import { SUBJECT } from "../src/subject.ts";
 
@@ -46,9 +46,10 @@ for (const mod of SUBJECT.modules) {
   if (leaf?.icon) icons.set(mod.resource, leaf.icon);
 }
 
-const out = SUBJECT.modules.map((mod) => {
+const out = SUBJECT.modules.flatMap((mod) => {
   const table_name = mod.resource.replace(/-/g, "_");
   const table = tables.get(table_name);
+  if (!table) return [];
   const columns = (table?.columns ?? [])
     .filter((c) => !BASE.has(c.name))
     .map((c) => ({
@@ -59,9 +60,9 @@ const out = SUBJECT.modules.map((mod) => {
       component: COMPONENT[c.type] ?? "input-text",
       label: c.name.replace(/_/g, " "),
     }));
-  return {
+  return [{
     resource: mod.resource,
-    table: table ? table_name : "",
+    table: table_name,
     name: mod.labels.plural,
     path: `/${mod.resource}`,
     collection: mod.resource,
@@ -69,7 +70,7 @@ const out = SUBJECT.modules.map((mod) => {
     menu_ref: `herramientas-${mod.resource}`,
     icon: icons.get(mod.resource) ?? "fa-toolbox",
     columns,
-  };
+  }];
 });
 
 console.log(JSON.stringify(out, null, 2));

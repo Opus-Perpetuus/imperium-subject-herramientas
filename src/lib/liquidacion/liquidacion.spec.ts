@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { DomainRow } from "@opus-perpetuus/imperium-core-kit";
-import { APORTE, RETIRO, disponible, efectivo_en_mano, liquidar, sello, tipo_caja } from "./liquidacion.ts";
+import { APORTE, RETIRO, disponible, efectivo_en_mano, liquidar, tipo_caja } from "./liquidacion.ts";
 
 /**
  * Cada regla —piso 0, orden de gastos, montos inválidos fuera, fuente caja
@@ -255,9 +255,5 @@ describe("disponible", () => {
     const pedidos = [pedido({ cobrar: 100, recibido: 100 })];
     expect(efectivo_en_mano(pedidos, [], [caja({ tipo: RETIRO, cantidad: 200 }), caja({ tipo: APORTE, cantidad: 30 })])).toBe(300);
     expect(disponible(pedidos, [])).toBe(100);
-  });
-
-  test("el sello es fecha y hora", () => {
-    expect(sello("2026-08-05", "18:30")).toBe("2026-08-05 18:30");
   });
 });

@@ -39,15 +39,19 @@ export const herr_menu_tamanos_module = define_module({
     },
     options_map: { value: "id", label: "name" },
     hooks: {
-      before_create: (_ctx, row) => ({
+      before_create: (ctx, row) => ({
         ...row,
+        created_by: ctx.actor,
         divisible: row.divisible ?? "1,2,4",
         search_field: campo_busqueda(row.name),
       }),
-      before_update: (_ctx, _id, patch, existing) => ({
-        ...patch,
-        search_field: campo_busqueda(patch.name ?? existing.name),
-      }),
+      before_update: (_ctx, _id, patch, existing) => {
+        const { created_by: _autor, ...resto } = patch;
+        return {
+          ...resto,
+          search_field: campo_busqueda(resto.name ?? existing.name),
+        };
+      },
     },
   }),
   tables: herr_menu_tamanos_tables,

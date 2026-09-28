@@ -2,19 +2,33 @@ import { afterAll, describe, expect, test } from "bun:test";
 import {
   create_kirlet_test_context,
   define_subject,
+  sign_kirlet_identity_v2,
   validate_page_descriptor_renderable,
+  type KirletIdentity,
 } from "@opus-perpetuus/imperium-core-kit";
 import { herr_utilidades_module } from "./herr-utilidades.routes.ts";
 
-const server = create_kirlet_test_context(
-  define_subject({
-    id: "SUBJECT-herramientas",
-    name: "Herramientas",
-    compat: { nox: ">=0.5.0", kit: "^0.5.0" },
-    modules: [herr_utilidades_module],
-  }),
-);
-afterAll(() => server.stop());
+const SUBJECT = define_subject({
+  id: "SUBJECT-herramientas",
+  name: "Herramientas",
+  compat: { nox: ">=0.5.0", kit: "^0.5.0" },
+  modules: [herr_utilidades_module],
+});
+const server = create_kirlet_test_context(SUBJECT);
+const SECRETO = "secreto-de-prueba";
+const firmado = create_kirlet_test_context(SUBJECT, { auth_disabled: false, gateway_secret: SECRETO });
+afterAll(() => {
+  server.stop();
+  firmado.stop();
+});
+
+/** Un usuario sin ningún grant de Herramientas (no tiene su menú). */
+function sin_menu(user_type: KirletIdentity["user_type"]): Record<string, string> {
+  return sign_kirlet_identity_v2(
+    { user_id: "u1", email: "u1@x", is_admin: false, kirlet_id: SUBJECT.technical_id, grants: [], user_type, realm: "internal" },
+    SECRETO,
+  );
+}
 
 const get = (ruta: string) => server.fetch(new Request(`http://t${ruta}`));
 const post = (ruta: string, body: unknown) =>
@@ -55,6 +69,25 @@ describe("herr-utilidades", () => {
     expect(data.html).toContain('<input type="checkbox" disabled>');
     expect(data.html).toContain('<a data-wiki="nota">alias</a>');
     expect(data.html).toContain('<span class="etiqueta">#x</span>');
+  });
+
+  test("un usuario interno sin el menú de Herramientas puede usar los servicios; sin sesión interna, 401", async () => {
+    const markdown = (headers: Record<string, string>) =>
+      firmado.fetch(
+        new Request("http://t/herr-utilidades/markdown", {
+          method: "POST",
+          headers: { ...headers, "content-type": "application/json" },
+          body: JSON.stringify({ texto: "**a**", sanear: false }),
+        }),
+      );
+    const r = await markdown(sin_menu("internal"));
+    expect(r.status).toBe(200);
+    expect((await r.json()).data.html).toBe("<p><strong>a</strong></p>");
+    const salud = await firmado.fetch(new Request("http://t/herr-utilidades/salud", { headers: sin_menu("internal") }));
+    expect((await salud.json()).data.ok).toBe(true);
+    expect((await markdown(sin_menu("external"))).status).toBe(401);
+    expect((await markdown(sin_menu("anonymous"))).status).toBe(401);
+    expect((await markdown({})).status).toBe(401);
   });
 
   test("markdown exige texto", async () => {

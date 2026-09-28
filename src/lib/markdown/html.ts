@@ -4,8 +4,9 @@ import { analizar_tramos } from "./parser.ts";
 
 /**
  * AST → HTML. Todo texto y atributo se escapa; el parser no tiene bloque de
- * HTML crudo, así que nada de la entrada llega a la salida como marcado.
- * Los metadatos no se pintan.
+ * HTML crudo, así que nada de la entrada llega a la salida como marcado. Una
+ * URL con esquema ejecutable (`javascript:`, `vbscript:`, `data:` salvo imagen
+ * en `src`) se omite. Los metadatos no se pintan.
  */
 
 export function escapar(texto: string): string {
@@ -15,6 +16,19 @@ export function escapar(texto: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+const ESQUEMA = /^([a-z][a-z0-9+.-]*):/i;
+
+/** La URL si es segura para `href`/`src`; si no, `null`. */
+function url_segura(url: string, para: "href" | "src"): string | null {
+  // El navegador ignora espacios y controles dentro del esquema: «java\tscript:» ejecuta.
+  const compacta = url.replace(/[\u0000-\u0020\u007f-\u009f]/g, "").toLowerCase();
+  const esquema = ESQUEMA.exec(compacta)?.[1];
+  if (!esquema) return url;
+  if (esquema === "javascript" || esquema === "vbscript") return null;
+  if (esquema === "data") return para === "src" && compacta.startsWith("data:image/") ? url : null;
+  return url;
 }
 
 export function a_html(bloques: Bloque[]): string {
@@ -84,10 +98,14 @@ function tramo_a_html(t: Tramo): string {
       return `<mark>${tramos_a_html(t.hijos)}</mark>`;
     case "codigo":
       return `<code>${escapar(t.valor)}</code>`;
-    case "enlace":
-      return `<a href="${escapar(t.url)}">${escapar(t.texto)}</a>`;
-    case "imagen":
-      return `<img src="${escapar(t.url)}" alt="${escapar(t.alt)}">`;
+    case "enlace": {
+      const url = url_segura(t.url, "href");
+      return url === null ? `<a>${escapar(t.texto)}</a>` : `<a href="${escapar(url)}">${escapar(t.texto)}</a>`;
+    }
+    case "imagen": {
+      const url = url_segura(t.url, "src");
+      return url === null ? `<img alt="${escapar(t.alt)}">` : `<img src="${escapar(url)}" alt="${escapar(t.alt)}">`;
+    }
     case "wiki":
       return `<a data-wiki="${escapar(t.destino)}">${escapar(t.alias ?? t.destino)}</a>`;
     case "etiqueta":

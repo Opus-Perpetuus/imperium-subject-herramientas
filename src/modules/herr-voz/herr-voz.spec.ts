@@ -200,22 +200,30 @@ describe("POST /herr-voz/ejecutar", () => {
     const fila = (await server.data.findMany("herr_pedidos", {}))[0]!;
     expect(fila).toMatchObject({ orden: 1, cobrar: 250, domicilio_texto: "calle 5", estado: "capturado" });
 
-    expect((await ejecutar("gasté 80 pesos de refacciones")).data.respuesta).toBe("Gasto de 80 pesos registrado.");
-    expect((await server.data.findOne("herr_gastos", { motivo: "refacciones" }))?.cantidad).toBe(80);
-
     expect((await ejecutar("saqué de cambio 200")).data.respuesta).toBe(
       "Anotados 200 pesos de cambio de la caja. No cuenta como venta.",
     );
     expect((await server.data.findOne("herr_caja", { tipo: "retiro_cambio" }))?.cantidad).toBe(200);
 
-    expect((await ejecutar("entregado")).data.respuesta).toBe("Entregado calle 5. No queda ninguno.");
-    expect((await server.data.findOne("herr_pedidos", { id: String(fila.id) }))?.estado).toBe("entregado");
+    expect((await ejecutar("entregado, recibí doscientos cincuenta")).data.respuesta).toBe("Entregado calle 5. No queda ninguno.");
+    expect(await server.data.findOne("herr_pedidos", { id: String(fila.id) })).toMatchObject({ estado: "entregado", recibido: 250 });
+
+    expect((await ejecutar("gasté 80 pesos de refacciones")).data.respuesta).toBe("Gasto de 80 pesos registrado.");
+    expect((await server.data.findOne("herr_gastos", { motivo: "refacciones" }))?.cantidad).toBe(80);
 
     const hoy = await ejecutar("cuánto llevo hoy");
-    expect(hoy.data.respuesta).toBe("Hoy, con la jornada abierta, a caja irían 370 pesos, propinas 0, 1 pedidos cobrables.");
+    expect(hoy.data.respuesta).toBe("Hoy, con la jornada abierta, a caja irían 170 pesos, propinas 0, 1 pedidos cobrables.");
 
-    expect((await ejecutar("entregar el cobro")).data.respuesta).toBe("Cobro entregado. Entregas 370 pesos.");
+    expect((await ejecutar("entregar el cobro")).data.respuesta).toBe(
+      "Cobro entregado. Entregas 170 pesos. Conservas 200 pesos de cambio.",
+    );
     expect((await server.data.findOne("herr_pedidos", { id: String(fila.id) }))?.cobrado).toBe(true);
+    expect((await server.data.findOne("herr_caja", { tipo: "retiro_cambio" }))?.saldado).toBe(false);
+
+    const cambio = await ejecutar("entregué el cobro y devuelvo el cambio");
+    expect(cambio.data.datos).toMatchObject({ devolver_cambio: "true" });
+    expect(cambio.data.respuesta).toBe("Cobro entregado. Entregas 200 pesos.");
+    expect((await server.data.findOne("herr_caja", { tipo: "retiro_cambio" }))?.saldado).toBe(true);
 
     const fin = await ejecutar("terminar jornada");
     expect(fin.data.respuesta).toBe("Jornada terminada.");
@@ -227,6 +235,21 @@ describe("POST /herr-voz/ejecutar", () => {
     expect(filas.map((f) => f.intencion)).toContain("caja_retiro");
   });
 
+  test("«entregado» fija el pedido al preguntar; si ya no está abierto, el «sí» no marca otro", async () => {
+    await ejecutar("iniciar jornada");
+    await ejecutar("anota un pedido de cien en morelos 45");
+    await ejecutar("anota un pedido de doscientos en juárez 10");
+    const a = await server.data.findOne("herr_pedidos", { domicilio_texto: "morelos 45" });
+    const r = await post("/herr-voz/ejecutar", { texto: "entregado" });
+    expect(r.data.estado).toBe("pendiente_confirmacion");
+    expect(r.data.respuesta).toBe("Marco entregado morelos 45. ¿Confirmas?");
+    expect(r.data.datos).toMatchObject({ pedido_id: String(a!.id) });
+    await server.data.update("herr_pedidos", { id: String(a!.id) }, { estado: "entregado" });
+    const ok = await post("/herr-voz/ejecutar", { intencion: "entrega_registrar", datos: r.data.datos, confirmado: true });
+    expect(ok.data.respuesta).toBe("No encontré ese pedido.");
+    expect((await server.data.findOne("herr_pedidos", { domicilio_texto: "juarez 10" }))?.estado).toBe("capturado");
+  });
+
   test("un fallo de dominio se contesta en voz y queda como error", async () => {
     const r = await ejecutar("anota un pedido de 250 en la calle 5");
     expect(r.status).toBe(200);
@@ -235,10 +258,15 @@ describe("POST /herr-voz/ejecutar", () => {
     expect((await bitacora())[0]?.estado).toBe("error");
   });
 
-  test("el formulario de la página manda «orden» y confirmado", async () => {
-    const r = await post("/herr-voz/ejecutar", { orden: "cuántos pedidos llevo", confirmado: true });
+  test("el formulario de la página manda «orden» y la casilla: sin marcar pregunta, marcada ejecuta", async () => {
+    const r = await post("/herr-voz/ejecutar", { orden: "cuántos pedidos llevo", confirmado: false });
     expect(r.data.estado).toBe("ejecutado");
     expect(r.data.respuesta).toBe("Llevas 0 pedidos.");
+    const pregunta = await post("/herr-voz/ejecutar", { orden: "iniciar jornada", confirmado: false });
+    expect(pregunta.data.estado).toBe("pendiente_confirmacion");
+    expect(pregunta.message).toBe("Inicio la jornada. ¿Confirmas?");
+    expect(await server.data.count("herr_jornadas")).toBe(0);
+    expect((await post("/herr-voz/ejecutar", { orden: "iniciar jornada", confirmado: true })).data.estado).toBe("ejecutado");
   });
 
   test("intención inválida sin texto es 400", async () => {
@@ -285,11 +313,11 @@ describe("CRUD y páginas", () => {
     expect(page.children.map((c) => c.component)).toEqual(["nox.alert", "nox.form", "nox.table"]);
     const form = page.children[1]!;
     expect(form.props.invoke).toEqual({ method: "POST", action: "api://herr-voz/ejecutar" });
-    expect(form.props.body).toEqual({ confirmado: true });
-    expect((form.children as Array<{ component: string; props?: { name?: string } }>)[0]).toMatchObject({
-      component: "nox.input-text",
-      props: { name: "orden" },
-    });
+    // Sin `confirmado` fijo: lo que escribe primero se pregunta y se confirma marcando la casilla.
+    expect(form.props.body).toBeUndefined();
+    const campos = form.children as Array<{ component: string; props?: { name?: string; value?: unknown } }>;
+    expect(campos[0]).toMatchObject({ component: "nox.input-text", props: { name: "orden" } });
+    expect(campos[1]).toMatchObject({ component: "nox.input-checkbox", props: { name: "confirmado", value: false } });
     const rows = page.children[2]!.props.rows as Array<Record<string, unknown>>;
     expect(rows).toHaveLength(15);
     expect(rows[0]).toMatchObject({ texto: "orden 16 cuánto llevo hoy", intencion: "consulta_hoy", estado: "interpretado" });

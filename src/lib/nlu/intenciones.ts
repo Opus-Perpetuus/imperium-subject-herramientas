@@ -1,10 +1,12 @@
-import { contiene_frase, normalizar_ligero } from "./normalizador.ts";
+import { contiene_frase, expandir_numeros, normalizar_ligero } from "./normalizador.ts";
 
 /**
  * Registro de intenciones: frases clave (límite de palabra, gana la más
  * larga) y expresiones regulares que además capturan datos (contacto, app,
  * búsqueda, domicilio). Se casa sobre el texto con normalización ligera, sin
- * expandir números, para que las frases se escriban como se dicen.
+ * expandir números, para que las frases se escriban como se dicen; un regex
+ * que no casa así se prueba con los números en cifras («pedido de doscientos
+ * cincuenta en…»).
  */
 
 export type Datos = Record<string, string>;
@@ -202,10 +204,18 @@ export const INTENCIONES: Intencion[] = [
     etiqueta: "marcar entregado",
     patrones: [
       frases("entregado", "entregue", "ya entregue", "listo el pedido", "pedido entregado", "ya lo entregue"),
-      regex(/(?:entregado|entregue|entregado el pedido|entregue el pedido) (?:en|de|a)(?: la| el| los| las)? (.+)/, { 1: "domicilio" }),
+      // El domicilio acaba donde empieza lo cobrado («…morelos 45, recibí 300»). Un «y» suelto
+      // no corta: es parte del domicilio en un cruce («juárez y morelos»).
+      regex(
+        /(?:entregado|entregue|entregado el pedido|entregue el pedido) (?:en|de|a)(?: la| el| los| las)? (.+?)(?=(?: y)? (?:recib|cobr|me dio|me dieron|me pag)|$)/,
+        { 1: "domicilio" },
+      ),
     ],
     escribe: true,
-    resumen: (d) => (d.domicilio ? `Marco entregado el pedido de ${d.domicilio}.` : "Marco la entrega."),
+    resumen: (d) => {
+      const que = d.domicilio ? `Marco entregado el pedido de ${d.domicilio}.` : "Marco la entrega.";
+      return d.cantidad ? `${que} Recibí ${d.cantidad} pesos.` : que;
+    },
   },
   {
     id: "caja_retiro",
@@ -267,7 +277,8 @@ export const INTENCIONES: Intencion[] = [
       frases("entregar el cobro", "registrar cobro", "anotar cobro", "entrega cobro", "liquidar cobro", "cobro de caja", "entregue el cobro", "liquidar"),
     ],
     escribe: true,
-    resumen: () => "Registro la entrega del cobro.",
+    resumen: (d) =>
+      d.devolver_cambio ? "Registro la entrega del cobro y devuelvo el cambio." : "Registro la entrega del cobro.",
   },
   {
     id: "consulta_hoy",
@@ -314,7 +325,7 @@ export const intencion_por_id = (id: string) => INTENCIONES.find((i) => i.id ===
 
 export const etiqueta_de = (id: string) => intencion_por_id(id)?.etiqueta ?? id.replace(/_/g, " ");
 
-function casar_patron(patron: Patron, texto: string): { datos: Datos; puntos: number } | null {
+function casar_patron(patron: Patron, texto: string, con_cifras: string): { datos: Datos; puntos: number } | null {
   if (patron.tipo === "frases") {
     let mejor = "";
     for (const cruda of patron.frases) {
@@ -323,7 +334,7 @@ function casar_patron(patron: Patron, texto: string): { datos: Datos; puntos: nu
     }
     return mejor ? { datos: {}, puntos: mejor.length } : null;
   }
-  const m = patron.regex.exec(texto);
+  const m = patron.regex.exec(texto) ?? patron.regex.exec(con_cifras);
   if (!m) return null;
   const datos: Datos = {};
   for (const [grupo, clave] of Object.entries(patron.grupos)) {
@@ -342,12 +353,13 @@ export function casar_intencion(
   activas: string[] = [],
 ): { intencion: string; datos: Datos } | null {
   const n = normalizar_ligero(texto);
+  const con_cifras = expandir_numeros(n);
   type Casada = { intencion: string; datos: Datos; puntos: number };
   const por_intencion = new Map<string, Casada>();
   for (const intencion of INTENCIONES) {
     if (activas.length && !activas.includes(intencion.id)) continue;
     for (const patron of intencion.patrones) {
-      const hit = casar_patron(patron, n);
+      const hit = casar_patron(patron, n, con_cifras);
       if (!hit) continue;
       const previa = por_intencion.get(intencion.id);
       por_intencion.set(intencion.id, {

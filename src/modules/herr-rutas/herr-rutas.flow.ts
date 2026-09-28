@@ -51,6 +51,7 @@ export const herr_rutas_flow = define_routes({
       created_at: ts,
       updated_at: ts,
     });
+    if (jornada_id) await ctx.data.update("herr_jornadas", { id: jornada_id }, { ruta_id: ruta.id, updated_at: ts });
     return ctx.created(ruta);
   },
 
@@ -88,11 +89,12 @@ export const herr_rutas_flow = define_routes({
       }
     }
 
-    const distancia_m = analizar(todos).distancia_m;
+    const informe = analizar(todos);
+    const distancia_m = informe.distancia_m;
     await ctx.data.update(
       "herr_rutas",
       { id: String(ruta.id) },
-      { puntos: todos, distancia_m, updated_at: now_iso() },
+      { puntos: todos, distancia_m, ...(texto(ruta.terminada) ? { informe } : {}), updated_at: now_iso() },
     );
     return {
       data: {

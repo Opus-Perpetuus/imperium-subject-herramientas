@@ -1,3 +1,4 @@
+import { sello_ahora, zona_valida } from "../comun.ts";
 import { constante_de, type CampoSpec, type Registro, type TablaSpec } from "./esquema.ts";
 
 /**
@@ -31,7 +32,7 @@ export function planear_cierre(
 
   const cierre_id = `cierre-${Date.parse(cerrado_at)}`;
   const esquema = esquema_archivo(origen);
-  const sello = cerrado_at.slice(0, 16);
+  const sello = sello_ahora(zona_valida(), new Date(cerrado_at)).replace(" ", "T");
   const claves_resumen = claves_resumen_archivo(origen);
   const claves_constante = claves_constante_archivo(origen);
 

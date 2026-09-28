@@ -109,7 +109,9 @@ describe("filas y orden", () => {
 
   test("validadores", () => {
     expect(fecha_valida("2026-09-28")).toBe(true);
-    expect(fecha_valida("2026-02-30")).toBe(true); // Date.parse lo acepta; la fecha se valida en forma, no en calendario.
+    expect(fecha_valida("2026-02-30")).toBe(false);
+    expect(fecha_valida("2026-04-31")).toBe(false);
+    expect(fecha_valida("2028-02-29")).toBe(true);
     expect(fecha_valida("28/09/2026")).toBe(false);
     expect(adelanto_valido(15)).toBe(true);
     expect(adelanto_valido(7)).toBe(false);

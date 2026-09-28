@@ -7,10 +7,19 @@ import {
   type KirletCtx,
   type KirletRouteTable,
 } from "@opus-perpetuus/imperium-core-kit";
-import { campo_busqueda, falla, fila_o_404, texto } from "../../lib/comun.ts";
+import {
+  campo_busqueda,
+  falla,
+  fila_o_404,
+  guardar_imagen,
+  sello_ahora,
+  solo_dia,
+  texto,
+  zona_valida,
+} from "../../lib/comun.ts";
 import { texto_buscable } from "../../lib/formulas/busqueda.ts";
 import { calcular_valores, calculados_de } from "../../lib/formulas/calculadora.ts";
-import { spec_de_fila, type TablaSpec } from "../../lib/formulas/esquema.ts";
+import { spec_de_fila, type CampoSpec, type TablaSpec } from "../../lib/formulas/esquema.ts";
 import { formatear as unir_multivalor } from "../../lib/formulas/multivalor.ts";
 import { objeto, registro_como_fila, registros_de, tabla_activa } from "../herr-tablas/herr-tablas.flow.ts";
 
@@ -28,6 +37,19 @@ function como_texto(v: unknown): string {
   return String(v);
 }
 
+const CON_ZONA = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+/** Fecha como día `AAAA-MM-DD`; fecha y hora como hora de pared del negocio `AAAA-MM-DDTHH:mm`. */
+function valor_de_campo(campo: CampoSpec, v: unknown): string {
+  if (campo.tipo === "fecha") return como_texto(solo_dia(v));
+  if (campo.tipo === "fecha_hora" && typeof v === "string" && CON_ZONA.test(v.trim())) {
+    const ms = Date.parse(v.trim());
+    if (!Number.isFinite(ms)) falla(400, `«${campo.etiqueta}» no es una fecha y hora válida`, "validation_error");
+    return sello_ahora(zona_valida(), new Date(ms)).replace(" ", "T");
+  }
+  return como_texto(v);
+}
+
 /** Solo campos capturables de la tabla, y los requeridos presentes. */
 function valores_capturados(spec: TablaSpec, entrada: unknown): Record<string, string> {
   const fuente = entrada ?? {};
@@ -35,8 +57,9 @@ function valores_capturados(spec: TablaSpec, entrada: unknown): Record<string, s
   const capturables = new Map(spec.campos.filter((c) => c.tipo !== "calculado").map((c) => [c.clave, c]));
   const valores: Record<string, string> = {};
   for (const [clave, v] of Object.entries(fuente as Record<string, unknown>)) {
-    if (!capturables.has(clave)) falla(400, `«${clave}» no es un campo de la tabla`);
-    valores[clave] = como_texto(v);
+    const campo = capturables.get(clave);
+    if (!campo) falla(400, `«${clave}» no es un campo de la tabla`);
+    valores[clave] = valor_de_campo(campo, v);
   }
   for (const campo of capturables.values()) {
     if (campo.requerido && !valores[campo.clave]?.trim()) falla(400, `Falta «${campo.etiqueta}»`);
@@ -51,22 +74,31 @@ function nombre_de(spec: TablaSpec, valores: Record<string, string>): string {
 }
 
 /**
- * Valida los valores contra la tabla, calcula los calculados con las demás
- * filas (agregados y funciones por fila) y deja listos `name` y `search_field`.
+ * Valida los valores contra la tabla, guarda sus fotos como adjuntos, calcula
+ * los calculados con la tabla entera contando este registro (agregados y
+ * funciones por fila) y deja listos `name` y `search_field`.
  */
 export async function preparar_registro(
   ctx: KirletCtx,
   patch: DomainRow,
   existing: DomainRow | null,
 ): Promise<DomainRow> {
+  if (existing) delete patch.created_by;
+  else patch.created_by = ctx.actor;
   const tabla_id = texto(patch.tabla_id ?? existing?.tabla_id);
   const spec = spec_de_fila(await tabla_activa(ctx, tabla_id));
   const valores = valores_capturados(spec, patch.valores ?? existing?.valores);
   const id = texto(patch.id ?? existing?.id);
-  const otras = (await registros_de(ctx, tabla_id))
+  for (const campo of spec.campos) {
+    if (campo.tipo === "foto" && valores[campo.clave]) {
+      valores[campo.clave] = String(await guardar_imagen(ctx, "herr-registros", id, valores[campo.clave]));
+    }
+  }
+  const filas = (await registros_de(ctx, tabla_id))
     .filter((r) => String(r.id) !== id)
     .map(registro_como_fila);
-  const todos = calcular_valores(spec, valores, otras);
+  filas.push({ id, valores });
+  const todos = calcular_valores(spec, valores, filas);
   const calculados = calculados_de(spec, todos);
   return {
     ...patch,
@@ -141,7 +173,6 @@ export const herr_registros_flow = define_routes({
         valores: campos,
         description: "",
         is_active: true,
-        created_by: ctx.actor,
         created_at: ts,
         updated_at: ts,
       },

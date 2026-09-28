@@ -10,6 +10,23 @@ describe("extractor de datos", () => {
     expect(extraer_cantidad("cuánto llevo hoy")).toBeNull();
   });
 
+  test("montos en palabras", () => {
+    expect(extraer_cantidad("pedido de doscientos cincuenta en morelos 45")).toBe(250);
+    expect(extraer_cantidad("gasté mil quinientos")).toBe(1500);
+    expect(extraer_cantidad("trescientos veinte pesos")).toBe(320);
+    expect(extraer_cantidad("anota un pedido de cincuenta")).toBe(50);
+    expect(extraer_cantidad("anota un pedido en morelos")).toBeNull();
+  });
+
+  test("la cifra del domicilio, la hora o los litros no son dinero", () => {
+    expect(extraer_cantidad("entregué en morelos 45", "morelos 45")).toBeNull();
+    expect(extraer_cantidad("entregué en morelos 45 me dieron 300 pesos", "morelos 45 me dieron 300 pesos")).toBe(300);
+    expect(extraer_cantidad("pedido en la calle 5")).toBeNull();
+    expect(extraer_cantidad("cargué 4 litros por 200")).toBe(200);
+    expect(extraer_cantidad("a las 10:15 gasté 80")).toBe(80);
+    expect(extraer_cantidad("pagué 1,500")).toBe(1500);
+  });
+
   test("hora", () => {
     expect(extraer_hora("a las 14:30")).toBe("14:30");
     expect(extraer_hora("a las 9 horas")).toBe("09:00");
@@ -21,6 +38,12 @@ describe("extractor de datos", () => {
     expect(extraer_numero("cargué 4.2 litros")).toBeCloseTo(4.2);
     expect(extraer_numero("3 pedidos")).toBe(3);
     expect(extraer_numero("saqué de cambio 200")).toBeNull();
+    expect(extraer_numero("cargué veinte litros")).toBe(20);
+    expect(extraer_numero("cargué 4,2 litros")).toBeCloseTo(4.2);
+  });
+
+  test("litros y pesos en palabras", () => {
+    expect(extraer_datos("cargué veinte litros por quinientos")).toMatchObject({ numero: 20, cantidad: 500 });
   });
 
   test("nombre tras un prefijo de acción", () => {

@@ -10,7 +10,15 @@ describe("normalizador", () => {
   test("expande números en palabras", () => {
     expect(normalizar_frase("llama a dos")).toBe("llama a 2");
     expect(normalizar_frase("gasté cincuenta pesos")).toBe("gaste 50 pesos");
-    expect(normalizar_frase("anota un pedido")).toBe("anota 1 pedido");
+    expect(normalizar_frase("anota un pedido")).toBe("anota un pedido");
+    expect(normalizar_frase("pedido de doscientos cincuenta")).toBe("pedido de 250");
+    expect(normalizar_frase("mil quinientos pesos")).toBe("1500 pesos");
+    expect(normalizar_frase("trescientos veinte pesos")).toBe("320 pesos");
+    expect(normalizar_frase("dos mil ciento un pesos")).toBe("2101 pesos");
+    expect(normalizar_frase("treinta y cinco")).toBe("35");
+    expect(normalizar_frase("cien cincuenta")).toBe("100 50");
+    expect(normalizar_frase("en morelos 45 y 20")).toBe("en morelos 45 y 20");
+    expect(normalizar_frase("veinte punto cinco litros")).toBe("20.5 litros");
   });
 
   test("la ligera no expande números ni quita muletillas", () => {

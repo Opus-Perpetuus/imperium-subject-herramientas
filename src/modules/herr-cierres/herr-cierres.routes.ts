@@ -9,6 +9,8 @@ const ESCRITURAS = new Set([
   "PATCH /herr-cierres/:id",
   "PUT /herr-cierres",
   "PUT /herr-cierres/batch",
+  "DELETE /herr-cierres/:id",
+  "DELETE /herr-cierres/id/:id",
 ]);
 
 function solo_lectura(rutas: KirletRouteTable): KirletRouteTable {

@@ -1,7 +1,7 @@
 import { define_crud, define_module, type DomainRow, type KirletCtx } from "@opus-perpetuus/imperium-core-kit";
-import { campo_busqueda, falla, fecha_hoy, hora_ahora, texto } from "../../lib/comun.ts";
-import { jornada_activa } from "../../lib/jornadas/jornada.ts";
+import { campo_busqueda, falla, fecha_hoy, guardar_imagen, hora_ahora, solo_dia, texto } from "../../lib/comun.ts";
 import { ETIQUETA_TIPO_CAJA, TIPOS_CAJA } from "../../lib/liquidacion/liquidacion.ts";
+import { exigir_no_liquidada, jornada_activa } from "../../lib/reparto/servicios.ts";
 import { herr_caja_pages } from "./herr-caja.pages.ts";
 import { herr_caja_tables } from "./herr-caja.tables.ts";
 
@@ -43,7 +43,7 @@ export const herr_caja_module = define_module({
       created_by: { type: "string" },
       custom_data: { type: "json" },
       payload: { type: "json" },
-      fecha: { type: "string" },
+      fecha: { type: "string", normalize: solo_dia },
       hora: { type: "string" },
       tipo: { type: "string", required: true },
       cantidad: { type: "number", required: true, validate: (v) => (Number(v) < 0 ? "La cantidad no puede ser negativa" : null) },
@@ -58,18 +58,25 @@ export const herr_caja_module = define_module({
       before_create: async (ctx: KirletCtx, row: DomainRow) => {
         const fila: DomainRow = {
           ...row,
+          created_by: ctx.actor,
+          liquidacion: null,
           tipo: tipo_valido(row.tipo),
           fecha: texto(row.fecha) || fecha_hoy(),
           hora: texto(row.hora) || hora_ahora(),
           jornada_id: texto(row.jornada_id) || ((await jornada_activa(ctx))?.id ?? null),
           saldado: row.saldado ?? false,
         };
+        if ("foto" in row) fila.foto = await guardar_imagen(ctx, "herr-caja", String(row.id), row.foto);
         return { ...fila, ...nombre_y_busqueda(fila) };
       },
-      before_update: (_ctx, _id, patch, existing) => {
-        if ("tipo" in patch) patch.tipo = tipo_valido(patch.tipo);
-        return { ...patch, ...nombre_y_busqueda({ ...existing, ...patch }) };
+      before_update: async (ctx: KirletCtx, id: string, patch: DomainRow, existing: DomainRow) => {
+        const { created_by: _autor, liquidacion: _sello, ...resto } = patch;
+        exigir_no_liquidada(existing, resto);
+        if ("tipo" in resto) resto.tipo = tipo_valido(resto.tipo);
+        if ("foto" in resto) resto.foto = await guardar_imagen(ctx, "herr-caja", id, resto.foto);
+        return { ...resto, ...nombre_y_busqueda({ ...existing, ...resto }) };
       },
+      before_delete: (_ctx: KirletCtx, existing: DomainRow) => exigir_no_liquidada(existing),
     },
   }),
   tables: herr_caja_tables,

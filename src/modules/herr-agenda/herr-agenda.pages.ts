@@ -4,8 +4,9 @@ import {
   type KirletPageDecl,
   type NoxUiNode,
 } from "@opus-perpetuus/imperium-core-kit";
-import { numero, texto } from "../../lib/comun.ts";
+import { numero, sello_ahora, solo_dia, texto } from "../../lib/comun.ts";
 import { ADELANTOS, fecha_valida, hoy_en_zona, ordenar_eventos, zona_valida } from "../../lib/agenda/recordatorio.ts";
+import { zona_de } from "./herr-agenda.flow.ts";
 
 const API = "api://m/subject-herramientas";
 const PERMISO = "subject.herramientas.herr-agenda.read";
@@ -51,7 +52,7 @@ const eventos: KirletPageDecl = {
             { key: "inicio_minuto", label: "Inicio (min)", sortable: true, priority: 2 },
             { key: "hecho", label: "Hecho", sortable: true, priority: 2 },
             { key: "alarma", label: "Alarma", sortable: true, priority: 3 },
-            { key: "recordatorio_en", label: "Aviso", sortable: true, priority: 3 },
+            { key: "recordatorio_min", label: "Aviso (min antes)", sortable: true, priority: 3 },
           ],
           fillHeight: true,
           serverQuery: true,
@@ -105,7 +106,7 @@ const dia: KirletPageDecl = {
   path: "herr-agenda-dia",
   permission: PERMISO,
   build: async ({ url, data }) => {
-    const pedida = texto(url?.searchParams.get("fecha"));
+    const pedida = texto(solo_dia(url?.searchParams.get("fecha")));
     const fecha = fecha_valida(pedida) ? pedida : hoy_en_zona(zona_valida(url?.searchParams.get("tz")));
     const filas = ordenar_eventos(
       await data.findMany("herr_agenda", { where: { is_active: true, fecha }, limit: 500 }),
@@ -114,7 +115,7 @@ const dia: KirletPageDecl = {
       hora: hora_de(numero(e.inicio_minuto)),
       titulo: texto(e.name),
       duracion: `${numero(e.duracion_min) ?? 60} min`,
-      aviso: texto(e.recordatorio_en).replace("T", " ").slice(0, 16) || "Sin aviso",
+      aviso: texto(e.recordatorio_en) ? sello_ahora(zona_de(e), new Date(texto(e.recordatorio_en))) : "Sin aviso",
       hecho: e.hecho === true ? "Sí" : "No",
     }));
     return {

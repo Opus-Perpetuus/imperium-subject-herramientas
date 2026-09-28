@@ -4,8 +4,8 @@ import {
   distancia_dia,
   distancia_tramo,
   fin_programado,
+  hora_hhmm,
   minutos_restantes,
-  nivel_litros,
   pide_odometro,
   sugerir_km,
   tramos_desde,
@@ -46,23 +46,12 @@ describe("tramos", () => {
   });
 });
 
-describe("nivel_litros", () => {
-  test("número = litros; fracción con tanque = litros; sin tanque = secciones", () => {
-    expect(nivel_litros(4.5)).toBe(4.5);
-    expect(nivel_litros("3/6", 12)).toBe(6);
-    expect(nivel_litros("3/6")).toBe(3);
-    expect(nivel_litros("1.5/6", 12)).toBe(3);
-    expect(nivel_litros("")).toBeNull();
-    expect(nivel_litros("3/0", 12)).toBeNull();
-  });
-});
-
 describe("calcular", () => {
   test("las fórmulas de la jornada, con guardianes mientras sigue abierta", () => {
     expect(calcular({ km_inicial: 1180.5, km_gps: 42.3 })).toEqual({
       km_recorridos: 42.3,
-      gasolina_usada: 0,
-      rendimiento: 0,
+      gasolina_usada: null,
+      rendimiento: null,
       ganancia_neta: 0,
       por_entrega: 0,
     });
@@ -78,9 +67,31 @@ describe("calcular", () => {
           ingreso: 600,
           gasto_gasolina: 150,
         },
-        12,
+        { tanque_litros: 12 },
       ),
     ).toEqual({ km_recorridos: 90, gasolina_usada: 6, rendimiento: 15, ganancia_neta: 450, por_entrega: 37.5 });
+  });
+
+  test("gasolina: litros tal cual, fracción con tanque o calibración; sin ellos no hay consumo", () => {
+    const dia = { km_inicial: 100, km_final: 160 };
+    expect(calcular({ ...dia, gasolina_inicial: "6", gasolina_final: "2" })).toMatchObject({ gasolina_usada: 4, rendimiento: 15 });
+    expect(calcular({ ...dia, gasolina_inicial: "5/6", gasolina_final: "3/6" })).toMatchObject({ gasolina_usada: null, rendimiento: null });
+    // Terminar con el tanque en cero es una lectura, no su ausencia.
+    expect(calcular({ ...dia, gasolina_inicial: "6/6", gasolina_final: "0/6" }, { tanque_litros: 12 })).toMatchObject({
+      gasolina_usada: 12,
+      rendimiento: 5,
+    });
+    // La calibración aprendida manda sobre el reparto lineal del tanque.
+    const calibrada = { tanque_litros: 12, marcas: 6, litros_por_paso: [1, 1, 1, 3, 3, 3] };
+    expect(calcular({ ...dia, gasolina_inicial: "6/6", gasolina_final: "3/6" }, calibrada).gasolina_usada).toBe(9);
+    // Una lectura final mayor que la inicial (se cargó sin registrarlo) no da consumo negativo.
+    expect(calcular({ ...dia, gasolina_inicial: "2/6", gasolina_final: "5/6" }, { tanque_litros: 12 }).gasolina_usada).toBeNull();
+  });
+
+  test("con un tramo, un odómetro invertido cae al GPS en vez de dar km negativos", () => {
+    const fila = { km_inicial: 100, km_final: 90, km_gps: 12.5, tramos: [tramo({ km_inicial: 100, km_final: 90 })] };
+    expect(calcular(fila).km_recorridos).toBe(12.5);
+    expect(calcular({ km_inicial: 100, km_final: 90 }).km_recorridos).toBe(0);
   });
 
   test("con dos vehículos la distancia sale tramo a tramo, no de dos odómetros distintos", () => {
@@ -104,6 +115,15 @@ describe("fin programado", () => {
     expect(fin_programado("15:00", inicio)?.getTime()).toBe(new Date(2026, 7, 6, 15, 0).getTime());
     expect(fin_programado("25:00", inicio)).toBeNull();
     expect(fin_programado("", inicio)).toBeNull();
+  });
+
+  test("la hora admite una sola cifra y espacios, y sale como HH:mm", () => {
+    expect(hora_hhmm("9:30")).toBe("09:30");
+    expect(hora_hhmm(" 22 : 5 ")).toBe("22:05");
+    expect(hora_hhmm("22:30")).toBe("22:30");
+    expect(hora_hhmm("24:00")).toBeNull();
+    expect(hora_hhmm("22:60")).toBeNull();
+    expect(hora_hhmm("mañana")).toBeNull();
   });
 
   test("minutos restantes con piso en cero", () => {
@@ -130,5 +150,24 @@ describe("odómetro", () => {
     ];
     expect(sugerir_km(jornadas, "v1")).toBe(12266.5);
     expect(sugerir_km(jornadas, "v3")).toBeNull();
+  });
+
+  test("sugerir_km lee el último tramo cerrado del vehículo y ordena por fecha y hora", () => {
+    const tramo = (vehiculo_id: string, fin: string | null, km_final: number | null) => ({
+      vehiculo_id, vehiculo_nombre: vehiculo_id, inicio: "x", fin, km_inicial: null, km_final, gps_m_inicio: 0, gps_m_fin: null,
+    });
+    const jornadas = [
+      // Tarde: arrancó con v1 y cambió a v2; la jornada ya es de v2 pero el tramo de v1 tiene lectura.
+      {
+        vehiculo_id: "v2", fecha: "2026-08-05", hora_inicio: "16:00", km_final: 700,
+        tramos: [tramo("v1", "2026-08-05T19:00:00.000Z", 12400), tramo("v2", "2026-08-06T02:00:00.000Z", 700)],
+      },
+      // Mañana del mismo día: más antigua aunque se liste después.
+      { vehiculo_id: "v1", fecha: "2026-08-05", hora_inicio: "08:00", km_final: 12350, tramos: [tramo("v1", "2026-08-05T15:00:00.000Z", 12350)] },
+      // Un tramo abierto o solo GPS no trae lectura.
+      { vehiculo_id: "v1", fecha: "2026-08-06", hora_inicio: "08:00", tramos: [tramo("v1", null, null)] },
+    ];
+    expect(sugerir_km(jornadas, "v1")).toBe(12400);
+    expect(sugerir_km(jornadas, "v2")).toBe(700);
   });
 });

@@ -44,14 +44,23 @@ prefijo `herr-`.
 - Página feature-shell de cada CRUD: id `herramientas.<recurso>`, path
   `<recurso>`. Páginas propias (descriptor `nox.*`): `herramientas.herr-<nombre>`.
 - Permisos: `subject.herramientas.<recurso>.read|write` (los deriva el kit).
-- Menú del lanzador: root `herramientas-menu-root`; carpetas
-  `herramientas-nav-<herramienta>`; hojas `herramientas-<recurso>` con path
-  `/<recurso>`.
+- Dos menús distintos:
+  - **Lanzador de Imperium** (lo que ve el usuario): lo arma el núcleo desde
+    `modular/catalog.json` → `menus[]` del monorepo. Root `herramientas-menu-root`;
+    carpetas `herramientas-nav-<herramienta>`; hojas `herramientas-<segmento>` con
+    path `/<segmento>`, que el front resuelve por `LEAVES` de
+    `frontend/.../subject-home/launcher-leaf.ts`.
+  - **Menú del manifiesto** (`menu` de cada `define_module`): ids
+    `herramientas.<segmento>`, `pageId` y `path` sin barra. Solo describe las
+    páginas de la app; el lanzador no lo lee.
 - Columnas base de toda tabla: `id, name, description, is_active, ref,
   search_field, created_by, custom_data, payload, created_at, updated_at`.
 - Todo texto de UI, comentarios y nombres de dominio en **español**.
-- Archivos (fotos, tickets): `storage_files: true` → `ctx.files`; en la fila se
-  guarda el id/URL que devuelve el kit, nunca una ruta de disco.
+- Fechas y horas en la zona del negocio (`HERRAMIENTAS_ZONA`, por defecto
+  `America/Mexico_City`): `fecha_hoy`, `hora_ahora`, `sello_ahora` y `solo_dia`
+  de `src/lib/comun.ts`; nunca `toISOString()` para «hoy».
+- Imágenes (papelito, ticket, fotos): el formulario manda data URL;
+  `guardar_imagen` las sube como adjunto (`nox.files`) y en la fila queda la URL.
 
 ## Rutas propias (además del CRUD de cada módulo)
 
@@ -62,7 +71,7 @@ prefijo `herr-`.
 | `POST /herr-tablas/:id/cerrar` | Cierre: archiva las filas en `herr-cierres` y vacía la tabla |
 | `POST /herr-tablas/:id/buscar` `{q}` | Búsqueda por prefijos sobre los registros |
 | `POST /herr-registros/captura` | Alta/edición de un registro con campos planos (lo usa el formulario dinámico) |
-| `GET /herr-jornadas/activa` · `POST /herr-jornadas/iniciar` · `POST /herr-jornadas/:id/terminar` · `POST /herr-jornadas/:id/cambiar-vehiculo` | Ciclo de la jornada |
+| `GET /herr-jornadas/activa` · `POST /herr-jornadas/iniciar` · `POST /herr-jornadas/:id/terminar` · `POST /herr-jornadas/:id/cambiar-vehiculo` | Ciclo de la jornada. `terminar` además entrega los cobros (sin devolver el fondo de cambio) y responde `{data, liquidacion}` |
 | `GET /herr-jornadas/:id/liquidacion` · `POST /herr-jornadas/:id/liquidar` | Vista previa y confirmación de la entrega de cobros |
 | `POST /herr-pedidos/cotizar` · `POST /herr-pedidos/:id/surtir` · `POST /herr-pedidos/:id/en-ruta` · `POST /herr-pedidos/:id/entregar` | Precio automático y estados del pedido |
 | `POST /herr-domicilios/emparejar` `{lat, lon}` · `POST /herr-domicilios/aqui-mismo` · `GET /herr-domicilios/:id/mapa` · `POST /herr-domicilios/:id/entrega` | Domicilio más cercano (o candidatos si es ambiguo); alta o reutilización desde el GPS; enlaces a mapas; contar una entrega |
@@ -71,7 +80,19 @@ prefijo `herr-`.
 | `GET /herr-telefono/activa` · `POST /herr-telefono/decidir` · `POST /herr-telefono/llamadas` | Contrato con la app Android |
 | `POST /herr-voz/interpretar` · `POST /herr-voz/ejecutar` | Texto → intención → acción |
 | `GET /herr-agenda/rango?desde&hasta` · `GET /herr-agenda/recordatorios?desde&hasta` · `POST /herr-agenda/:id/hecho` | Agenda, recordatorios pendientes (para las alarmas de Android) y marcar hecho |
-| `POST /herr-utilidades/formula` · `POST /herr-utilidades/markdown` · `POST /herr-utilidades/geo/distancia` · `POST /herr-utilidades/geo/enlaces` · `POST /herr-utilidades/rutas/analizar` · `GET /herr-utilidades/capacidades` | Servicios para otras apps |
+| `POST /herr-utilidades/formula` · `POST /herr-utilidades/markdown` · `POST /herr-utilidades/geo/distancia` · `POST /herr-utilidades/geo/enlaces` · `POST /herr-utilidades/rutas/analizar` · `GET /herr-utilidades/capacidades` | Servicios para otras apps. Sin estado: los puede usar cualquier usuario interno con sesión aunque no tenga el menú de Herramientas |
+
+## Asistente de voz
+
+- Escuchar y hablar lo hace la **app Android**. En el navegador la orden se
+  escribe, y lo que escribe datos primero se pregunta: se revisa la respuesta,
+  se marca la casilla **«Confirmo»** y se vuelve a enviar.
+- «Entregado» solo guarda lo recibido si se dice («entregado, recibí 250»);
+  sin cantidad marca la entrega y el cobro queda pendiente.
+- Los gastos por voz (también el de una carga de gasolina) salen de los
+  cobros: exigen dinero de cobros disponible.
+- «Entregar el cobro» liquida conservando el fondo de cambio; «…y devuelvo el
+  cambio» salda también el fondo de cambio.
 
 ## Dependencias
 

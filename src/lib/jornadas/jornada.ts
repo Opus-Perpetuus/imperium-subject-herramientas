@@ -1,5 +1,6 @@
-import type { DomainRow, KirletCtx } from "@opus-perpetuus/imperium-core-kit";
-import { filas_de, numero, texto } from "../comun.ts";
+import type { DomainRow } from "@opus-perpetuus/imperium-core-kit";
+import { leer_lectura, litros, type VehiculoCombustible } from "../combustible/litros.ts";
+import { numero, texto } from "../comun.ts";
 
 /**
  * Reglas puras de la jornada: tramos por vehículo, distancia, consumo,
@@ -62,50 +63,40 @@ export function distancia_dia(tramos: Tramo[]): number {
   return tramos.reduce((s, t) => s + (distancia_tramo(t) ?? 0), 0);
 }
 
-/**
- * Litros de una lectura de combustible. Un número son litros; «3/6» es una
- * fracción del medidor que se convierte con la capacidad del tanque y, sin
- * ella, queda en unidades de sección (el rendimiento sale por sección).
- */
-export function nivel_litros(valor: unknown, tanque_litros: number | null = null): number | null {
-  const raw = texto(valor);
-  if (!raw) return null;
-  const m = /^(\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)$/.exec(raw);
-  if (!m) return numero(raw);
-  const a = numero(m[1]) ?? 0;
-  const b = numero(m[2]) ?? 0;
-  if (b <= 0) return null;
-  return tanque_litros != null && tanque_litros > 0 ? (a / b) * tanque_litros : a;
-}
-
 export type Calculados = {
   km_recorridos: number;
-  gasolina_usada: number;
-  rendimiento: number;
+  gasolina_usada: number | null;
+  rendimiento: number | null;
   ganancia_neta: number;
   por_entrega: number;
 };
 
 const redondear = (n: number, decimales: number) => Math.round(n * 10 ** decimales) / 10 ** decimales;
 
+/** Litros de una lectura («3/6» o litros) con los ajustes del vehículo; null si no se puede saber. */
+function litros_de(valor: unknown, ajustes: VehiculoCombustible | null): number | null {
+  const lectura = leer_lectura(valor);
+  return lectura ? (litros(lectura, ajustes ?? {})?.litros ?? null) : null;
+}
+
 /**
  * Los campos calculados de la jornada. Con dos o más tramos la distancia sale
- * tramo a tramo (dos vehículos no comparten odómetro); con uno, del odómetro
- * si hay lectura final y si no, del GPS.
+ * tramo a tramo (dos vehículos no comparten odómetro); con uno, la misma regla
+ * sobre los campos planos: odómetro si hay dos lecturas y no da negativo, si
+ * no GPS. Sin lectura de gasolina (o sin tanque ni calibración para una
+ * fracción del medidor) el consumo y el rendimiento quedan en null; una
+ * lectura final de cero es válida.
  */
-export function calcular(fila: DomainRow, tanque_litros: number | null = null): Calculados {
-  const km_inicial = numero(fila.km_inicial) ?? 0;
-  const km_final = numero(fila.km_final) ?? 0;
-  const km_gps = numero(fila.km_gps) ?? 0;
+export function calcular(fila: DomainRow, ajustes: VehiculoCombustible | null = null): Calculados {
+  const km_inicial = numero(fila.km_inicial);
+  const km_final = numero(fila.km_final);
   const tramos = tramos_desde(fila.tramos);
-  const km_recorridos = redondear(
-    tramos.length > 1 ? distancia_dia(tramos) : km_final > 0 ? km_final - km_inicial : km_gps,
-    1,
-  );
-  const inicial = nivel_litros(fila.gasolina_inicial, tanque_litros) ?? 0;
-  const final = nivel_litros(fila.gasolina_final, tanque_litros) ?? 0;
-  const gasolina_usada = redondear(final > 0 ? inicial - final : 0, 2);
-  const rendimiento = gasolina_usada > 0 ? redondear(km_recorridos / gasolina_usada, 1) : 0;
+  const odometro = km_inicial != null && km_final != null && km_final - km_inicial >= 0 ? km_final - km_inicial : null;
+  const km_recorridos = redondear(tramos.length > 1 ? distancia_dia(tramos) : (odometro ?? numero(fila.km_gps) ?? 0), 1);
+  const inicial = litros_de(fila.gasolina_inicial, ajustes);
+  const final = litros_de(fila.gasolina_final, ajustes);
+  const gasolina_usada = inicial != null && final != null && inicial - final >= 0 ? redondear(inicial - final, 2) : null;
+  const rendimiento = gasolina_usada != null && gasolina_usada > 0 ? redondear(km_recorridos / gasolina_usada, 1) : null;
   const ingreso = numero(fila.ingreso) ?? 0;
   const gasto_gasolina = numero(fila.gasto_gasolina) ?? 0;
   const ganancia_neta = ingreso > 0 ? redondear(ingreso - gasto_gasolina, 2) : 0;
@@ -114,7 +105,17 @@ export function calcular(fila: DomainRow, tanque_litros: number | null = null): 
   return { km_recorridos, gasolina_usada, rendimiento, ganancia_neta, por_entrega };
 }
 
-export const HORA = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const HORA = /^\s*(\d{1,2})\s*:\s*(\d{1,2})\s*$/;
+
+/** «9:30», «22:5» o «22:30» → `HH:mm`; null si no es una hora del día. */
+export function hora_hhmm(valor: unknown): string | null {
+  const m = HORA.exec(texto(valor));
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 23 || min > 59) return null;
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
 
 /**
  * El instante del apagado programado, o null si `hhmm` no es una hora. Una
@@ -122,10 +123,10 @@ export const HORA = /^([01]\d|2[0-3]):([0-5]\d)$/;
  * 21:00 y poner «02:00» es la madrugada que viene.
  */
 export function fin_programado(hhmm: string, inicio: Date): Date | null {
-  const m = HORA.exec(texto(hhmm));
-  if (!m) return null;
+  const hora = hora_hhmm(hhmm);
+  if (!hora) return null;
   const fin = new Date(inicio);
-  fin.setHours(Number(m[1]), Number(m[2]), 0, 0);
+  fin.setHours(Number(hora.slice(0, 2)), Number(hora.slice(3)), 0, 0);
   if (fin.getTime() <= inicio.getTime()) fin.setDate(fin.getDate() + 1);
   return fin;
 }
@@ -145,31 +146,24 @@ export function pide_odometro(vehiculo: DomainRow | null, jornada: DomainRow | n
 }
 
 /**
- * Última lectura de odómetro del vehículo según la tabla de jornadas. Las
- * jornadas sin `km_final` se saltan: una medida solo por GPS no trae lectura
- * y elegirla dejaría la sugerencia muda.
+ * Última lectura de odómetro del vehículo: el `km_final` de su último tramo
+ * cerrado, en cualquier jornada (a media jornada se cambia de vehículo). Las
+ * jornadas se ordenan por fecha y hora de inicio y sus tramos por el cierre;
+ * una jornada sin tramos cuenta como uno con sus campos planos. Lo medido
+ * solo por GPS no trae lectura y se salta: elegirlo dejaría la sugerencia muda.
  */
 export function sugerir_km(jornadas: DomainRow[], vehiculo_id: string): number | null {
-  const con_lectura = jornadas
-    .filter((j) => texto(j.vehiculo_id) === vehiculo_id && numero(j.km_final) != null)
-    .sort((a, b) => texto(b.fecha).localeCompare(texto(a.fecha)));
-  return con_lectura.length ? numero(con_lectura[0]!.km_final) : null;
-}
-
-/** La jornada abierta más reciente, o null si no hay ninguna en curso. */
-export async function jornada_activa(ctx: Pick<KirletCtx, "data">): Promise<DomainRow | null> {
-  const abiertas = await filas_de(ctx, "herr_jornadas", { estado: "abierta", is_active: true });
-  return abiertas.sort((a, b) => texto(b.created_at).localeCompare(texto(a.created_at)))[0] ?? null;
-}
-
-/**
- * Ajustes de reparto del vehículo (`herr_vehiculos`, clave `vehiculo_id` =
- * id del `vehicle` de subject-vehiculos), o null si no hay fila: entonces
- * el vehículo mide con odómetro y no se conoce la capacidad del tanque.
- */
-export async function ajustes_vehiculo(ctx: Pick<KirletCtx, "data">, vehiculo_id: unknown): Promise<DomainRow | null> {
-  const id = texto(vehiculo_id);
-  if (!id) return null;
-  const fila = await ctx.data.findOne("herr_vehiculos", { vehiculo_id: id });
-  return fila && fila.is_active !== false ? fila : null;
+  const clave = (j: DomainRow) => `${texto(j.fecha)} ${texto(j.hora_inicio)} ${texto(j.created_at)}`;
+  for (const j of [...jornadas].sort((a, b) => clave(b).localeCompare(clave(a)))) {
+    const tramos = tramos_desde(j.tramos);
+    if (!tramos.length) {
+      if (texto(j.vehiculo_id) === vehiculo_id && numero(j.km_final) != null) return numero(j.km_final);
+      continue;
+    }
+    const ultimo = tramos
+      .filter((t) => t.vehiculo_id === vehiculo_id && t.fin && t.km_final != null)
+      .sort((a, b) => b.fin!.localeCompare(a.fin!))[0];
+    if (ultimo) return ultimo.km_final;
+  }
+  return null;
 }

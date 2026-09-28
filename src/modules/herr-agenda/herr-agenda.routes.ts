@@ -1,5 +1,5 @@
 import { define_crud, define_module, type DomainRow } from "@opus-perpetuus/imperium-core-kit";
-import { campo_busqueda, numero } from "../../lib/comun.ts";
+import { campo_busqueda, con_defecto, numero, sin_vacios, solo_dia } from "../../lib/comun.ts";
 import {
   ADELANTO_POR_DEFECTO,
   DURACION_POR_DEFECTO,
@@ -40,8 +40,7 @@ const eventos = define_crud({
     fecha: {
       type: "string",
       required: true,
-      // El selector de fecha manda medianoche ISO; solo interesa el día.
-      normalize: (v) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v) ? v.slice(0, 10) : v),
+      normalize: solo_dia,
       validate: (v) => (v == null || v === "" || fecha_valida(v) ? null : "fecha debe ser AAAA-MM-DD"),
     },
     inicio_minuto: {
@@ -56,22 +55,24 @@ const eventos = define_crud({
     },
     duracion_min: {
       type: "number",
+      normalize: con_defecto(DURACION_POR_DEFECTO),
       validate: (v) => (v == null || (numero(v) ?? -1) >= 0 ? null : "duracion_min no puede ser negativa"),
     },
     recordatorio_min: {
       type: "number",
+      normalize: con_defecto(ADELANTO_POR_DEFECTO),
       validate: (v) => (v == null || adelanto_valido(numero(v)) ? null : "recordatorio_min no es una antelación válida"),
     },
-    alarma: { type: "boolean" },
+    alarma: { type: "boolean", normalize: con_defecto(false) },
     nota: { type: "string", search: true },
-    hecho: { type: "boolean" },
+    hecho: { type: "boolean", normalize: con_defecto(false) },
     proveedor_evento_id: { type: "string" },
     // Calculado en el hook: lo que mande el cliente (p. ej. el documento completo en un PUT) se pisa.
     recordatorio_en: { type: "string" },
   },
   options_map: { value: "id", label: "name" },
   hooks: {
-    before_create: (_ctx, row) => {
+    before_create: (ctx, row) => {
       const fila: DomainRow = {
         inicio_minuto: null,
         duracion_min: DURACION_POR_DEFECTO,
@@ -80,10 +81,16 @@ const eventos = define_crud({
         nota: "",
         hecho: false,
         ...row,
+        is_active: row.is_active ?? true,
+        created_by: ctx.actor,
       };
       return { ...fila, ...derivados(fila) };
     },
-    before_update: (_ctx, _id, patch, existing) => ({ ...patch, ...derivados({ ...existing, ...patch }) }),
+    before_update: (_ctx, _id, patch, existing) => {
+      const { created_by: _, ...resto } = patch;
+      const cambios = sin_vacios(resto, ["name", "fecha", "is_active"]);
+      return { ...cambios, ...derivados({ ...existing, ...cambios }) };
+    },
   },
 });
 

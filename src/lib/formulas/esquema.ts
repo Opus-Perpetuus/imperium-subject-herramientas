@@ -1,3 +1,4 @@
+import { texto } from "../comun.ts";
 import { ambito_sonda, claves_referenciadas, evaluar, parsear_agregado } from "./motor.ts";
 
 /**
@@ -161,50 +162,49 @@ function intentar_json(texto: string): unknown {
   }
 }
 
-const cadena = (v: unknown): string => (v == null ? "" : String(v).trim());
-const cadena_o_null = (v: unknown): string | null => (cadena(v) ? cadena(v) : null);
+const texto_o_null = (v: unknown): string | null => (texto(v) ? texto(v) : null);
 const entero = (v: unknown, defecto: number): number =>
   Number.isInteger(Number(v)) && v !== "" && v != null ? Number(v) : defecto;
 
 function normalizar_campo(x: Record<string, unknown>): CampoSpec {
-  const clave = cadena(x.clave);
+  const clave = texto(x.clave);
   return {
     clave,
-    etiqueta: cadena(x.etiqueta) || clave,
-    tipo: (cadena(x.tipo) || "texto") as TipoCampo,
+    etiqueta: texto(x.etiqueta) || clave,
+    tipo: (texto(x.tipo) || "texto") as TipoCampo,
     requerido: x.requerido === true,
-    valor_por_defecto: cadena_o_null(x.valor_por_defecto),
-    opciones: Array.isArray(x.opciones) ? x.opciones.map(cadena).filter(Boolean) : [],
-    formula: cadena_o_null(x.formula),
-    unidad: cadena_o_null(x.unidad),
+    valor_por_defecto: texto_o_null(x.valor_por_defecto),
+    opciones: Array.isArray(x.opciones) ? x.opciones.map(texto).filter(Boolean) : [],
+    formula: texto_o_null(x.formula),
+    unidad: texto_o_null(x.unidad),
     decimales: entero(x.decimales, DECIMALES),
     en_resumen: x.en_resumen === true,
     pasos: entero(x.pasos, 0),
-    capacidad: Number.isFinite(Number(x.capacidad)) && cadena(x.capacidad) ? Number(x.capacidad) : null,
-    tabla_ref_id: cadena_o_null(x.tabla_ref_id),
-    clave_ref_display: cadena_o_null(x.clave_ref_display),
+    capacidad: Number.isFinite(Number(x.capacidad)) && texto(x.capacidad) ? Number(x.capacidad) : null,
+    tabla_ref_id: texto_o_null(x.tabla_ref_id),
+    clave_ref_display: texto_o_null(x.clave_ref_display),
     multiple: x.multiple === true,
   };
 }
 
 function normalizar_constante(x: Record<string, unknown>): ConstanteTabla {
-  const clave = cadena(x.clave);
+  const clave = texto(x.clave);
   return {
     clave,
-    etiqueta: cadena(x.etiqueta) || clave,
-    valor: cadena(x.valor),
-    unidad: cadena_o_null(x.unidad),
+    etiqueta: texto(x.etiqueta) || clave,
+    valor: texto(x.valor),
+    unidad: texto_o_null(x.unidad),
     decimales: entero(x.decimales, DECIMALES),
   };
 }
 
 function normalizar_resumen(x: Record<string, unknown>): ResumenTabla {
-  const clave = cadena(x.clave);
+  const clave = texto(x.clave);
   return {
     clave,
-    etiqueta: cadena(x.etiqueta) || clave,
-    formula: cadena(x.formula),
-    unidad: cadena_o_null(x.unidad),
+    etiqueta: texto(x.etiqueta) || clave,
+    formula: texto(x.formula),
+    unidad: texto_o_null(x.unidad),
     decimales: entero(x.decimales, DECIMALES),
   };
 }
@@ -212,15 +212,15 @@ function normalizar_resumen(x: Record<string, unknown>): ResumenTabla {
 /** El esquema que hay en una fila de `herr_tablas` (las columnas json pueden venir como texto). */
 export function spec_de_fila(fila: Record<string, unknown>): TablaSpec {
   return {
-    id: cadena(fila.id),
-    name: cadena(fila.name),
-    description: cadena(fila.description),
-    icono: cadena(fila.icono) || "fa-table",
+    id: texto(fila.id),
+    name: texto(fila.name),
+    description: texto(fila.description),
+    icono: texto(fila.icono) || "fa-table",
     campos: lista(fila.campos).map(normalizar_campo),
     constantes: lista(fila.constantes).map(normalizar_constante),
     resumenes: lista(fila.resumenes).map(normalizar_resumen),
-    plantilla_id: cadena_o_null(fila.plantilla_id),
-    orden_campo: cadena_o_null(fila.orden_campo),
+    plantilla_id: texto_o_null(fila.plantilla_id),
+    orden_campo: texto_o_null(fila.orden_campo),
     orden_desc: fila.orden_desc !== false,
     cerrable: fila.cerrable !== false,
   };

@@ -10,7 +10,10 @@ export type Herramienta = {
   nombre: string;
   descripcion: string;
   icono: string;
-  /** Hojas del lanzador (`/internal/<segmento>`), la primera es la principal. */
+  /**
+   * Rutas `/internal/<segmento>`, la primera es la principal: hojas de esta app
+   * o la ruta de otra app (`vehicle` es el módulo de la app Vehículos).
+   */
   accesos: Array<{ texto: string; segmento: string }>;
   /** Lo que solo hace la app Android de Imperium con estos datos. */
   solo_android?: string;

@@ -45,9 +45,8 @@ export const herr_cierres_pages: KirletPageDecl[] = [
               { name: "cerrado_at", component: "input-datetime", label: "Cerrado", read_only: true },
               {
                 name: "valores",
-                component: "input-code-editor",
+                component: "input-json",
                 label: "Valores congelados",
-                code_editor_language: "json",
                 read_only: true,
                 column_span: "full",
               },

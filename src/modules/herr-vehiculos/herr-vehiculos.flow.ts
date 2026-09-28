@@ -11,11 +11,12 @@ import { TANQUES, nombre_tanque } from "../../lib/combustible/tanques.ts";
  */
 export function resumen_combustible(ajustes: DomainRow, recargas: DomainRow[]) {
   const ultima = recargas[recargas.length - 1] ?? null;
-  const llenas = recargas.filter((r) => r.tanque_lleno === true && numero(r.km) != null);
-  const [previa, actual] = llenas.slice(-2);
+  const [previa, actual] = recargas.filter((r) => r.tanque_lleno === true).slice(-2);
+  const km_previa = numero(previa?.km);
+  const km_actual = numero(actual?.km);
   const rendimiento =
-    previa && actual
-      ? rendimiento_exacto(numero(previa.km)!, numero(actual.km)!, numero(actual.litros_efectivos) ?? litros_efectivos(actual) ?? 0)
+    km_previa != null && km_actual != null
+      ? rendimiento_exacto(km_previa, km_actual, numero(actual!.litros_efectivos) ?? litros_efectivos(actual!) ?? 0)
       : null;
 
   const tanque = numero(ajustes.tanque_litros);
@@ -35,7 +36,7 @@ export function resumen_combustible(ajustes: DomainRow, recargas: DomainRow[]) {
     tanque_litros: tanque,
     recargas: recargas.length,
     ultima_recarga: ultima,
-    /** km/L entre los dos últimos llenados con odómetro; null si no los hay. */
+    /** km/L entre los dos últimos llenados; null si a alguno le falta el odómetro. */
     rendimiento_exacto: rendimiento,
     /** Litros tras la última recarga (lleno → tanque; si no, lo que marcó el medidor). */
     litros_estimados: estimados,

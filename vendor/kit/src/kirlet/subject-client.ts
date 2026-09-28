@@ -12,8 +12,12 @@ import { is_subject_technical_id } from "./manifest.js";
  */
 export const SUBJECT_CALLER_HEADER = "x-imperium-subject";
 
-/** Plazo por defecto de una llamada app → app. */
-export const CALL_SUBJECT_TIMEOUT_MS = 8_000;
+/**
+ * Plazo por defecto de una llamada app → app. Queda por debajo del que el
+ * núcleo da al salto hacia el destino (15 s): un `timeout_ms` mayor no alarga
+ * la llamada, el núcleo corta antes con 502.
+ */
+export const CALL_SUBJECT_TIMEOUT_MS = 12_000;
 
 export type CallSubjectOptions = {
   /** Se serializa como JSON y fija `content-type: application/json`. */
@@ -38,7 +42,7 @@ async function subject_call_error(res: Response): Promise<KirletHttpError> {
   const code =
     typeof body.code === "string"
       ? body.code
-      : typeof body.error === "string"
+      : typeof body.error === "string" && /^[a-z_]+$/.test(body.error)
         ? body.error
         : "subject_call_failed";
   const message =
@@ -82,16 +86,12 @@ export async function call_subject<T = unknown>(
   }
   const env = opts.env ?? (typeof process !== "undefined" ? process.env : {});
   // Misma normalización que serve.ts: un NOX_DATA_URL legado trae la ruta del plano de datos.
-  const base = (env.CORE_DATA_URL ?? env.NOX_DATA_URL ?? "")
-    .trim()
+  const base = (env.CORE_DATA_URL?.trim() || env.NOX_DATA_URL?.trim() || "")
     .replace(/\/api\/kirlets\/data\/.*$/, "")
     .replace(/\/+$/, "");
-  const caller = (env.SUBJECT_TECHNICAL_ID ?? env.KIRLET_TECHNICAL_ID ?? "").trim();
-  const secret = (
-    env.CORE_SUBJECT_GATEWAY_SECRET ??
-    env.NOX_KIRLET_GATEWAY_SECRET ??
-    ""
-  ).trim();
+  const caller = env.SUBJECT_TECHNICAL_ID?.trim() || env.KIRLET_TECHNICAL_ID?.trim() || "";
+  const secret =
+    env.CORE_SUBJECT_GATEWAY_SECRET?.trim() || env.NOX_KIRLET_GATEWAY_SECRET?.trim() || "";
   if (!base || !caller || !secret) {
     throw new KirletHttpError(
       500,
@@ -100,7 +100,16 @@ export async function call_subject<T = unknown>(
     );
   }
 
-  const url = new URL(`${base}/api/m/${target}${parsed[2]}`);
+  let url: URL;
+  try {
+    url = new URL(`${base}/api/m/${target}${parsed[2]}`);
+  } catch {
+    throw new KirletHttpError(
+      500,
+      "subject_client_misconfigured",
+      `CORE_DATA_URL no es una URL: ${base}`,
+    );
+  }
   for (const [key, value] of Object.entries(opts.query ?? {})) {
     url.searchParams.set(key, value);
   }
@@ -118,7 +127,16 @@ export async function call_subject<T = unknown>(
   });
   if (!res.ok) throw await subject_call_error(res);
   if (res.status === 204) return undefined as T;
-  const json = (await res.json()) as unknown;
+  let json: unknown;
+  try {
+    json = await res.json();
+  } catch {
+    throw new KirletHttpError(
+      502,
+      "subject_bad_response",
+      `${target} respondió ${res.status} sin JSON`,
+    );
+  }
   if (json && typeof json === "object" && "data" in json) {
     return (json as { data: T }).data;
   }

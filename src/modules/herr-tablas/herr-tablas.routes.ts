@@ -1,4 +1,4 @@
-import { define_crud, define_module, type DomainRow } from "@opus-perpetuus/imperium-core-kit";
+import { define_crud, define_module, type DomainRow, type KirletCtx } from "@opus-perpetuus/imperium-core-kit";
 import { campo_busqueda, falla } from "../../lib/comun.ts";
 import { spec_de_fila, validar_esquema } from "../../lib/formulas/esquema.ts";
 import { herr_tablas_flow } from "./herr-tablas.flow.ts";
@@ -13,7 +13,9 @@ const huella = (fila: DomainRow) => {
 };
 
 /** Valida el esquema antes de guardarlo, lo deja normalizado y sube `version_esquema` cuando cambia. */
-function preparar_tabla(patch: DomainRow, existing: DomainRow | null): DomainRow {
+function preparar_tabla(ctx: KirletCtx, patch: DomainRow, existing: DomainRow | null): DomainRow {
+  if (existing) delete patch.created_by;
+  else patch.created_by = ctx.actor;
   for (const col of ESQUEMA) {
     if (typeof patch[col] === "string") falla(400, `${col}: JSON inválido`);
   }
@@ -74,8 +76,8 @@ export const herr_tablas_module = define_module({
       },
       options_map: { value: "id", label: "name" },
       hooks: {
-        before_create: (_ctx, row) => preparar_tabla(row, null),
-        before_update: (_ctx, _id, patch, existing) => preparar_tabla(patch, existing),
+        before_create: (ctx, row) => preparar_tabla(ctx, row, null),
+        before_update: (ctx, _id, patch, existing) => preparar_tabla(ctx, patch, existing),
       },
     }),
   ],

@@ -243,6 +243,13 @@ describe("gastos y caja", () => {
     expect((await api("POST", "/herr-gastos", { motivo: "x", cantidad: 1, fuente: "banco" })).status).toBe(400);
   });
 
+  test("un id «gasto_recarga_…» lo reserva herr-recargas: el CRUD lo rechaza", async () => {
+    const r = await api("POST", "/herr-gastos", { id: "gasto_recarga_x1", motivo: "Aceite", cantidad: 10, fuente: "caja" });
+    expect(r.status).toBe(400);
+    expect(r.json.message).toBe("Ese id está reservado para el gasto de una recarga");
+    expect(await data.findOne("herr_gastos", { id: "gasto_recarga_x1" })).toBeNull();
+  });
+
   test("movimientos de caja: retiro y aporte", async () => {
     const retiro = await api("POST", "/herr-caja", { tipo: "retiro_cambio", cantidad: 200 });
     expect(retiro.status).toBe(201);
@@ -288,11 +295,79 @@ describe("liquidación", () => {
     expect((await api("GET", `/herr-caja/${estado.retiro!.id}`)).data.saldado).toBe(false);
     expect((await api("POST", `/herr-pedidos/${estado.pedido!.id}/entregar`)).status).toBe(409);
 
+    // Solo queda el fondo de cambio, que se conserva: nada que mover, ni sello.
+    const sin_mover = await api("POST", `/herr-jornadas/${estado.jornada!.id}/liquidar`, {});
+    expect(sin_mover.data.sello).toBeNull();
+    expect((await api("GET", `/herr-caja/${estado.retiro!.id}`)).data).toMatchObject({ saldado: false, liquidacion: null });
+
     const otra = await api("POST", `/herr-jornadas/${estado.jornada!.id}/liquidar`, { devolver_cambio: true });
     expect(otra.data).toMatchObject({ a_caja: 0, cambio_de_caja: 200, neto: 200 });
     expect((await api("GET", `/herr-caja/${estado.retiro!.id}`)).data.saldado).toBe(true);
     const nada = await api("POST", `/herr-jornadas/${estado.jornada!.id}/liquidar`, {});
     expect(nada.data).toMatchObject({ nada_que_cobrar: true, sello: null });
+  });
+});
+
+describe("reglas del CRUD", () => {
+  test("lo liquidado no se edita ni se borra, salvo la descripción", async () => {
+    const id = estado.pedido!.id;
+    const liquidado = (await api("GET", `/herr-pedidos/${id}`)).data;
+    expect((await api("PATCH", `/herr-pedidos/${id}`, { cobrado: false })).status).toBe(409);
+    expect((await api("PATCH", `/herr-pedidos/${id}`, { liquidacion: "" })).status).toBe(200);
+    expect((await api("GET", `/herr-pedidos/${id}`)).data.liquidacion).toBe(liquidado.liquidacion);
+    // El formulario reenvía la fila entera: lo que no cambia no cuenta.
+    const nota = await api("PATCH", `/herr-pedidos/${id}`, {
+      description: "cliente frecuente",
+      cobrar: liquidado.cobrar,
+      cobrado: true,
+      estado: "cobrado",
+      liquidacion: liquidado.liquidacion,
+    });
+    expect(nota.status).toBe(200);
+    expect(nota.data).toMatchObject({ description: "cliente frecuente", cobrado: true, liquidacion: liquidado.liquidacion });
+    expect((await api("DELETE", `/herr-pedidos/${id}`)).status).toBe(409);
+    expect((await api("PATCH", `/herr-gastos/${estado.gasto!.id}`, { cantidad: 1 })).status).toBe(409);
+    expect((await api("DELETE", `/herr-caja/${estado.aporte!.id}`)).status).toBe(409);
+  });
+
+  test("el autor lo pone el servidor y la fecha del selector se guarda como día", async () => {
+    const g = await api("POST", "/herr-gastos", {
+      motivo: "Aceite",
+      cantidad: 50,
+      fuente: "caja",
+      created_by: "otro@x",
+      fecha: "2026-09-27T06:00:00.000Z",
+    });
+    expect(g.status).toBe(201);
+    expect(g.data.created_by).not.toBe("otro@x");
+    expect(g.data.fecha).toBe("2026-09-27");
+    const p = await api("PATCH", `/herr-gastos/${g.data.id}`, { created_by: "otro@x", fecha: "2026-09-28T06:00:00.000Z" });
+    expect(p.data).toMatchObject({ created_by: g.data.created_by, fecha: "2026-09-28" });
+    // Pasarlo a «cobros» sin dinero cobrado pendiente no cabe.
+    const cobros = await api("PATCH", `/herr-gastos/${g.data.id}`, { fuente: "cobros", descontado: false });
+    expect(cobros.status).toBe(400);
+    expect(cobros.json.message).toBe("No hay dinero de cobros para cubrirlo");
+  });
+
+  test("con una jornada abierta, el CRUD no abre otra", async () => {
+    expect((await api("POST", "/herr-jornadas", { fecha: "2026-09-01" })).status).toBe(409);
+    const cerrada = await api("POST", "/herr-jornadas", { fecha: "2026-09-01", estado: "cerrada" });
+    expect(cerrada.status).toBe(201);
+    expect((await api("PATCH", `/herr-jornadas/${cerrada.data.id}`, { estado: "abierta" })).status).toBe(409);
+  });
+
+  test("el papelito se guarda como adjunto y la promoción queda en la prosa", async () => {
+    const familiar = await por_nombre("herr_menu_tamanos", "Familiar");
+    const suprema = await por_nombre("herr_menu_productos", "Suprema");
+    const promo = await por_nombre("herr_menu_promos", "30 %");
+    const r = await api("POST", "/herr-pedidos", {
+      domicilio_texto: "Sur 3",
+      papelito: "data:image/png;base64,iVBORw0KGgo=",
+      productos_json: { lineas: [{ tipo: "producto", tamano_id: familiar.id, partes: [suprema.id] }], promo_id: promo.id },
+    });
+    expect(r.status).toBe(201);
+    expect(String(r.data.papelito)).not.toStartWith("data:");
+    expect(r.data).toMatchObject({ cobrar: 252, productos: "Familiar Suprema\nPromoción: 30 %" });
   });
 });
 

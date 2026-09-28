@@ -15,6 +15,7 @@ const CASOS: Array<[string, string, Record<string, string>]> = [
   ["reanudar jornada", "jornada_reanudar", {}],
   ["gasté 80 pesos de refacciones", "gasto_registrar", { cantidad: "80", motivo: "refacciones" }],
   ["ya entregué el pedido de morelos 45", "entrega_registrar", { domicilio: "morelos 45" }],
+  ["entregado en juárez y morelos, recibí 250", "entrega_registrar", { domicilio: "juarez y morelos", cantidad: "250" }],
   ["entregado", "entrega_registrar", {}],
   ["puse de mi bolsa 150", "caja_aporte", { cantidad: "150" }],
   ["anota un pendiente de 120 en juárez 10", "pendiente_registrar", { cantidad: "120", domicilio: "juarez 10" }],
@@ -41,6 +42,50 @@ describe("intérprete", () => {
       expect(r.datos).toMatchObject(datos);
     });
   }
+
+  test("montos en palabras y domicilio con número", () => {
+    expect(interpretar("anota un pedido de doscientos cincuenta en morelos 45")).toMatchObject({
+      intencion: "pedido_registrar",
+      datos: { cantidad: "250", domicilio: "morelos 45" },
+    });
+    expect(interpretar("anota un pedido de mil quinientos en la calle 5").datos).toMatchObject({
+      cantidad: "1500",
+      domicilio: "calle 5",
+    });
+    expect(interpretar("gasté trescientos veinte pesos de refacciones").datos).toMatchObject({
+      cantidad: "320",
+      motivo: "refacciones",
+    });
+    const entrega = interpretar("entregué en morelos 45");
+    expect(entrega.intencion).toBe("entrega_registrar");
+    expect(entrega.datos).toEqual({ domicilio: "morelos 45" });
+    expect(interpretar("ya entregué el pedido de morelos 45").datos.cantidad).toBeUndefined();
+    expect(interpretar("entregado recibí 300").datos).toMatchObject({ cantidad: "300" });
+  });
+
+  test("el domicilio de «entregado en…» acaba donde empieza lo cobrado", () => {
+    expect(interpretar("entregado en morelos 45, recibí 300")).toMatchObject({
+      intencion: "entrega_registrar",
+      datos: { domicilio: "morelos 45", cantidad: "300" },
+    });
+    expect(interpretar("entregué en juárez 10 y me dio 200").datos).toEqual({ domicilio: "juarez 10", cantidad: "200" });
+    expect(interpretar("entregué en morelos 45 cobré 150").datos).toEqual({ domicilio: "morelos 45", cantidad: "150" });
+    expect(interpretar("entregué en morelos cuarenta y cinco").datos).toEqual({ domicilio: "morelos cuarenta y cinco" });
+  });
+
+  test("carga de gasolina con litros y pesos en palabras", () => {
+    expect(interpretar("cargué gasolina veinte litros por quinientos")).toMatchObject({
+      intencion: "recarga_registrar",
+      datos: { numero: "20", cantidad: "500" },
+    });
+  });
+
+  test("entregar el cobro devolviendo el cambio", () => {
+    expect(interpretar("entregar el cobro").datos.devolver_cambio).toBeUndefined();
+    const r = interpretar("entregué el cobro y devuelvo el cambio");
+    expect(r.intencion).toBe("cobro_registrar");
+    expect(r.datos.devolver_cambio).toBe("true");
+  });
 
   test("todas las intenciones quedan cubiertas por los casos", () => {
     const vistas = new Set(CASOS.map(([, i]) => i));

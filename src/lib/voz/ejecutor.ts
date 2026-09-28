@@ -1,6 +1,7 @@
-import { new_id, now_iso, type DomainRow, type KirletCtx } from "@opus-perpetuus/imperium-core-kit";
+import { KirletHttpError, new_id, now_iso, type DomainRow, type KirletCtx } from "@opus-perpetuus/imperium-core-kit";
 import { motivo_gasto } from "../combustible/litros.ts";
 import {
+  booleano,
   campo_busqueda,
   centavos,
   fecha_hoy,
@@ -10,15 +11,31 @@ import {
   numero,
   texto,
 } from "../comun.ts";
+import { sugerir_km, tramos_desde } from "../jornadas/jornada.ts";
 import { intencion_por_id, type Datos } from "../nlu/intenciones.ts";
 import { similitud } from "../nlu/similitud.ts";
+import { es_abierto, estado_de } from "../pedidos/estado.ts";
+import {
+  avanzar_pedido,
+  cambiar_vehiculo,
+  iniciar_jornada,
+  jornada_activa,
+  liquidar,
+  metros_gps,
+  preparar_gasto,
+  registrar_gasto,
+  registrar_pedido,
+  terminar_jornada,
+  vista_liquidacion,
+  type VistaLiquidacion,
+} from "../reparto/servicios.ts";
 import { odometro_al_cierre } from "./odometro.ts";
 
 /**
- * Ejecuta una intención ya interpretada sobre las tablas de Reparto,
- * escribiendo directamente con `ctx.data` (las reglas mínimas de cada tabla
- * se replican aquí; no se llama por HTTP a las rutas de esos módulos).
- * Devuelve siempre una frase corta para leer en voz alta.
+ * Ejecuta una intención ya interpretada sobre Reparto con las mismas
+ * operaciones que las rutas HTTP (`lib/reparto/servicios.ts`). Devuelve
+ * siempre una frase corta para leer en voz alta; un error de dominio
+ * (400/404/409) se dice tal cual.
  */
 export type Ejecucion = {
   intencion: string;
@@ -31,9 +48,6 @@ export type CtxVoz = Pick<KirletCtx, "data" | "actor">;
 
 type Salida = Omit<Ejecucion, "intencion">;
 type Manejador = (ctx: CtxVoz, datos: Datos) => Promise<Salida>;
-
-const ESTADOS_ABIERTOS = ["capturado", "surtido", "en_ruta"];
-const ESTADOS_ENTREGADOS = ["entregado", "cobrado"];
 
 const ok = (respuesta: string, resultado: Record<string, unknown> | null = null): Salida => ({
   estado: "ejecutado",
@@ -62,12 +76,7 @@ function base(ctx: CtxVoz, prefijo: string, name: string): DomainRow {
   };
 }
 
-const mas_reciente = (filas: DomainRow[]) =>
-  [...filas].sort((a, b) => texto(b.created_at).localeCompare(texto(a.created_at)))[0] ?? null;
-
 const orden_de = (p: DomainRow) => numero(p.orden) ?? Number.POSITIVE_INFINITY;
-const abierto = (p: DomainRow) => ESTADOS_ABIERTOS.includes(texto(p.estado));
-const entregado = (p: DomainRow) => ESTADOS_ENTREGADOS.includes(texto(p.estado));
 const suma = (filas: DomainRow[], campo: string) =>
   centavos(filas.reduce((acc, f) => acc + (numero(f[campo]) ?? 0), 0));
 
@@ -76,17 +85,16 @@ export function alias_pedido(p: DomainRow): string {
   return texto(p.domicilio_texto) || texto(p.productos) || `el pedido ${texto(p.orden)}`.trim();
 }
 
-/** Jornada abierta = la más reciente con estado «abierta». */
-export async function jornada_abierta(ctx: CtxVoz): Promise<DomainRow | null> {
-  return mas_reciente(await filas_de(ctx, "herr_jornadas", { estado: "abierta", is_active: true }));
-}
-
 /** La abierta, o la última de hoy para consultar cuando ya se cerró. */
 async function jornada_de_hoy(ctx: CtxVoz): Promise<DomainRow | null> {
-  return (
-    (await jornada_abierta(ctx)) ??
-    mas_reciente(await filas_de(ctx, "herr_jornadas", { fecha: fecha_hoy(), is_active: true }))
-  );
+  const abierta = await jornada_activa(ctx);
+  if (abierta) return abierta;
+  const [ultima] = await ctx.data.findMany("herr_jornadas", {
+    where: { fecha: fecha_hoy(), is_active: true },
+    orderBy: { created_at: "desc" },
+    limit: 1,
+  });
+  return ultima ?? null;
 }
 
 const pedidos_de = (ctx: CtxVoz, jornada: DomainRow) =>
@@ -145,150 +153,99 @@ async function vehiculo_para(
   };
 }
 
-/** Último odómetro conocido del vehículo: el cierre de su última jornada. */
-async function ultimo_km(ctx: CtxVoz, vehiculo_id: string): Promise<number | null> {
-  const cerradas = await filas_de(ctx, "herr_jornadas", { vehiculo_id, estado: "cerrada", is_active: true });
-  return numero(mas_reciente(cerradas)?.km_final);
+/** Último odómetro leído del vehículo (ver `sugerir_km`). */
+async function km_sugerido(ctx: CtxVoz, vehiculo_id: string): Promise<number | null> {
+  return sugerir_km(await filas_de(ctx, "herr_jornadas", { is_active: true }), vehiculo_id);
 }
 
-async function iniciar_jornada(ctx: CtxVoz, datos: Datos): Promise<Salida> {
-  if (await jornada_abierta(ctx)) return error("Ya hay una jornada en curso.");
+/**
+ * Odómetro estimado del vehículo en uso: la lectura con que abrió su tramo
+ * más los kilómetros GPS de la jornada desde entonces. Por voz no hay
+ * teclado para dictarlo; null si el tramo no tiene lectura.
+ */
+async function odometro_estimado(ctx: CtxVoz, jornada: DomainRow): Promise<number | null> {
+  const tramo = tramos_desde(jornada.tramos).at(-1);
+  const km_inicial = tramo ? tramo.km_inicial : numero(jornada.km_inicial);
+  if (km_inicial == null) return null;
+  const metros = await metros_gps(ctx, String(jornada.id));
+  const km = odometro_al_cierre(km_inicial, (tramo?.gps_m_inicio ?? 0) / 1000, metros / 1000);
+  return Math.round(km * 10) / 10;
+}
+
+async function iniciar_por_voz(ctx: CtxVoz, datos: Datos): Promise<Salida> {
+  if (await jornada_activa(ctx)) return error("Ya hay una jornada abierta.");
   const v = await vehiculo_para(ctx, datos);
   if ("fallo" in v) return v.fallo;
-  const fecha = fecha_hoy();
-  const jornada: DomainRow = {
-    ...base(ctx, "jornada", `Jornada ${fecha}`),
-    fecha,
-    hora_inicio: hora_ahora(),
-    hora_fin: null,
-    vehiculo_id: v.vehiculo.vehiculo_id,
-    vehiculo_nombre: v.vehiculo.nombre,
-    estado: "abierta",
-    km_inicial: await ultimo_km(ctx, v.vehiculo.vehiculo_id),
-    km_final: null,
-    km_gps: 0,
-    entregas: 0,
-    ingreso: 0,
-    ruta_id: null,
-    tramos: [],
-  };
-  await ctx.data.insert("herr_jornadas", jornada);
-  return ok(`Jornada iniciada con ${v.vehiculo.nombre}.`, { jornada_id: jornada.id });
+  const { vehiculo_id, nombre } = v.vehiculo;
+  const jornada = await iniciar_jornada(ctx, {
+    vehiculo_id,
+    vehiculo_nombre: nombre,
+    km_inicial: await km_sugerido(ctx, vehiculo_id),
+  });
+  return ok(`Jornada iniciada con ${texto(jornada.vehiculo_nombre) || nombre}.`, { jornada_id: jornada.id });
 }
 
-async function cambiar_vehiculo(ctx: CtxVoz, datos: Datos): Promise<Salida> {
-  const jornada = await jornada_abierta(ctx);
-  if (!jornada) return iniciar_jornada(ctx, datos);
+async function cambiar_por_voz(ctx: CtxVoz, datos: Datos): Promise<Salida> {
+  const jornada = await jornada_activa(ctx);
+  if (!jornada) return iniciar_por_voz(ctx, datos);
   const v = await vehiculo_para(ctx, datos);
   if ("fallo" in v) return v.fallo;
-  if (v.vehiculo.vehiculo_id === texto(jornada.vehiculo_id)) {
-    return error(`Ya estás en ${v.vehiculo.nombre}.`);
-  }
-  const tramos = Array.isArray(jornada.tramos) ? (jornada.tramos as DomainRow[]) : [];
-  const ultimo = tramos[tramos.length - 1];
-  const tramo = {
-    vehiculo_id: jornada.vehiculo_id,
-    vehiculo_nombre: jornada.vehiculo_nombre,
-    hora_inicio: ultimo ? texto(ultimo.hora_fin) : texto(jornada.hora_inicio),
-    hora_fin: hora_ahora(),
-  };
-  await ctx.data.update(
-    "herr_jornadas",
-    { id: String(jornada.id) },
-    {
-      vehiculo_id: v.vehiculo.vehiculo_id,
-      vehiculo_nombre: v.vehiculo.nombre,
-      tramos: [...tramos, tramo],
-      updated_at: now_iso(),
-    },
-  );
-  return ok(`Cambié a ${v.vehiculo.nombre}.`, { jornada_id: jornada.id, vehiculo_id: v.vehiculo.vehiculo_id });
+  const { vehiculo_id, nombre } = v.vehiculo;
+  if (vehiculo_id === texto(jornada.vehiculo_id)) return error(`Ya estás en ${nombre}.`);
+  const actualizada = await cambiar_vehiculo(ctx, String(jornada.id), {
+    vehiculo_id,
+    vehiculo_nombre: nombre,
+    km_final_tramo: await odometro_estimado(ctx, jornada),
+    km_inicial: await km_sugerido(ctx, vehiculo_id),
+  });
+  return ok(`Cambié a ${texto(actualizada.vehiculo_nombre) || nombre}.`, { jornada_id: jornada.id, vehiculo_id });
 }
 
-/** Lo que va a caja: cobros pendientes de liquidar, más el cambio prestado, menos gastos y dinero propio. */
-async function resumen(ctx: CtxVoz, jornada: DomainRow) {
-  const jornada_id = String(jornada.id);
-  const [pedidos, gastos, caja] = await Promise.all([
-    pedidos_de(ctx, jornada),
-    filas_de(ctx, "herr_gastos", { jornada_id, is_active: true }),
-    filas_de(ctx, "herr_caja", { jornada_id, is_active: true }),
-  ]);
-  const entregados = pedidos.filter(entregado);
-  const por_liquidar = entregados.filter((p) => p.cobrado !== true);
-  const gastos_pendientes = gastos.filter((g) => texto(g.fuente) === "cobros" && g.descontado !== true);
-  const caja_pendiente = caja.filter((c) => c.saldado !== true);
-  const retiros = caja_pendiente.filter((c) => texto(c.tipo) === "retiro_cambio");
-  const aportes = caja_pendiente.filter((c) => texto(c.tipo) === "aporte_propio");
-  const cobrado = suma(por_liquidar, "cobrar");
-  const a_caja = centavos(cobrado + suma(retiros, "cantidad") - suma(gastos_pendientes, "cantidad") - suma(aportes, "cantidad"));
+/**
+ * Lo que cambia de manos al liquidar: el fondo de cambio solo cuenta si se
+ * devuelve. Positivo lo entrego yo; negativo me lo paga la caja.
+ */
+const a_entregar = (v: VistaLiquidacion, devolver_cambio: boolean) =>
+  centavos(devolver_cambio ? v.neto : v.neto - v.cambio_de_caja);
+
+/** Cierra la jornada abierta (que además entrega el cobro, sin devolver el cambio). */
+async function cerrar_jornada(ctx: CtxVoz): Promise<{ entregas: number; a_caja: number; jornada_id: unknown } | null> {
+  const jornada = await jornada_activa(ctx);
+  if (!jornada) return null;
+  const { jornada: cerrada, liquidacion } = await terminar_jornada(ctx, String(jornada.id), {
+    km_final: await odometro_estimado(ctx, jornada),
+  });
   return {
-    pedidos,
-    entregados,
-    por_liquidar,
-    gastos_pendientes,
-    caja_pendiente,
-    en_curso: pedidos.filter(abierto),
-    propinas: suma(entregados, "propina"),
-    a_caja,
-    nada: !por_liquidar.length && !gastos_pendientes.length && !caja_pendiente.length,
+    jornada_id: jornada.id,
+    entregas: numero(cerrada.entregas) ?? 0,
+    a_caja: liquidacion.sello ? a_entregar(liquidacion, false) : 0,
   };
 }
 
-/** Marca como liquidado todo lo pendiente de la jornada y dice el neto. */
-async function liquidar(ctx: CtxVoz, jornada: DomainRow) {
-  const r = await resumen(ctx, jornada);
-  const ts = now_iso();
-  await ctx.data.batch([
-    ...r.por_liquidar.map((p) => ({
-      op: "update",
-      table: "herr_pedidos",
-      where: { id: String(p.id) },
-      patch: { cobrado: true, estado: "cobrado", updated_at: ts },
-    })),
-    ...r.gastos_pendientes.map((g) => ({
-      op: "update",
-      table: "herr_gastos",
-      where: { id: String(g.id) },
-      patch: { descontado: true, updated_at: ts },
-    })),
-    ...r.caja_pendiente.map((c) => ({
-      op: "update",
-      table: "herr_caja",
-      where: { id: String(c.id) },
-      patch: { saldado: true, updated_at: ts },
-    })),
-  ]);
-  return r;
+function frase_a_caja(a_caja: number): string {
+  if (a_caja > 0) return ` Entregas ${pesos(a_caja)} pesos a caja.`;
+  if (a_caja < 0) return ` La caja te devuelve ${pesos(-a_caja)} pesos.`;
+  return "";
 }
 
-async function terminar_jornada(ctx: CtxVoz): Promise<Salida> {
-  const jornada = await jornada_abierta(ctx);
-  if (!jornada) return error("No hay jornada en curso.");
-  const r = await liquidar(ctx, jornada);
-  const km_inicial = numero(jornada.km_inicial);
-  await ctx.data.update(
-    "herr_jornadas",
-    { id: String(jornada.id) },
-    {
-      estado: "cerrada",
-      hora_fin: hora_ahora(),
-      km_final: km_inicial == null ? null : odometro_al_cierre(km_inicial, 0, numero(jornada.km_gps) ?? 0),
-      entregas: r.entregados.length,
-      ingreso: suma(r.entregados, "cobrar"),
-      updated_at: now_iso(),
-    },
-  );
-  const cola = r.a_caja > 0 ? ` Entregas ${pesos(r.a_caja)} pesos a caja.` : "";
-  return ok(`Jornada terminada.${cola}`, { jornada_id: jornada.id, entregas: r.entregados.length, a_caja: r.a_caja });
+async function terminar_por_voz(ctx: CtxVoz): Promise<Salida> {
+  const r = await cerrar_jornada(ctx);
+  if (!r) return error("No hay jornada en curso.");
+  return ok(`Jornada terminada.${frase_a_caja(r.a_caja)}`, r);
 }
 
-async function registrar_pedido(ctx: CtxVoz, datos: Datos, pendiente: boolean): Promise<Salida> {
-  const jornada = await jornada_abierta(ctx);
+/** «Cerrar el día» = terminar la jornada, que ya entrega el cobro. */
+async function cerrar_dia(ctx: CtxVoz): Promise<Salida> {
+  const r = await cerrar_jornada(ctx);
+  if (!r) return error("No hay jornada en curso.");
+  return ok(`Cerré el día. ${r.entregas} pedidos entregados.${frase_a_caja(r.a_caja)}`, r);
+}
+
+async function pedido_por_voz(ctx: CtxVoz, datos: Datos, pendiente: boolean): Promise<Salida> {
+  const jornada = await jornada_activa(ctx);
   if (!jornada) return error("No hay jornada en curso.");
   const cobrar = numero(datos.cantidad);
   if (cobrar == null) return error("Dime el monto a cobrar.");
-  const abiertos = (await filas_de(ctx, "herr_pedidos", { is_active: true })).filter(abierto);
-  const orden = abiertos.reduce((max, p) => Math.max(max, numero(p.orden) ?? 0), 0) + 1;
   let domicilio_texto = texto(datos.domicilio);
   let domicilio_id: unknown = null;
   if (domicilio_texto) {
@@ -300,87 +257,70 @@ async function registrar_pedido(ctx: CtxVoz, datos: Datos, pendiente: boolean): 
       domicilio_texto = texto(conocido.name);
     }
   }
-  const pedido: DomainRow = {
-    ...base(ctx, "pedido", domicilio_texto ? `Pedido ${orden} · ${domicilio_texto}` : `Pedido ${orden}`),
-    fecha: fecha_hoy(),
-    hora: hora_ahora(),
-    orden,
+  const pedido = await registrar_pedido(ctx, {
     cobrar: centavos(cobrar),
-    recibido: null,
-    propina: 0,
     domicilio_texto,
     domicilio_id,
-    contacto_nombre: "",
-    telefono: "",
     detalle: pendiente ? "Pendiente por voz" : "Pedido por voz",
-    productos: "",
-    productos_json: [],
     jornada_id: jornada.id,
-    cobrado: false,
-    estado: "capturado",
-    hora_surtido: null,
-    hora_entrega: null,
-    liquidacion: null,
-  };
-  await ctx.data.insert("herr_pedidos", pedido);
+  });
   const que = pendiente ? "Pendiente anotado" : "Pedido registrado";
   const donde = domicilio_texto ? ` en ${domicilio_texto}` : "";
-  return ok(`${que} por ${pesos(cobrar)} pesos${donde}.`, { pedido_id: pedido.id, orden });
+  return ok(`${que} por ${pesos(cobrar)} pesos${donde}.`, { pedido_id: pedido.id, orden: pedido.orden });
 }
 
-async function registrar_gasto(ctx: CtxVoz, datos: Datos): Promise<Salida> {
-  const jornada = await jornada_abierta(ctx);
+async function gasto_por_voz(ctx: CtxVoz, datos: Datos): Promise<Salida> {
+  const jornada = await jornada_activa(ctx);
   if (!jornada) return error("No hay jornada en curso.");
   const cantidad = numero(datos.cantidad);
   if (cantidad == null) return error("Dime el monto del gasto.");
-  const motivo = texto(datos.motivo) || "Gasto por voz";
-  const gasto: DomainRow = {
-    ...base(ctx, "gasto", motivo),
-    fecha: fecha_hoy(),
-    hora: hora_ahora(),
-    motivo,
+  const gasto = await registrar_gasto(ctx, {
     cantidad: centavos(cantidad),
-    fuente: "cobros",
+    motivo: texto(datos.motivo) || "Gasto por voz",
     jornada_id: jornada.id,
-    descontado: false,
-  };
-  await ctx.data.insert("herr_gastos", gasto);
+  });
   return ok(`Gasto de ${pesos(cantidad)} pesos registrado.`, { gasto_id: gasto.id });
 }
 
-/** A qué pedido se refiere «entregado»: el dicho, el del domicilio, o el primero de la ruta. */
-async function marcar_entrega(ctx: CtxVoz, datos: Datos): Promise<Salida> {
-  const abiertos = (await filas_de(ctx, "herr_pedidos", { is_active: true }))
-    .filter(abierto)
+/** Pedidos por entregar, en el orden de la ruta. */
+async function abiertos_en_orden(ctx: Pick<KirletCtx, "data">): Promise<DomainRow[]> {
+  return (await filas_de(ctx, "herr_pedidos", { is_active: true, cobrado: { ne: true } }))
+    .filter((p) => es_abierto(estado_de(p)))
     .sort((a, b) => orden_de(a) - orden_de(b));
-  if (!abiertos.length) return error("No hay pedidos por entregar.");
-  let pedido: DomainRow | undefined;
-  if (texto(datos.pedido_id)) {
-    pedido = abiertos.find((p) => String(p.id) === texto(datos.pedido_id));
-  } else if (texto(datos.domicilio)) {
+}
+
+function elegir_pedido(abiertos: DomainRow[], datos: Datos): DomainRow | null {
+  if (texto(datos.pedido_id)) return abiertos.find((p) => String(p.id) === texto(datos.pedido_id)) ?? null;
+  if (texto(datos.domicilio)) {
     const pista = normalizar(datos.domicilio);
-    pedido = abiertos.find((p) => normalizar(p.domicilio_texto).includes(pista) || normalizar(p.name).includes(pista));
-  } else {
-    pedido = abiertos[0];
+    return abiertos.find((p) => normalizar(p.domicilio_texto).includes(pista) || normalizar(p.name).includes(pista)) ?? null;
   }
+  return abiertos[0] ?? null;
+}
+
+/**
+ * A qué pedido se refiere «entregado»: el indicado (`pedido_id`), el del
+ * domicilio dicho, o el primero de la ruta. Se resuelve al preguntar, para
+ * que el «sí» marque ese y no otro si la lista cambia entretanto.
+ */
+export async function pedido_a_entregar(ctx: Pick<KirletCtx, "data">, datos: Datos): Promise<DomainRow | null> {
+  return elegir_pedido(await abiertos_en_orden(ctx), datos);
+}
+
+/** `recibido` solo si se dijo: entregar y cobrar son dos cosas. */
+async function marcar_entrega(ctx: CtxVoz, datos: Datos): Promise<Salida> {
+  const abiertos = await abiertos_en_orden(ctx);
+  if (!abiertos.length) return error("No hay pedidos por entregar.");
+  const pedido = elegir_pedido(abiertos, datos);
   if (!pedido) return error("No encontré ese pedido.");
-  await ctx.data.update(
-    "herr_pedidos",
-    { id: String(pedido.id) },
-    {
-      estado: "entregado",
-      hora_entrega: hora_ahora(),
-      recibido: numero(pedido.recibido) ?? numero(pedido.cobrar),
-      updated_at: now_iso(),
-    },
-  );
-  const siguiente = abiertos.find((p) => p.id !== pedido!.id);
+  await avanzar_pedido(ctx, String(pedido.id), "entregado", { recibido: datos.cantidad });
+  const siguiente = abiertos.find((p) => p.id !== pedido.id);
   const cola = siguiente ? ` Siguiente: ${alias_pedido(siguiente)}.` : " No queda ninguno.";
   return ok(`Entregado ${alias_pedido(pedido)}.${cola}`, { pedido_id: pedido.id });
 }
 
 async function movimiento_caja(ctx: CtxVoz, datos: Datos, tipo: "retiro_cambio" | "aporte_propio"): Promise<Salida> {
-  const jornada = await jornada_abierta(ctx);
+  const jornada = await jornada_activa(ctx);
   if (!jornada) return error("No hay jornada en curso.");
   const cantidad = numero(datos.cantidad);
   if (cantidad == null) return error("Dime cuánto.");
@@ -394,6 +334,7 @@ async function movimiento_caja(ctx: CtxVoz, datos: Datos, tipo: "retiro_cambio" 
     motivo: "Por voz",
     jornada_id: jornada.id,
     saldado: false,
+    liquidacion: null,
   };
   await ctx.data.insert("herr_caja", fila);
   // Se dice lo que NO es: ni venta ni propina. Quien lo dicta va conduciendo.
@@ -404,19 +345,18 @@ async function movimiento_caja(ctx: CtxVoz, datos: Datos, tipo: "retiro_cambio" 
 }
 
 async function registrar_recarga(ctx: CtxVoz, datos: Datos): Promise<Salida> {
-  const jornada = await jornada_abierta(ctx);
+  const jornada = await jornada_activa(ctx);
   if (!jornada) return error("No hay jornada en curso.");
   const vehiculo_id = texto(jornada.vehiculo_id);
   if (!vehiculo_id) return error("No hay vehículo en la jornada.");
   const pesos_carga = numero(datos.cantidad);
   if (pesos_carga == null) return error("Dime cuánto pagaste de gasolina.");
   const litros = numero(datos.numero);
-  const km_inicial = numero(jornada.km_inicial);
   const recarga: DomainRow = {
-    ...base(ctx, "recarga", `Recarga ${texto(jornada.vehiculo_nombre)} ${fecha_hoy()}`.trim()),
+    ...base(ctx, "recarga", `Recarga ${fecha_hoy()} · ${texto(jornada.vehiculo_nombre) || vehiculo_id}`),
     vehiculo_id,
     fecha_hora: now_iso(),
-    km: km_inicial == null ? null : odometro_al_cierre(km_inicial, 0, numero(jornada.km_gps) ?? 0),
+    km: await odometro_estimado(ctx, jornada),
     pesos: centavos(pesos_carga),
     precio_litro: litros ? centavos(pesos_carga / litros) : null,
     litros,
@@ -425,19 +365,17 @@ async function registrar_recarga(ctx: CtxVoz, datos: Datos): Promise<Salida> {
     jornada_id: jornada.id,
   };
   const motivo = motivo_gasto(litros);
-  const gasto: DomainRow = {
+  const gasto = await preparar_gasto(ctx, {
     ...base(ctx, "gasto", motivo),
-    // Misma convención que el hook de herr-recargas: así borrar la recarga borra el gasto.
+    // Misma convención que el hook de herr-recargas: así borrar la recarga desactiva el gasto.
     id: `gasto_recarga_${recarga.id}`,
-    fecha: fecha_hoy(),
-    hora: hora_ahora(),
     motivo,
     cantidad: centavos(pesos_carga),
     fuente: "cobros",
-    jornada_id: jornada.id,
     descontado: false,
+    jornada_id: jornada.id,
     recarga_id: recarga.id,
-  };
+  });
   await ctx.data.batch([
     { op: "insert", table: "herr_recargas", row: recarga },
     { op: "insert", table: "herr_gastos", row: gasto },
@@ -445,51 +383,53 @@ async function registrar_recarga(ctx: CtxVoz, datos: Datos): Promise<Salida> {
   return ok(`Carga de gasolina de ${pesos(pesos_carga)} pesos registrada.`, { recarga_id: recarga.id, gasto_id: gasto.id });
 }
 
+/** El pendiente dictado más reciente se entrega con lo que se recibió. */
 async function surtir_pendiente(ctx: CtxVoz, datos: Datos): Promise<Salida> {
-  const pendientes = (await filas_de(ctx, "herr_pedidos", { estado: "capturado", is_active: true })).filter((p) =>
-    normalizar(p.detalle).includes("pendiente"),
-  );
+  const pendientes = (await abiertos_en_orden(ctx)).filter((p) => normalizar(p.detalle).includes("pendiente"));
   if (!pendientes.length) return ok("No hay pendientes por surtir.");
   const recibido = numero(datos.cantidad);
   if (recibido == null) return error("Dime cuánto recibiste.");
-  // El más reciente: por voz no hay cómo señalar otro.
   const pedido = [...pendientes].sort((a, b) => texto(b.updated_at).localeCompare(texto(a.updated_at)))[0]!;
-  await ctx.data.update(
-    "herr_pedidos",
-    { id: String(pedido.id) },
-    { estado: "surtido", hora_surtido: hora_ahora(), recibido: centavos(recibido), updated_at: now_iso() },
-  );
+  await avanzar_pedido(ctx, String(pedido.id), "entregado", { recibido });
   return ok(`Pendiente surtido. Recibí ${pesos(recibido)} pesos.`, { pedido_id: pedido.id });
 }
 
-async function entregar_cobro(ctx: CtxVoz): Promise<Salida> {
-  const jornada = await jornada_abierta(ctx);
-  if (!jornada) return error("No hay jornada en curso.");
-  const r = await liquidar(ctx, jornada);
-  const resultado = { a_caja: r.a_caja, pedidos: r.por_liquidar.length };
-  if (r.nada) return ok("No hay nada que liquidar.", resultado);
+/** «Entregar el cobro»: la liquidación de la app; el fondo de cambio solo si se dijo que se devuelve. */
+async function entregar_cobro(ctx: CtxVoz, datos: Datos): Promise<Salida> {
+  const jornada = await jornada_activa(ctx);
+  const devolver_cambio = booleano(datos.devolver_cambio);
+  const v = await liquidar(ctx, jornada ? String(jornada.id) : null, { devolver_cambio });
+  const a_caja = a_entregar(v, devolver_cambio);
+  const resultado = { a_caja, pedidos: v.pedido_ids.length, sello: v.sello };
+  if (v.nada_que_cobrar || (!devolver_cambio && !v.pedido_ids.length && !v.me_debe_caja)) {
+    return ok("No hay nada que liquidar.", resultado);
+  }
+  const conservas = !devolver_cambio && v.cambio_de_caja > 0 ? ` Conservas ${pesos(v.cambio_de_caja)} pesos de cambio.` : "";
   // Nunca «a caja» en negativo: si puse más de lo que cobré, me lo devuelven.
-  if (r.a_caja < 0) return ok(`Liquidado. La caja te devuelve ${pesos(-r.a_caja)} pesos.`, resultado);
-  return ok(`Cobro entregado. Entregas ${pesos(r.a_caja)} pesos.`, resultado);
+  if (a_caja < 0) return ok(`Liquidado. La caja te devuelve ${pesos(-a_caja)} pesos.${conservas}`, resultado);
+  return ok(`Cobro entregado. Entregas ${pesos(a_caja)} pesos.${conservas}`, resultado);
 }
 
 async function consulta_hoy(ctx: CtxVoz): Promise<Salida> {
   const jornada = await jornada_de_hoy(ctx);
-  if (!jornada) return ok("Hoy no hay jornada ni movimientos.", { a_caja: 0, pedidos: 0 });
-  const r = await resumen(ctx, jornada);
-  const abierta = texto(jornada.estado) === "abierta";
-  const prefijo = abierta ? "Hoy, con la jornada abierta, " : "Hoy ";
-  const en_curso = r.en_curso.length ? ` y ${r.en_curso.length} en curso.` : ".";
+  const v = await vista_liquidacion(ctx, jornada ? String(jornada.id) : null);
+  if (!jornada && v.nada_que_cobrar && !v.en_curso) {
+    return ok("Hoy no hay jornada ni movimientos.", { a_caja: 0, pedidos: 0 });
+  }
+  const a_caja = a_entregar(v, false);
+  const prefijo = texto(jornada?.estado) === "abierta" ? "Hoy, con la jornada abierta, " : "Hoy ";
+  const caja = a_caja < 0 ? `la caja te devolvería ${pesos(-a_caja)} pesos` : `a caja irían ${pesos(a_caja)} pesos`;
+  const en_curso = v.en_curso ? ` y ${v.en_curso} en curso.` : ".";
   return ok(
-    `${prefijo}a caja irían ${pesos(r.a_caja)} pesos, propinas ${pesos(r.propinas)}, ${r.por_liquidar.length} pedidos cobrables${en_curso}`,
-    { a_caja: r.a_caja, propinas: r.propinas, cobrables: r.por_liquidar.length, en_curso: r.en_curso.length },
+    `${prefijo}${caja}, propinas ${pesos(v.propinas)}, ${v.pedido_ids.length} pedidos cobrables${en_curso}`,
+    { a_caja, propinas: centavos(v.propinas), cobrables: v.pedido_ids.length, en_curso: v.en_curso },
   );
 }
 
 async function consulta_pedidos(ctx: CtxVoz): Promise<Salida> {
   const jornada = await jornada_de_hoy(ctx);
   const pedidos = jornada ? await pedidos_de(ctx, jornada) : [];
-  const en_curso = pedidos.filter(abierto).length;
+  const en_curso = pedidos.filter((p) => es_abierto(estado_de(p))).length;
   const cola = en_curso ? ` y ${en_curso} en curso.` : ".";
   return ok(`Llevas ${pedidos.length} pedidos${cola}`, { pedidos: pedidos.length, en_curso });
 }
@@ -525,23 +465,14 @@ async function buscar(ctx: CtxVoz, datos: Datos): Promise<Salida> {
   return ok(`Encontré ${top.length}. ${detalle}.`, { hallazgos: top });
 }
 
-async function cerrar_dia(ctx: CtxVoz): Promise<Salida> {
-  const r = await terminar_jornada(ctx);
-  if (r.estado !== "ejecutado") return r;
-  const entregas = Number(r.resultado?.entregas ?? 0);
-  const a_caja = Number(r.resultado?.a_caja ?? 0);
-  const cola = a_caja > 0 ? ` Entregas ${pesos(a_caja)} pesos a caja.` : "";
-  return ok(`Cerré el día. ${entregas} pedidos entregados.${cola}`, r.resultado);
-}
-
 const MANEJADORES: Record<string, Manejador> = {
-  jornada_iniciar: iniciar_jornada,
-  jornada_cambiar_vehiculo: cambiar_vehiculo,
-  jornada_elegir_vehiculo: cambiar_vehiculo,
-  jornada_terminar: terminar_jornada,
-  pedido_registrar: (ctx, d) => registrar_pedido(ctx, d, false),
-  pendiente_registrar: (ctx, d) => registrar_pedido(ctx, d, true),
-  gasto_registrar: registrar_gasto,
+  jornada_iniciar: iniciar_por_voz,
+  jornada_cambiar_vehiculo: cambiar_por_voz,
+  jornada_elegir_vehiculo: cambiar_por_voz,
+  jornada_terminar: terminar_por_voz,
+  pedido_registrar: (ctx, d) => pedido_por_voz(ctx, d, false),
+  pendiente_registrar: (ctx, d) => pedido_por_voz(ctx, d, true),
+  gasto_registrar: gasto_por_voz,
   entrega_registrar: marcar_entrega,
   caja_retiro: (ctx, d) => movimiento_caja(ctx, d, "retiro_cambio"),
   caja_aporte: (ctx, d) => movimiento_caja(ctx, d, "aporte_propio"),
@@ -569,7 +500,10 @@ export async function ejecutar_intencion(ctx: CtxVoz, intencion: string, datos: 
   try {
     return { intencion, ...(await manejador(ctx, datos)) };
   } catch (err) {
-    // El detalle va al log: recitar una excepción al oído es ruido.
+    // Una regla de Reparto que no se cumple se dice tal cual; lo demás va al log.
+    if (err instanceof KirletHttpError && err.status < 500) {
+      return { intencion, ...error(err.message.endsWith(".") ? err.message : `${err.message}.`) };
+    }
     console.warn(`[herr-voz] fallo al ejecutar ${intencion}`, err);
     return { intencion, estado: "error", resultado: null, respuesta: "Ocurrió un error." };
   }

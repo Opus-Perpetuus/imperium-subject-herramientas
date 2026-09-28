@@ -71,6 +71,29 @@ describe("recordatorio_en", () => {
     expect((await call("POST", "/herr-agenda", { name: "X" })).status).toBe(400);
     expect((await call("POST", "/herr-agenda", { name: "X", fecha: "2026-09-28", inicio_minuto: 1440 })).status).toBe(400);
     expect((await call("POST", "/herr-agenda", { name: "X", fecha: "2026-09-28", recordatorio_min: 7 })).status).toBe(400);
+    expect((await call("POST", "/herr-agenda", { name: "X", fecha: "2026-02-30" })).status).toBe(400);
+  });
+
+  test("un null del formulario en una columna NOT NULL toma el valor por defecto", async () => {
+    const e = await evento({ name: "Vacío", duracion_min: null, recordatorio_min: null, alarma: null, hecho: null });
+    expect(e).toMatchObject({ duracion_min: 60, recordatorio_min: 15, alarma: false, hecho: false });
+    const patch = await call("PATCH", `/herr-agenda/${e.id}`, { duracion_min: null, recordatorio_min: "" });
+    expect(patch.data).toMatchObject({ duracion_min: 60, recordatorio_min: 15 });
+  });
+
+  test("un null o vacío en name, fecha o is_active conserva lo guardado; is_active null al crear es true", async () => {
+    const e = await evento({ name: "Junta", is_active: null });
+    expect(e.is_active).toBe(true);
+    const patch = await call("PATCH", `/herr-agenda/${e.id}`, { name: null, fecha: "", is_active: null });
+    expect(patch.status).toBe(200);
+    expect(patch.data).toMatchObject({ name: "Junta", fecha: "2026-09-28", is_active: true });
+  });
+
+  test("created_by lo fija el servidor y no se edita", async () => {
+    const e = await evento({ name: "Mío", created_by: "otro@x" });
+    expect(e.created_by).toBe("dev@local");
+    const patch = await call("PATCH", `/herr-agenda/${e.id}`, { created_by: "otro@x" });
+    expect(patch.data.created_by).toBe("dev@local");
   });
 });
 
@@ -95,6 +118,7 @@ describe("rango, recordatorios y hecho", () => {
     await call("POST", `/herr-agenda/${hecho.id}/hecho`);
     await evento({ name: "Cumple" });
 
+    await evento({ name: "Otro día", fecha: "2026-09-30", inicio_minuto: 570, recordatorio_min: 30 });
     const r = await call("GET", "/herr-agenda/recordatorios?desde=2026-09-28&hasta=2026-09-28");
     expect(r.status).toBe(200);
     expect(r.data).toEqual([
@@ -116,6 +140,28 @@ describe("rango, recordatorios y hecho", () => {
         fin_en: "2026-09-28T15:45:00.000Z",
       },
     ]);
+  });
+
+  test("recordatorios selecciona por el instante del aviso, no por la fecha del evento", async () => {
+    const manana = await evento({ name: "Mañana", fecha: "2026-09-29", inicio_minuto: 540, recordatorio_min: 1440 });
+    await evento({ name: "Hoy tarde", fecha: "2026-09-28", inicio_minuto: 1200, recordatorio_min: 0 });
+    const r = await call("GET", "/herr-agenda/recordatorios?desde=2026-09-28&hasta=2026-09-28");
+    expect(r.data.map((a: { name: string }) => a.name)).toEqual(["Mañana", "Hoy tarde"]);
+    expect(r.data[0]).toMatchObject({ evento_id: manana.id, recordatorio_en: "2026-09-28T15:00:00.000Z" });
+    // El 29 el aviso de «Mañana» ya sonó (fue el 28): no se repite.
+    expect((await call("GET", "/herr-agenda/recordatorios?desde=2026-09-29")).data).toEqual([]);
+    // Instantes ISO: el rango es exacto.
+    const iso = await call("GET", "/herr-agenda/recordatorios?desde=2026-09-28T15:00:00Z&hasta=2026-09-28T16:00:00Z");
+    expect(iso.data.map((a: { name: string }) => a.name)).toEqual(["Mañana"]);
+    expect((await call("GET", "/herr-agenda/recordatorios?desde=ayer")).status).toBe(400);
+    expect((await call("GET", "/herr-agenda/recordatorios?desde=2026-09-29&hasta=2026-09-28")).status).toBe(400);
+  });
+
+  test("sin desde, los avisos ya vencidos no salen", async () => {
+    await evento({ name: "Pasado", fecha: "2020-01-01", inicio_minuto: 540, recordatorio_min: 0 });
+    await evento({ name: "Futuro", fecha: "2999-01-01", inicio_minuto: 540, recordatorio_min: 0 });
+    const r = await call("GET", "/herr-agenda/recordatorios?hasta=2999-12-31");
+    expect(r.data.map((a: { name: string }) => a.name)).toEqual(["Futuro"]);
   });
 
   test("hecho alterna y un id inexistente es 404", async () => {
@@ -147,8 +193,12 @@ describe("páginas", () => {
     ]);
     const tabla = doc.page.children[1]!;
     expect(tabla.component).toBe("nox.table");
-    expect(tabla.props!.rows).toEqual([{ hora: "09:30", titulo: "Junta", duracion: "60 min", aviso: "2026-09-28 15:15", hecho: "No" }]);
+    expect(tabla.props!.rows).toEqual([{ hora: "09:30", titulo: "Junta", duracion: "60 min", aviso: "2026-09-28 09:15", hecho: "No" }]);
 
+    await evento({ name: "Temprano", fecha: "2026-09-30", inicio_minuto: 10, recordatorio_min: 30 });
+    const temprano = await server.fetch(new Request("http://t/pages/herramientas.herr-agenda-dia?fecha=2026-09-30"));
+    const filas = ((await temprano.json()) as { page: { children: Array<{ props?: { rows?: Array<Record<string, string>> } }> } }).page.children[1]!.props!.rows!;
+    expect(filas[0]!.aviso).toBe("2026-09-29 23:40");
     const vacio = await server.fetch(new Request("http://t/pages/herramientas.herr-agenda-dia?fecha=2026-12-25"));
     expect(((await vacio.json()) as { page: { children: Array<{ component: string }> } }).page.children[1]!.component).toBe("nox.empty");
   });

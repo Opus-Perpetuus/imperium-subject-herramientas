@@ -1,5 +1,5 @@
-import type { DomainRow, KirletCtx } from "@opus-perpetuus/imperium-core-kit";
-import { booleano, filas_de, numero, texto } from "../comun.ts";
+import type { DomainRow } from "@opus-perpetuus/imperium-core-kit";
+import { booleano, numero, texto } from "../comun.ts";
 
 /**
  * La aritmética de «Entregar cobros»: cuánto va a caja, cuánto es propina y
@@ -237,37 +237,4 @@ export function efectivo_en_mano(pedidos: DomainRow[], gastos: DomainRow[], caja
     .filter((m) => !booleano(m.saldado) && tipo_caja(m) === RETIRO)
     .reduce((s, m) => s + Math.max(0, monto(m.cantidad) ?? 0), 0);
   return disponible(pedidos, gastos) + cambio;
-}
-
-/** El sello «YYYY-MM-DD HH:mm» que la liquidación estampa en todo lo que marca. */
-export function sello(fecha: string, hora: string): string {
-  return `${fecha} ${hora}`;
-}
-
-export type VistaPrevia = Liquidacion & {
-  disponible: number;
-  efectivo_en_mano: number;
-  pedidos: DomainRow[];
-  gastos: DomainRow[];
-  caja: DomainRow[];
-};
-
-/**
- * La liquidación tal como quedaría ahora mismo. Lee **todo** lo pendiente de
- * todas las jornadas; `jornada_id` solo decide qué es «de hoy» en el desglose.
- */
-export async function vista_previa(ctx: Pick<KirletCtx, "data">, jornada_id: string | null): Promise<VistaPrevia> {
-  const [pedidos, gastos, caja] = await Promise.all([
-    filas_de(ctx, "herr_pedidos", { is_active: true }),
-    filas_de(ctx, "herr_gastos", { is_active: true }),
-    filas_de(ctx, "herr_caja", { is_active: true }),
-  ]);
-  return {
-    ...liquidar(pedidos, gastos, jornada_id, caja),
-    disponible: disponible(pedidos, gastos),
-    efectivo_en_mano: efectivo_en_mano(pedidos, gastos, caja),
-    pedidos,
-    gastos,
-    caja,
-  };
 }

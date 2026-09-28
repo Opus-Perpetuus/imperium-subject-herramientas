@@ -12,6 +12,9 @@ export const APP_VEHICULOS = "subject-vehiculos";
 
 export type OpcionesExterno = Pick<CallSubjectOptions, "fetchImpl" | "env" | "timeout_ms">;
 
+/** Corto: la petición que pide el nombre tiene su propio plazo de 4 s con el núcleo. */
+const PLAZO_NOMBRE_MS = 1_500;
+
 /**
  * Nombre del vehículo externo. Si el gateway no responde (o no está
  * configurado, como en tests) devuelve `snapshot`, el `name` de los ajustes
@@ -27,7 +30,7 @@ export async function nombre_vehiculo(
     const remoto = await call_subject<{ name?: unknown } | null>(
       APP_VEHICULOS,
       `GET /vehicle/${encodeURIComponent(vehiculo_id)}`,
-      opts,
+      { ...opts, timeout_ms: opts.timeout_ms ?? PLAZO_NOMBRE_MS },
     );
     if (texto(remoto?.name)) return texto(remoto?.name);
   } catch {

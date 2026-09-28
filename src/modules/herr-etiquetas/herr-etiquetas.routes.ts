@@ -45,8 +45,11 @@ export const herr_etiquetas_module = define_module({
     },
     options_map: { value: "id", label: "name" },
     hooks: {
-      before_create: (ctx, row) => preparar({ created_by: ctx.actor, ...row, color: row.color || "neutro" }),
-      before_update: (_ctx, _id, patch, existing) => preparar(patch, existing),
+      before_create: (ctx, row) => preparar({ ...row, created_by: ctx.actor, color: row.color || "neutro" }),
+      before_update: (_ctx, _id, patch, existing) => {
+        delete patch.created_by;
+        return preparar(patch, existing);
+      },
     },
   }),
   tables: herr_etiquetas_tables,

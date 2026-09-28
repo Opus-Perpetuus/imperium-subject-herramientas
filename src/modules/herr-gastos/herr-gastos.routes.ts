@@ -1,22 +1,14 @@
 import { define_crud, define_module, type DomainRow, type KirletCtx } from "@opus-perpetuus/imperium-core-kit";
-import { booleano, campo_busqueda, falla, fecha_hoy, filas_de, hora_ahora, numero, texto } from "../../lib/comun.ts";
-import { jornada_activa } from "../../lib/jornadas/jornada.ts";
-import { FUENTES_GASTO, disponible } from "../../lib/liquidacion/liquidacion.ts";
+import { booleano, falla, guardar_imagen, numero, solo_dia, texto } from "../../lib/comun.ts";
+import {
+  exigir_disponible,
+  exigir_no_liquidada,
+  fuente_gasto,
+  nombre_y_busqueda_gasto,
+  preparar_gasto,
+} from "../../lib/reparto/servicios.ts";
 import { herr_gastos_pages } from "./herr-gastos.pages.ts";
 import { herr_gastos_tables } from "./herr-gastos.tables.ts";
-
-function fuente_valida(valor: unknown): string {
-  const fuente = texto(valor) || "cobros";
-  if (!(FUENTES_GASTO as readonly string[]).includes(fuente)) {
-    falla(400, `La fuente debe ser ${FUENTES_GASTO.join(" o ")}`, "validation_error");
-  }
-  return fuente;
-}
-
-function nombre_y_busqueda(fila: DomainRow): DomainRow {
-  const name = texto(fila.motivo) || "Gasto";
-  return { name, search_field: campo_busqueda(name, fila.fuente, fila.fecha) };
-}
 
 export const herr_gastos_module = define_module({
   resource: "herr-gastos",
@@ -43,7 +35,7 @@ export const herr_gastos_module = define_module({
       created_by: { type: "string" },
       custom_data: { type: "json" },
       payload: { type: "json" },
-      fecha: { type: "string" },
+      fecha: { type: "string", normalize: solo_dia },
       hora: { type: "string" },
       motivo: { type: "string", required: true, search: true },
       cantidad: { type: "number", required: true, validate: (v) => (Number(v) < 0 ? "La cantidad no puede ser negativa" : null) },
@@ -57,33 +49,29 @@ export const herr_gastos_module = define_module({
     options_map: { value: "id", label: "name" },
     hooks: {
       before_create: async (ctx: KirletCtx, row: DomainRow) => {
-        const fuente = fuente_valida(row.fuente);
-        const descontado = fuente === "caja" ? true : booleano(row.descontado);
-        if (fuente === "cobros" && !descontado) {
-          const [pedidos, gastos] = await Promise.all([
-            filas_de(ctx, "herr_pedidos", { is_active: true }),
-            filas_de(ctx, "herr_gastos", { is_active: true }),
-          ]);
-          if ((numero(row.cantidad) ?? 0) > disponible(pedidos, gastos) + 1e-9) {
-            falla(400, "No hay dinero de cobros para cubrirlo", "validation_error");
-          }
+        // Esos ids los reserva herr-recargas para el gasto de cada recarga.
+        if (String(row.id).startsWith("gasto_recarga_")) {
+          falla(400, "Ese id está reservado para el gasto de una recarga", "validation_error");
         }
-        const fila: DomainRow = {
-          ...row,
-          fuente,
-          descontado,
-          fecha: texto(row.fecha) || fecha_hoy(),
-          hora: texto(row.hora) || hora_ahora(),
-          jornada_id: texto(row.jornada_id) || ((await jornada_activa(ctx))?.id ?? null),
-        };
-        return { ...fila, ...nombre_y_busqueda(fila) };
+        const fila = { ...row };
+        if ("ticket" in row) fila.ticket = await guardar_imagen(ctx, "herr-gastos", String(row.id), row.ticket);
+        return preparar_gasto(ctx, fila);
       },
-      before_update: (_ctx, _id, patch, existing) => {
-        if ("fuente" in patch) patch.fuente = fuente_valida(patch.fuente);
-        const fila = { ...existing, ...patch };
-        if (fila.fuente === "caja") patch.descontado = true;
-        return { ...patch, ...nombre_y_busqueda(fila) };
+      // Subir la cantidad (o pasar el gasto a «cobros») vuelve a exigir dinero disponible.
+      before_update: async (ctx: KirletCtx, id: string, patch: DomainRow, existing: DomainRow) => {
+        const { created_by: _autor, liquidacion: _sello, ...resto } = patch;
+        exigir_no_liquidada(existing, resto);
+        if ("fuente" in resto) resto.fuente = fuente_gasto(resto.fuente);
+        const fila = { ...existing, ...resto };
+        if (fila.fuente === "caja") resto.descontado = fila.descontado = true;
+        const cambia = ["cantidad", "fuente", "descontado"].some((k) => k in resto && resto[k] !== existing[k]);
+        if (cambia && texto(fila.fuente) === "cobros" && !booleano(fila.descontado)) {
+          await exigir_disponible(ctx, numero(fila.cantidad) ?? 0, id);
+        }
+        if ("ticket" in resto) resto.ticket = await guardar_imagen(ctx, "herr-gastos", id, resto.ticket);
+        return { ...resto, ...nombre_y_busqueda_gasto(fila) };
       },
+      before_delete: (_ctx: KirletCtx, existing: DomainRow) => exigir_no_liquidada(existing),
     },
   }),
   tables: herr_gastos_tables,

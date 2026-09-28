@@ -3,7 +3,7 @@
  *
  * Dos niveles: `normalizar_ligero` (minúsculas, sin acentos, solo letras y
  * dígitos) y `normalizar_frase`, que además quita muletillas, expande
- * elisiones («pa'» → «para») y números en palabras («cincuenta» → «50»).
+ * elisiones («pa'» → «para») y números en palabras («doscientos cincuenta» → «250»).
  */
 
 const MULETILLAS = [
@@ -12,16 +12,27 @@ const MULETILLAS = [
   "por favor", "porfa", "porfis", "please",
 ];
 
-const NUMEROS: Record<string, string> = {
-  cero: "0",
-  uno: "1", una: "1", un: "1",
-  dos: "2", tres: "3", cuatro: "4", cinco: "5", seis: "6", siete: "7",
-  ocho: "8", nueve: "9", diez: "10", once: "11", doce: "12", trece: "13",
-  catorce: "14", quince: "15", dieciseis: "16", diecisiete: "17",
-  dieciocho: "18", diecinueve: "19", veinte: "20", treinta: "30",
-  cuarenta: "40", cincuenta: "50", sesenta: "60", setenta: "70",
-  ochenta: "80", noventa: "90", cien: "100", ciento: "100",
-  doscientos: "200", doscientas: "200", trescientos: "300", mil: "1000",
+const UNIDADES: Record<string, number> = {
+  uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9,
+};
+
+/** Del 10 al 29: se dicen en una sola palabra. */
+const DIECES: Record<string, number> = {
+  diez: 10, once: 11, doce: 12, trece: 13, catorce: 14, quince: 15, dieciseis: 16,
+  diecisiete: 17, dieciocho: 18, diecinueve: 19, veinte: 20, veintiuno: 21, veintiun: 21,
+  veintiuna: 21, veintidos: 22, veintitres: 23, veinticuatro: 24, veinticinco: 25,
+  veintiseis: 26, veintisiete: 27, veintiocho: 28, veintinueve: 29,
+};
+
+const DECENAS: Record<string, number> = {
+  treinta: 30, cuarenta: 40, cincuenta: 50, sesenta: 60, setenta: 70, ochenta: 80, noventa: 90,
+};
+
+const CENTENAS: Record<string, number> = {
+  cien: 100, ciento: 100, doscientos: 200, doscientas: 200, trescientos: 300, trescientas: 300,
+  cuatrocientos: 400, cuatrocientas: 400, quinientos: 500, quinientas: 500, seiscientos: 600,
+  seiscientas: 600, setecientos: 700, setecientas: 700, ochocientos: 800, ochocientas: 800,
+  novecientos: 900, novecientas: 900,
 };
 
 export function sin_acentos(texto: string): string {
@@ -58,12 +69,65 @@ function quitar_muletillas(s: string): string {
     .join(" ");
 }
 
-function expandir_numeros(s: string): string {
-  return s
-    .split(" ")
-    .filter(Boolean)
-    .map((tok) => NUMEROS[tok] ?? tok)
-    .join(" ");
+/**
+ * Valor de una palabra numérica. «un»/«una» solo cuentan dentro de un número
+ * («ciento un», «treinta y una»): sueltos son artículo («anota un pedido»).
+ */
+function valor_palabra(tok: string, dentro: boolean): number | null {
+  if (dentro && (tok === "un" || tok === "una")) return 1;
+  return UNIDADES[tok] ?? DIECES[tok] ?? DECENAS[tok] ?? CENTENAS[tok] ?? null;
+}
+
+/**
+ * Lee un número dicho en palabras desde `i`: «doscientos cincuenta» → 250,
+ * «mil quinientos» → 1500, «treinta y cinco» → 35. Cada parte debe ser menor
+ * que la anterior; lo que no encaja (una cifra, otra palabra) corta el número.
+ */
+function leer_numero(tokens: string[], i: number): { valor: number; fin: number } | null {
+  if (tokens[i] === "cero") return { valor: 0, fin: i + 1 };
+  let miles = 0;
+  let resto = 0;
+  let tope = 1000;
+  let j = i;
+  while (j < tokens.length) {
+    const tok = tokens[j]!;
+    if (tok === "mil" && miles === 0) {
+      miles = (resto || 1) * 1000;
+      resto = 0;
+      tope = 1000;
+      j++;
+      continue;
+    }
+    if (tok === "y" && tope === 10 && valor_palabra(tokens[j + 1] ?? "", true) != null) {
+      j++;
+      continue;
+    }
+    const v = valor_palabra(tok, j > i);
+    if (v == null || v >= tope) break;
+    resto += v;
+    tope = tok === "cien" ? 1 : v >= 100 ? 100 : v >= 30 ? 10 : 1;
+    j++;
+  }
+  return j > i ? { valor: miles + resto, fin: j } : null;
+}
+
+/** Números en palabras a cifras; las cifras y el resto de palabras quedan igual. */
+export function expandir_numeros(s: string): string {
+  const tokens = s.split(" ").filter(Boolean);
+  const out: string[] = [];
+  for (let i = 0; i < tokens.length; ) {
+    const n = leer_numero(tokens, i);
+    if (n) {
+      // «veinte punto cinco» → 20.5; la parte decimal se lee como se dice.
+      const decimal = tokens[n.fin] === "punto" ? leer_numero(tokens, n.fin + 1) : null;
+      out.push(decimal ? `${n.valor}.${decimal.valor}` : String(n.valor));
+      i = decimal ? decimal.fin : n.fin;
+    } else {
+      out.push(tokens[i]!);
+      i++;
+    }
+  }
+  return out.join(" ");
 }
 
 /** Normalización completa: la que ven los sinónimos y el puntuador. */

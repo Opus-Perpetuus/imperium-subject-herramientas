@@ -4,7 +4,7 @@ import { FRASES_ACTIVACION, contiene_activacion, quitar_activacion } from "../..
 import { intencion_por_id, type Datos } from "../../lib/nlu/intenciones.ts";
 import { interpretar, type Interpretacion } from "../../lib/nlu/interprete.ts";
 import { UMBRAL_POR_DEFECTO } from "../../lib/nlu/puntuador.ts";
-import { ejecutar_intencion } from "../../lib/voz/ejecutor.ts";
+import { alias_pedido, ejecutar_intencion, pedido_a_entregar } from "../../lib/voz/ejecutor.ts";
 
 /**
  * Texto → intención (`interpretar`) → acción sobre Reparto (`ejecutar`).
@@ -146,7 +146,14 @@ export const herr_voz_flow = define_routes({
 
     // Solo lo que escribe pide confirmación; una consulta se responde y ya.
     if (ajustes.confirmar_antes && def.escribe && !booleano(body.confirmado)) {
-      const respuesta = `${def.resumen(datos)} ¿Confirmas?`;
+      let respuesta = `${def.resumen(datos)} ¿Confirmas?`;
+      // «Entregado» se fija al preguntar: el «sí» marca ese pedido aunque la lista cambie.
+      const pedido = intencion === "entrega_registrar" && !datos.pedido_id ? await pedido_a_entregar(ctx, datos) : null;
+      if (pedido) {
+        datos = { ...datos, pedido_id: String(pedido.id) };
+        const cobro = datos.cantidad ? ` Recibí ${datos.cantidad} pesos.` : "";
+        respuesta = `Marco entregado ${alias_pedido(pedido)}.${cobro} ¿Confirmas?`;
+      }
       await anotar(ctx, { texto: texto_bitacora, intencion, confianza, ambiguo, datos, resultado: null, respuesta, estado: "pendiente_confirmacion" });
       return { data: { intencion, datos, alternativas, resultado: null, respuesta, estado: "pendiente_confirmacion" }, message: respuesta };
     }

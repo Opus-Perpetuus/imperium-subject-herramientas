@@ -153,4 +153,9 @@ describe("reglas_desde", () => {
     expect(r.whatsapp_activo).toBe(true);
     expect(r.anuncio_activo).toBe(true);
   });
+
+  test("retardo_s se acota a 0..60 segundos", () => {
+    expect(reglas_desde({ retardo_s: -5 }).retardo_s).toBe(0);
+    expect(reglas_desde({ retardo_s: 9999 }).retardo_s).toBe(60);
+  });
 });

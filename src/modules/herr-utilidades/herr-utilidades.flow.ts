@@ -1,6 +1,8 @@
 import {
   define_routes,
+  json_response,
   sanitize_nox_html,
+  type KirletIdentity,
   type NoxHtmlPurifier,
 } from "@opus-perpetuus/imperium-core-kit";
 import pkg from "../../../package.json" with { type: "json" };
@@ -61,7 +63,7 @@ export const CAPACIDADES: Capacidad[] = [
   { id: "voz.interpretar", herramienta: "Asistente de voz", metodo: "POST", ruta: "/herr-voz/interpretar", entrada: "{texto}", salida: "{intencion, datos}", descripcion: "Texto en español → intención + datos." },
   { id: "voz.ejecutar", herramienta: "Asistente de voz", metodo: "POST", ruta: "/herr-voz/ejecutar", entrada: "{intencion, datos}", salida: "resultado", descripcion: "Ejecutar una intención sobre Reparto." },
   { id: "agenda.rango", herramienta: "Agenda", metodo: "GET", ruta: "/herr-agenda/rango", entrada: "?desde&hasta", salida: "eventos", descripcion: "Eventos entre dos fechas." },
-  { id: "agenda.recordatorios", herramienta: "Agenda", metodo: "GET", ruta: "/herr-agenda/recordatorios", entrada: "?desde&hasta", salida: "recordatorios", descripcion: "Recordatorios pendientes entre dos fechas." },
+  { id: "agenda.recordatorios", herramienta: "Agenda", metodo: "GET", ruta: "/herr-agenda/recordatorios", entrada: "?desde&hasta (AAAA-MM-DD o ISO; sin desde = ahora)", salida: "recordatorios", descripcion: "Avisos pendientes que suenan dentro del rango." },
 ];
 
 /**
@@ -102,18 +104,35 @@ function ajustes_de(raw: unknown): Partial<typeof AJUSTES> {
   return out as Partial<typeof AJUSTES>;
 }
 
+/**
+ * Servicio sin estado para cualquier usuario interno con sesión, tenga o no el
+ * menú de Herramientas: otras apps lo usan desde el navegador. Va `raw` y sin
+ * `access`, así que el kit no exige el grant del módulo; la sesión interna (o
+ * la llamada de servicio de otra app) se exige aquí.
+ */
+function servicio<Cuerpo = Record<string, unknown>>(fn: (body: Cuerpo) => unknown) {
+  return {
+    raw: true as const,
+    handler: async (req: Request, meta: { identity: KirletIdentity | null }) => {
+      if (!meta.identity || (meta.identity.user_type ?? "internal") !== "internal") {
+        falla(401, "Se necesita una sesión interna", "unauthorized");
+      }
+      const cuerpo = await req.text();
+      return json_response({ data: await fn(cuerpo ? JSON.parse(cuerpo) : ({} as Cuerpo)) });
+    },
+  };
+}
+
 export const herr_utilidades_flow = define_routes({
-  "POST /herr-utilidades/markdown": async (ctx) => {
-    const body = await ctx.body<{ texto?: unknown; sanear?: unknown }>();
+  "POST /herr-utilidades/markdown": servicio<{ texto?: unknown; sanear?: unknown }>(async (body) => {
     if (typeof body.texto !== "string") falla(400, "Falta `texto`", "texto_requerido");
     const ast = analizar(body.texto);
     let html = a_html(ast);
     if (body.sanear !== false) html = sanitize_nox_html(html, await saneador());
-    return { data: { html, ast, encabezados: encabezados(ast), etiquetas: etiquetas(ast) } };
-  },
+    return { html, ast, encabezados: encabezados(ast), etiquetas: etiquetas(ast) };
+  }),
 
-  "POST /herr-utilidades/formula": async (ctx) => {
-    const body = await ctx.body<{ formula?: unknown; valores?: unknown; filas?: unknown }>();
+  "POST /herr-utilidades/formula": servicio<{ formula?: unknown; valores?: unknown; filas?: unknown }>((body) => {
     if (typeof body.formula !== "string" || !body.formula.trim()) {
       falla(400, "Falta `formula`", "formula_requerida");
     }
@@ -121,43 +140,41 @@ export const herr_utilidades_flow = define_routes({
       ? body.filas.map((fila) => ambito_de(mapa_valores(fila)))
       : [];
     const resultado = evaluar(body.formula, ambito_de(mapa_valores(body.valores), filas));
-    if (!resultado.ok) return { data: { ok: false, error: resultado.error } };
-    return { data: { ok: true, valor: resultado.valor, texto: a_texto(resultado.valor) } };
-  },
+    if (!resultado.ok) return { ok: false, error: resultado.error };
+    return { ok: true, valor: resultado.valor, texto: a_texto(resultado.valor) };
+  }),
 
-  "POST /herr-utilidades/geo/distancia": async (ctx) => {
-    const body = await ctx.body<{ desde?: { lat?: unknown; lon?: unknown }; hasta?: { lat?: unknown; lon?: unknown } }>();
+  "POST /herr-utilidades/geo/distancia": servicio<{
+    desde?: { lat?: unknown; lon?: unknown };
+    hasta?: { lat?: unknown; lon?: unknown };
+  }>((body) => {
     const desde = punto_valido(body.desde?.lat, body.desde?.lon);
     const hasta = punto_valido(body.hasta?.lat, body.hasta?.lon);
     if (!desde || !hasta) falla(400, "Faltan `desde` y `hasta` con lat/lon válidos", "puntos_invalidos");
-    return { data: { metros: distancia_m(desde, hasta) } };
-  },
+    return { metros: distancia_m(desde, hasta) };
+  }),
 
-  "POST /herr-utilidades/geo/enlaces": async (ctx) => {
-    const body = await ctx.body<{ lat?: unknown; lon?: unknown; etiqueta?: unknown }>();
+  "POST /herr-utilidades/geo/enlaces": servicio<{ lat?: unknown; lon?: unknown; etiqueta?: unknown }>((body) => {
     const punto = punto_valido(body.lat, body.lon);
     if (!punto) falla(400, "Faltan `lat` y `lon` válidos", "punto_invalido");
     const etiqueta = typeof body.etiqueta === "string" ? body.etiqueta : null;
     return {
-      data: {
-        ver: enlace_ver(punto),
-        como_llegar: enlace_como_llegar(punto),
-        geo: geo_uri(punto, etiqueta),
-      },
+      ver: enlace_ver(punto),
+      como_llegar: enlace_como_llegar(punto),
+      geo: geo_uri(punto, etiqueta),
     };
-  },
+  }),
 
-  "POST /herr-utilidades/rutas/analizar": async (ctx) => {
-    const body = await ctx.body<{ puntos?: unknown; ajustes?: unknown }>();
+  "POST /herr-utilidades/rutas/analizar": servicio<{ puntos?: unknown; ajustes?: unknown }>((body) => {
     const puntos = Array.isArray(body.puntos)
       ? body.puntos.map(punto_gps_valido).filter((p) => p !== null)
       : [];
     if (!puntos.length) falla(400, "Faltan `puntos` GPS válidos ({t, lat, lon})", "puntos_invalidos");
     const ajustes = { ...AJUSTES, ...ajustes_de(body.ajustes) };
-    return { data: analizar_ruta(puntos, ajustes) };
-  },
+    return analizar_ruta(puntos, ajustes);
+  }),
 
-  "GET /herr-utilidades/capacidades": () => ({ data: CAPACIDADES }),
+  "GET /herr-utilidades/capacidades": servicio(() => CAPACIDADES),
 
-  "GET /herr-utilidades/salud": () => ({ data: { ok: true, version: pkg.version } }),
+  "GET /herr-utilidades/salud": servicio(() => ({ ok: true, version: pkg.version })),
 });

@@ -130,6 +130,40 @@ describe("call_subject", () => {
     expect(err as KirletHttpError).toMatchObject({ status: 502, code: "subject_call_failed" });
   });
 
+  test("un `error` de texto libre no se toma como código", async () => {
+    const texto = fake_fetch(502, { error: "subject unreachable: subject-a", detail: "x" });
+    const err = await call_subject("subject-a", "GET /x", { env: ENV, fetchImpl: texto.fetchImpl }).catch(
+      (e: unknown) => e,
+    );
+    expect(err as KirletHttpError).toMatchObject({
+      status: 502,
+      code: "subject_call_failed",
+      message: "subject unreachable: subject-a",
+    });
+  });
+
+  test("2xx sin JSON → 502 subject_bad_response", async () => {
+    const fetchImpl = (async () =>
+      new Response("<html></html>", { status: 200, headers: { "content-type": "text/html" } })) as unknown as typeof fetch;
+    const err = await call_subject("subject-a", "GET /x", { env: ENV, fetchImpl }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(KirletHttpError);
+    expect(err as KirletHttpError).toMatchObject({ status: 502, code: "subject_bad_response" });
+  });
+
+  test("CORE_DATA_URL vacío cae a NOX_DATA_URL; una base que no es URL → misconfigured", async () => {
+    const { fetchImpl, seen } = fake_fetch(200, { data: 1 });
+    await call_subject("subject-a", "GET /x", {
+      env: { ...ENV, CORE_DATA_URL: " ", NOX_DATA_URL: "http://nox:3000" },
+      fetchImpl,
+    });
+    expect(seen[0]!.url).toBe("http://nox:3000/api/m/subject-a/x");
+    const err = await call_subject("subject-a", "GET /x", {
+      env: { ...ENV, CORE_DATA_URL: "sin esquema" },
+      fetchImpl,
+    }).catch((e: unknown) => e);
+    expect(err as KirletHttpError).toMatchObject({ status: 500, code: "subject_client_misconfigured" });
+  });
+
   test("timeout configurable: la señal aborta al plazo dado", async () => {
     const fetchImpl = ((_url: string, init?: RequestInit) =>
       new Promise<Response>((_, reject) => {

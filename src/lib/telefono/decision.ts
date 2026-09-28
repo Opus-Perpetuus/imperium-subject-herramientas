@@ -22,7 +22,7 @@ export type ReglasTelefono = {
   activo: boolean;
   ambito: Ambito;
   accion_desconocidos: AccionDesconocidos;
-  /** Segundos de espera antes de descolgar: da tiempo a oír la locución. */
+  /** Segundos de espera antes de descolgar (0 a 60): da tiempo a oír la locución. */
   retardo_s: number;
   anuncio_activo: boolean;
   /** `{nombre}` se sustituye por el contacto o por el número. */
@@ -75,7 +75,7 @@ export function reglas_desde(fila: Record<string, unknown>): ReglasTelefono {
     activo: booleano(fila.activo),
     ambito: AMBITOS.includes(ambito) ? ambito : d.ambito,
     accion_desconocidos: ACCIONES_DESCONOCIDOS.includes(accion) ? accion : d.accion_desconocidos,
-    retardo_s: numero(fila.retardo_s) ?? d.retardo_s,
+    retardo_s: Math.min(60, Math.max(0, numero(fila.retardo_s) ?? d.retardo_s)),
     anuncio_activo: fila.anuncio_activo == null ? d.anuncio_activo : booleano(fila.anuncio_activo),
     anuncio_plantilla: texto(fila.anuncio_plantilla) || d.anuncio_plantilla,
     anuncio_repeticiones: numero(fila.anuncio_repeticiones) ?? d.anuncio_repeticiones,

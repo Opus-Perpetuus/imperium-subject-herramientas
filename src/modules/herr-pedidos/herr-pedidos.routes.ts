@@ -1,54 +1,12 @@
 import { define_crud, define_module, type DomainRow, type KirletCtx } from "@opus-perpetuus/imperium-core-kit";
-import { booleano, campo_busqueda, falla, fecha_hoy, filas_de, hora_ahora, numero, texto } from "../../lib/comun.ts";
-import { jornada_activa } from "../../lib/jornadas/jornada.ts";
-import { ESTADOS, siguiente_orden } from "../../lib/pedidos/estado.ts";
-import { catalogo_de } from "../../lib/precios/catalogo.ts";
-import { cotizar, lineas_desde } from "../../lib/precios/motor.ts";
+import { guardar_imagen, solo_dia } from "../../lib/comun.ts";
+import { derivados_pedido, exigir_no_liquidada, preparar_pedido } from "../../lib/reparto/servicios.ts";
 import { herr_pedidos_flow } from "./herr-pedidos.flow.ts";
 import { herr_pedidos_pages } from "./herr-pedidos.pages.ts";
 import { herr_pedidos_tables } from "./herr-pedidos.tables.ts";
 
 /** Un recibido en blanco es «aún no cobrado», no cero: el formulario manda "". */
 const vacio_a_null = (v: unknown) => (v === "" ? null : v);
-
-/**
- * Lo que se deriva de una fila completa. Con `productos_json` se cotiza y se
- * reescribe la prosa; `cobrar` solo se rellena cuando nadie lo tecleó: en
- * cuanto se corrige a mano, manda la mano. Un JSON roto o vacío no toca nada
- * («si se borra, no pasa nada»).
- */
-async function derivados(
-  ctx: KirletCtx,
-  fila: DomainRow,
-  opts: { cotizar: boolean; rellenar_cobrar: boolean },
-): Promise<DomainRow> {
-  const out: DomainRow = {};
-  if (opts.cotizar && fila.productos_json != null) {
-    const { lineas, promo_id } = lineas_desde(fila.productos_json);
-    if (lineas.length) {
-      const q = cotizar(lineas, await catalogo_de(ctx), promo_id);
-      out.productos = q.productos;
-      if (opts.rellenar_cobrar) out.cobrar = q.total;
-    }
-  }
-  const cobrar = numero(out.cobrar ?? fila.cobrar) ?? 0;
-  const recibido = numero(fila.recibido);
-  out.propina = recibido == null ? 0 : Math.max(0, recibido - cobrar);
-  const estado = booleano(fila.cobrado) ? "cobrado" : texto(fila.estado) || "capturado";
-  if (!(ESTADOS as readonly string[]).includes(estado)) falla(400, "Estado de pedido no válido", "validation_error");
-  out.estado = estado;
-  const domicilio = texto(fila.domicilio_texto);
-  out.name = domicilio ? `Pedido ${fila.orden} · ${domicilio}` : `Pedido ${fila.orden}`;
-  out.search_field = campo_busqueda(
-    out.name,
-    fila.contacto_nombre,
-    fila.telefono,
-    out.productos ?? fila.productos,
-    fila.detalle,
-    fila.fecha,
-  );
-  return out;
-}
 
 export const herr_pedidos_module = define_module({
   resource: "herr-pedidos",
@@ -77,7 +35,7 @@ export const herr_pedidos_module = define_module({
         created_by: { type: "string" },
         custom_data: { type: "json" },
         payload: { type: "json" },
-        fecha: { type: "string" },
+        fecha: { type: "string", normalize: solo_dia },
         hora: { type: "string" },
         orden: { type: "number", normalize: vacio_a_null },
         cobrar: { type: "number", normalize: vacio_a_null },
@@ -101,21 +59,25 @@ export const herr_pedidos_module = define_module({
       options_map: { value: "id", label: "name" },
       hooks: {
         before_create: async (ctx: KirletCtx, row: DomainRow) => {
-          const fila: DomainRow = {
-            ...row,
-            fecha: texto(row.fecha) || fecha_hoy(),
-            hora: texto(row.hora) || hora_ahora(),
-            orden: numero(row.orden) ?? siguiente_orden(await filas_de(ctx, "herr_pedidos", { is_active: true })),
-            jornada_id: texto(row.jornada_id) || ((await jornada_activa(ctx))?.id ?? null),
-            cobrado: booleano(row.cobrado),
-          };
-          return { ...fila, ...(await derivados(ctx, fila, { cotizar: true, rellenar_cobrar: numero(row.cobrar) == null })) };
+          const fila = { ...row };
+          if ("papelito" in row) fila.papelito = await guardar_imagen(ctx, "herr-pedidos", String(row.id), row.papelito);
+          return preparar_pedido(ctx, fila);
         },
         // Un JSON nuevo sin `cobrar` tecleado vuelve a cotizar; con `cobrar`, manda la mano.
-        before_update: async (ctx: KirletCtx, _id: string, patch: DomainRow, existing: DomainRow) => ({
-          ...patch,
-          ...(await derivados(ctx, { ...existing, ...patch }, { cotizar: "productos_json" in patch, rellenar_cobrar: !("cobrar" in patch) })),
-        }),
+        before_update: async (ctx: KirletCtx, id: string, patch: DomainRow, existing: DomainRow) => {
+          const { created_by: _autor, liquidacion: _sello, ...resto } = patch;
+          exigir_no_liquidada(existing, resto);
+          if ("papelito" in resto) resto.papelito = await guardar_imagen(ctx, "herr-pedidos", id, resto.papelito);
+          return {
+            ...resto,
+            ...(await derivados_pedido(ctx, { ...existing, ...resto }, {
+              cotizar: "productos_json" in resto,
+              rellenar_cobrar: !("cobrar" in resto),
+              estado: "estado" in resto || "cobrado" in resto,
+            })),
+          };
+        },
+        before_delete: (_ctx: KirletCtx, existing: DomainRow) => exigir_no_liquidada(existing),
       },
     }),
   ],
