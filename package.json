@@ -1,0 +1,22 @@
+{
+  "name": "subject-herramientas",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/server.ts",
+    "dev": "bun --watch run src/server.ts",
+    "test": "SUBJECT_AUTH=off KIRLET_AUTH=off bun test --max-concurrency 1",
+    "manifest:emit": "bun run scripts/emit-manifest.ts",
+    "docker:build": "docker build --build-context kit=./vendor/kit -t ghcr.io/opus-perpetuus/subject-herramientas:local .",
+    "local": "bun run scripts/dev-local.ts"
+  },
+  "dependencies": {
+    "@opus-perpetuus/imperium-core-kit": "file:./vendor/kit",
+    "@opus-perpetuus/kirel-nox-kit": "file:./vendor/kit",
+    "isomorphic-dompurify": "^3.20.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.8"
+  }
+}

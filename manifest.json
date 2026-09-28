@@ -1,0 +1,723 @@
+{
+  "id": "SUBJECT-herramientas",
+  "technicalId": "subject-herramientas",
+  "name": "Herramientas",
+  "version": "0.0.0",
+  "image": "ghcr.io/opus-perpetuus/subject-herramientas:0.0.0",
+  "compat": {
+    "nox": ">=0.5.0",
+    "kit": "^0.5.0"
+  },
+  "api": {
+    "basePath": "/",
+    "port": 3000,
+    "healthPath": "/health"
+  },
+  "permissions": [
+    {
+      "id": "subject.herramientas.herr-inicio.read",
+      "label": "Ver la portada de Herramientas"
+    },
+    {
+      "id": "subject.herramientas.herr-inicio.write",
+      "label": "Ver la portada de Herramientas"
+    },
+    {
+      "id": "subject.herramientas.herr-tablas.read",
+      "label": "Ver tablas personalizadas"
+    },
+    {
+      "id": "subject.herramientas.herr-tablas.write",
+      "label": "Editar tablas personalizadas"
+    },
+    {
+      "id": "subject.herramientas.herr-registros.read",
+      "label": "Ver registros"
+    },
+    {
+      "id": "subject.herramientas.herr-registros.write",
+      "label": "Editar registros"
+    },
+    {
+      "id": "subject.herramientas.herr-cierres.read",
+      "label": "Ver cierres"
+    },
+    {
+      "id": "subject.herramientas.herr-cierres.write",
+      "label": "Editar cierres"
+    },
+    {
+      "id": "subject.herramientas.herr-jornadas.read",
+      "label": "Ver jornadas"
+    },
+    {
+      "id": "subject.herramientas.herr-jornadas.write",
+      "label": "Editar jornadas"
+    },
+    {
+      "id": "subject.herramientas.herr-pedidos.read",
+      "label": "Ver pedidos"
+    },
+    {
+      "id": "subject.herramientas.herr-pedidos.write",
+      "label": "Editar pedidos"
+    },
+    {
+      "id": "subject.herramientas.herr-gastos.read",
+      "label": "Ver gastos"
+    },
+    {
+      "id": "subject.herramientas.herr-gastos.write",
+      "label": "Editar gastos"
+    },
+    {
+      "id": "subject.herramientas.herr-caja.read",
+      "label": "Ver movimientos de caja"
+    },
+    {
+      "id": "subject.herramientas.herr-caja.write",
+      "label": "Editar movimientos de caja"
+    },
+    {
+      "id": "subject.herramientas.herr-menu-categorias.read",
+      "label": "Ver categorías de precio"
+    },
+    {
+      "id": "subject.herramientas.herr-menu-categorias.write",
+      "label": "Editar categorías de precio"
+    },
+    {
+      "id": "subject.herramientas.herr-menu-tamanos.read",
+      "label": "Ver tamaños"
+    },
+    {
+      "id": "subject.herramientas.herr-menu-tamanos.write",
+      "label": "Editar tamaños"
+    },
+    {
+      "id": "subject.herramientas.herr-menu-productos.read",
+      "label": "Ver productos"
+    },
+    {
+      "id": "subject.herramientas.herr-menu-productos.write",
+      "label": "Editar productos"
+    },
+    {
+      "id": "subject.herramientas.herr-menu-extras.read",
+      "label": "Ver extras"
+    },
+    {
+      "id": "subject.herramientas.herr-menu-extras.write",
+      "label": "Editar extras"
+    },
+    {
+      "id": "subject.herramientas.herr-menu-complementos.read",
+      "label": "Ver complementos"
+    },
+    {
+      "id": "subject.herramientas.herr-menu-complementos.write",
+      "label": "Editar complementos"
+    },
+    {
+      "id": "subject.herramientas.herr-menu-promos.read",
+      "label": "Ver promociones"
+    },
+    {
+      "id": "subject.herramientas.herr-menu-promos.write",
+      "label": "Editar promociones"
+    },
+    {
+      "id": "subject.herramientas.herr-vehiculos.read",
+      "label": "Ver ajustes de vehículos"
+    },
+    {
+      "id": "subject.herramientas.herr-vehiculos.write",
+      "label": "Editar ajustes de vehículos"
+    },
+    {
+      "id": "subject.herramientas.herr-domicilios.read",
+      "label": "Ver domicilios"
+    },
+    {
+      "id": "subject.herramientas.herr-domicilios.write",
+      "label": "Editar domicilios"
+    },
+    {
+      "id": "subject.herramientas.herr-etiquetas.read",
+      "label": "Ver etiquetas"
+    },
+    {
+      "id": "subject.herramientas.herr-etiquetas.write",
+      "label": "Editar etiquetas"
+    },
+    {
+      "id": "subject.herramientas.herr-recargas.read",
+      "label": "Ver recargas"
+    },
+    {
+      "id": "subject.herramientas.herr-recargas.write",
+      "label": "Editar recargas"
+    },
+    {
+      "id": "subject.herramientas.herr-rutas.read",
+      "label": "Ver rutas"
+    },
+    {
+      "id": "subject.herramientas.herr-rutas.write",
+      "label": "Editar rutas"
+    },
+    {
+      "id": "subject.herramientas.herr-telefono.read",
+      "label": "Ver contestador"
+    },
+    {
+      "id": "subject.herramientas.herr-telefono.write",
+      "label": "Editar contestador"
+    },
+    {
+      "id": "subject.herramientas.herr-voz.read",
+      "label": "Ver el asistente de voz"
+    },
+    {
+      "id": "subject.herramientas.herr-voz.write",
+      "label": "Editar el asistente de voz"
+    },
+    {
+      "id": "subject.herramientas.herr-agenda.read",
+      "label": "Ver agenda"
+    },
+    {
+      "id": "subject.herramientas.herr-agenda.write",
+      "label": "Editar agenda"
+    },
+    {
+      "id": "subject.herramientas.herr-utilidades.read",
+      "label": "Usar utilidades"
+    },
+    {
+      "id": "subject.herramientas.herr-utilidades.write",
+      "label": "Usar utilidades"
+    }
+  ],
+  "menu": [
+    {
+      "id": "herramientas.root",
+      "label": "Herramientas",
+      "order": 0,
+      "children": [
+        {
+          "id": "herramientas.herr-inicio",
+          "label": "Inicio",
+          "pageId": "herramientas.herr-inicio",
+          "order": 0,
+          "path": "herr-inicio",
+          "permission": "subject.herramientas.herr-inicio.read",
+          "icon": "fa-toolbox"
+        },
+        {
+          "id": "herramientas.herr-tablas",
+          "label": "Tablas personalizadas",
+          "pageId": "herramientas.herr-tablas",
+          "order": 10,
+          "path": "herr-tablas",
+          "permission": "subject.herramientas.herr-tablas.read",
+          "icon": "fa-table-list"
+        },
+        {
+          "id": "herramientas.herr-tabla",
+          "label": "Ver tabla",
+          "pageId": "herramientas.herr-tabla",
+          "order": 11,
+          "path": "herr-tabla",
+          "permission": "subject.herramientas.herr-tablas.read",
+          "icon": "fa-table"
+        },
+        {
+          "id": "herramientas.herr-registros",
+          "label": "Registros",
+          "pageId": "herramientas.herr-registros",
+          "order": 20,
+          "path": "herr-registros",
+          "permission": "subject.herramientas.herr-registros.read",
+          "icon": "fa-list-ol"
+        },
+        {
+          "id": "herramientas.herr-registro",
+          "label": "Capturar registro",
+          "pageId": "herramientas.herr-registro",
+          "order": 21,
+          "path": "herr-registro",
+          "permission": "subject.herramientas.herr-registros.write",
+          "icon": "fa-pen-to-square"
+        },
+        {
+          "id": "herramientas.herr-cierres",
+          "label": "Cierres",
+          "pageId": "herramientas.herr-cierres",
+          "order": 30,
+          "path": "herr-cierres",
+          "permission": "subject.herramientas.herr-cierres.read",
+          "icon": "fa-box-archive"
+        },
+        {
+          "id": "herramientas.herr-jornadas",
+          "label": "Jornadas",
+          "pageId": "herramientas.herr-jornadas",
+          "order": 10,
+          "path": "herr-jornadas",
+          "permission": "subject.herramientas.herr-jornadas.read",
+          "icon": "fa-calendar-day"
+        },
+        {
+          "id": "herramientas.herr-jornada",
+          "label": "Jornada de hoy",
+          "pageId": "herramientas.herr-jornada",
+          "order": 11,
+          "path": "herr-jornada",
+          "permission": "subject.herramientas.herr-jornadas.read",
+          "icon": "fa-motorcycle"
+        },
+        {
+          "id": "herramientas.herr-liquidacion",
+          "label": "Liquidación",
+          "pageId": "herramientas.herr-liquidacion",
+          "order": 12,
+          "path": "herr-liquidacion",
+          "permission": "subject.herramientas.herr-jornadas.read",
+          "icon": "fa-hand-holding-dollar"
+        },
+        {
+          "id": "herramientas.herr-pedidos",
+          "label": "Pedidos",
+          "pageId": "herramientas.herr-pedidos",
+          "order": 20,
+          "path": "herr-pedidos",
+          "permission": "subject.herramientas.herr-pedidos.read",
+          "icon": "fa-receipt"
+        },
+        {
+          "id": "herramientas.herr-gastos",
+          "label": "Gastos",
+          "pageId": "herramientas.herr-gastos",
+          "order": 30,
+          "path": "herr-gastos",
+          "permission": "subject.herramientas.herr-gastos.read",
+          "icon": "fa-money-bill-wave"
+        },
+        {
+          "id": "herramientas.herr-caja",
+          "label": "Caja",
+          "pageId": "herramientas.herr-caja",
+          "order": 40,
+          "path": "herr-caja",
+          "permission": "subject.herramientas.herr-caja.read",
+          "icon": "fa-cash-register"
+        },
+        {
+          "id": "herramientas.herr-menu-categorias",
+          "label": "Categorías de precio",
+          "pageId": "herramientas.herr-menu-categorias",
+          "order": 50,
+          "path": "herr-menu-categorias",
+          "permission": "subject.herramientas.herr-menu-categorias.read",
+          "icon": "fa-layer-group"
+        },
+        {
+          "id": "herramientas.herr-menu-tamanos",
+          "label": "Tamaños",
+          "pageId": "herramientas.herr-menu-tamanos",
+          "order": 51,
+          "path": "herr-menu-tamanos",
+          "permission": "subject.herramientas.herr-menu-tamanos.read",
+          "icon": "fa-ruler"
+        },
+        {
+          "id": "herramientas.herr-menu-productos",
+          "label": "Productos",
+          "pageId": "herramientas.herr-menu-productos",
+          "order": 52,
+          "path": "herr-menu-productos",
+          "permission": "subject.herramientas.herr-menu-productos.read",
+          "icon": "fa-utensils"
+        },
+        {
+          "id": "herramientas.herr-menu-extras",
+          "label": "Extras",
+          "pageId": "herramientas.herr-menu-extras",
+          "order": 53,
+          "path": "herr-menu-extras",
+          "permission": "subject.herramientas.herr-menu-extras.read",
+          "icon": "fa-plus-circle"
+        },
+        {
+          "id": "herramientas.herr-menu-complementos",
+          "label": "Complementos",
+          "pageId": "herramientas.herr-menu-complementos",
+          "order": 54,
+          "path": "herr-menu-complementos",
+          "permission": "subject.herramientas.herr-menu-complementos.read",
+          "icon": "fa-drumstick-bite"
+        },
+        {
+          "id": "herramientas.herr-menu-promos",
+          "label": "Promociones",
+          "pageId": "herramientas.herr-menu-promos",
+          "order": 55,
+          "path": "herr-menu-promos",
+          "permission": "subject.herramientas.herr-menu-promos.read",
+          "icon": "fa-tags"
+        },
+        {
+          "id": "herramientas.herr-vehiculos",
+          "label": "Vehículos (reparto)",
+          "pageId": "herramientas.herr-vehiculos",
+          "order": 50,
+          "path": "herr-vehiculos",
+          "permission": "subject.herramientas.herr-vehiculos.read",
+          "icon": "fa-motorcycle"
+        },
+        {
+          "id": "herramientas.herr-domicilios",
+          "label": "Domicilios",
+          "pageId": "herramientas.herr-domicilios",
+          "order": 51,
+          "path": "herr-domicilios",
+          "permission": "subject.herramientas.herr-domicilios.read",
+          "icon": "fa-location-dot"
+        },
+        {
+          "id": "herramientas.herr-etiquetas",
+          "label": "Etiquetas",
+          "pageId": "herramientas.herr-etiquetas",
+          "order": 52,
+          "path": "herr-etiquetas",
+          "permission": "subject.herramientas.herr-etiquetas.read",
+          "icon": "fa-tags"
+        },
+        {
+          "id": "herramientas.herr-recargas",
+          "label": "Recargas",
+          "pageId": "herramientas.herr-recargas",
+          "order": 53,
+          "path": "herr-recargas",
+          "permission": "subject.herramientas.herr-recargas.read",
+          "icon": "fa-gas-pump"
+        },
+        {
+          "id": "herramientas.herr-rutas",
+          "label": "Rutas GPS",
+          "pageId": "herramientas.herr-rutas",
+          "order": 54,
+          "path": "herr-rutas",
+          "permission": "subject.herramientas.herr-rutas.read",
+          "icon": "fa-route"
+        },
+        {
+          "id": "herramientas-nav-telefono",
+          "label": "Teléfono",
+          "order": 30,
+          "icon": "fa-phone",
+          "children": [
+            {
+              "id": "herramientas-herr-telefono",
+              "label": "Contestador",
+              "pageId": "herramientas.herr-telefono",
+              "order": 10,
+              "path": "/herr-telefono",
+              "permission": "subject.herramientas.herr-telefono.read",
+              "icon": "fa-phone-volume"
+            },
+            {
+              "id": "herramientas-herr-telefono-contactos",
+              "label": "Contactos",
+              "pageId": "herramientas.herr-telefono-contactos",
+              "order": 20,
+              "path": "/herr-telefono-contactos",
+              "permission": "subject.herramientas.herr-telefono.read",
+              "icon": "fa-address-book"
+            },
+            {
+              "id": "herramientas-herr-telefono-llamadas",
+              "label": "Llamadas",
+              "pageId": "herramientas.herr-telefono-llamadas",
+              "order": 30,
+              "path": "/herr-telefono-llamadas",
+              "permission": "subject.herramientas.herr-telefono.read",
+              "icon": "fa-phone-slash"
+            },
+            {
+              "id": "herramientas-herr-telefono-android",
+              "label": "En el teléfono",
+              "pageId": "herramientas.herr-telefono-android",
+              "order": 40,
+              "path": "/herr-telefono-android",
+              "permission": "subject.herramientas.herr-telefono.read",
+              "icon": "fa-mobile-screen"
+            }
+          ]
+        },
+        {
+          "id": "herramientas.herr-asistente",
+          "label": "Asistente",
+          "pageId": "herramientas.herr-asistente",
+          "order": 60,
+          "path": "herr-asistente",
+          "permission": "subject.herramientas.herr-voz.read",
+          "icon": "fa-microphone-lines"
+        },
+        {
+          "id": "herramientas.herr-voz",
+          "label": "Ajustes del asistente",
+          "pageId": "herramientas.herr-voz",
+          "order": 61,
+          "path": "herr-voz",
+          "permission": "subject.herramientas.herr-voz.read",
+          "icon": "fa-sliders"
+        },
+        {
+          "id": "herramientas.herr-voz-bitacora",
+          "label": "Bitácora del asistente",
+          "pageId": "herramientas.herr-voz-bitacora",
+          "order": 62,
+          "path": "herr-voz-bitacora",
+          "permission": "subject.herramientas.herr-voz.read",
+          "icon": "fa-clock-rotate-left"
+        },
+        {
+          "id": "herramientas-nav-agenda",
+          "label": "Agenda",
+          "order": 50,
+          "icon": "fa-calendar",
+          "children": [
+            {
+              "id": "herramientas-herr-agenda",
+              "label": "Eventos",
+              "pageId": "herramientas.herr-agenda",
+              "order": 10,
+              "path": "/herr-agenda",
+              "permission": "subject.herramientas.herr-agenda.read",
+              "icon": "fa-calendar-days"
+            },
+            {
+              "id": "herramientas-herr-agenda-dia",
+              "label": "Hoy",
+              "pageId": "herramientas.herr-agenda-dia",
+              "order": 20,
+              "path": "/herr-agenda-dia",
+              "permission": "subject.herramientas.herr-agenda.read",
+              "icon": "fa-calendar-day"
+            }
+          ]
+        },
+        {
+          "id": "herramientas.herr-utilidades",
+          "label": "Utilidades",
+          "pageId": "herramientas.herr-utilidades",
+          "order": 90,
+          "path": "herr-utilidades",
+          "permission": "subject.herramientas.herr-utilidades.read",
+          "icon": "fa-screwdriver-wrench"
+        }
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "id": "herramientas.herr-inicio",
+      "path": "herr-inicio",
+      "permission": "subject.herramientas.herr-inicio.read"
+    },
+    {
+      "id": "herramientas.herr-tablas",
+      "path": "herr-tablas",
+      "permission": "subject.herramientas.herr-tablas.read"
+    },
+    {
+      "id": "herramientas.herr-tabla",
+      "path": "herr-tabla",
+      "permission": "subject.herramientas.herr-tablas.read"
+    },
+    {
+      "id": "herramientas.herr-registros",
+      "path": "herr-registros",
+      "permission": "subject.herramientas.herr-registros.read"
+    },
+    {
+      "id": "herramientas.herr-registro",
+      "path": "herr-registro",
+      "permission": "subject.herramientas.herr-registros.write"
+    },
+    {
+      "id": "herramientas.herr-cierres",
+      "path": "herr-cierres",
+      "permission": "subject.herramientas.herr-cierres.read"
+    },
+    {
+      "id": "herramientas.herr-jornadas",
+      "path": "herr-jornadas",
+      "permission": "subject.herramientas.herr-jornadas.read"
+    },
+    {
+      "id": "herramientas.herr-jornada",
+      "path": "herr-jornada",
+      "permission": "subject.herramientas.herr-jornadas.read"
+    },
+    {
+      "id": "herramientas.herr-liquidacion",
+      "path": "herr-liquidacion",
+      "permission": "subject.herramientas.herr-jornadas.read"
+    },
+    {
+      "id": "herramientas.herr-pedidos",
+      "path": "herr-pedidos",
+      "permission": "subject.herramientas.herr-pedidos.read"
+    },
+    {
+      "id": "herramientas.herr-gastos",
+      "path": "herr-gastos",
+      "permission": "subject.herramientas.herr-gastos.read"
+    },
+    {
+      "id": "herramientas.herr-caja",
+      "path": "herr-caja",
+      "permission": "subject.herramientas.herr-caja.read"
+    },
+    {
+      "id": "herramientas.herr-menu-categorias",
+      "path": "herr-menu-categorias",
+      "permission": "subject.herramientas.herr-menu-categorias.read"
+    },
+    {
+      "id": "herramientas.herr-menu-tamanos",
+      "path": "herr-menu-tamanos",
+      "permission": "subject.herramientas.herr-menu-tamanos.read"
+    },
+    {
+      "id": "herramientas.herr-menu-productos",
+      "path": "herr-menu-productos",
+      "permission": "subject.herramientas.herr-menu-productos.read"
+    },
+    {
+      "id": "herramientas.herr-menu-extras",
+      "path": "herr-menu-extras",
+      "permission": "subject.herramientas.herr-menu-extras.read"
+    },
+    {
+      "id": "herramientas.herr-menu-complementos",
+      "path": "herr-menu-complementos",
+      "permission": "subject.herramientas.herr-menu-complementos.read"
+    },
+    {
+      "id": "herramientas.herr-menu-promos",
+      "path": "herr-menu-promos",
+      "permission": "subject.herramientas.herr-menu-promos.read"
+    },
+    {
+      "id": "herramientas.herr-vehiculos",
+      "path": "herr-vehiculos",
+      "permission": "subject.herramientas.herr-vehiculos.read"
+    },
+    {
+      "id": "herramientas.herr-domicilios",
+      "path": "herr-domicilios",
+      "permission": "subject.herramientas.herr-domicilios.read"
+    },
+    {
+      "id": "herramientas.herr-etiquetas",
+      "path": "herr-etiquetas",
+      "permission": "subject.herramientas.herr-etiquetas.read"
+    },
+    {
+      "id": "herramientas.herr-recargas",
+      "path": "herr-recargas",
+      "permission": "subject.herramientas.herr-recargas.read"
+    },
+    {
+      "id": "herramientas.herr-rutas",
+      "path": "herr-rutas",
+      "permission": "subject.herramientas.herr-rutas.read"
+    },
+    {
+      "id": "herramientas.herr-telefono",
+      "path": "herr-telefono",
+      "permission": "subject.herramientas.herr-telefono.read"
+    },
+    {
+      "id": "herramientas.herr-telefono-contactos",
+      "path": "herr-telefono-contactos",
+      "permission": "subject.herramientas.herr-telefono.read"
+    },
+    {
+      "id": "herramientas.herr-telefono-llamadas",
+      "path": "herr-telefono-llamadas",
+      "permission": "subject.herramientas.herr-telefono.read"
+    },
+    {
+      "id": "herramientas.herr-telefono-android",
+      "path": "herr-telefono-android",
+      "permission": "subject.herramientas.herr-telefono.read"
+    },
+    {
+      "id": "herramientas.herr-voz",
+      "path": "herr-voz",
+      "permission": "subject.herramientas.herr-voz.read"
+    },
+    {
+      "id": "herramientas.herr-asistente",
+      "path": "herr-asistente",
+      "permission": "subject.herramientas.herr-voz.read"
+    },
+    {
+      "id": "herramientas.herr-voz-bitacora",
+      "path": "herr-voz-bitacora",
+      "permission": "subject.herramientas.herr-voz.read"
+    },
+    {
+      "id": "herramientas.herr-agenda",
+      "path": "herr-agenda",
+      "permission": "subject.herramientas.herr-agenda.read"
+    },
+    {
+      "id": "herramientas.herr-agenda-dia",
+      "path": "herr-agenda-dia",
+      "permission": "subject.herramientas.herr-agenda.read"
+    },
+    {
+      "id": "herramientas.herr-utilidades",
+      "path": "herr-utilidades",
+      "permission": "subject.herramientas.herr-utilidades.read"
+    }
+  ],
+  "storage": {
+    "domain": "shared-nox-postgres",
+    "files": true
+  },
+  "resources": {
+    "herr-inicio": "herr-inicio",
+    "herr-tablas": "herr-tablas",
+    "herr-registros": "herr-registros",
+    "herr-cierres": "herr-cierres",
+    "herr-jornadas": "herr-jornadas",
+    "herr-pedidos": "herr-pedidos",
+    "herr-gastos": "herr-gastos",
+    "herr-caja": "herr-caja",
+    "herr-menu-categorias": "herr-menu-categorias",
+    "herr-menu-tamanos": "herr-menu-tamanos",
+    "herr-menu-productos": "herr-menu-productos",
+    "herr-menu-extras": "herr-menu-extras",
+    "herr-menu-complementos": "herr-menu-complementos",
+    "herr-menu-promos": "herr-menu-promos",
+    "herr-vehiculos": "herr-vehiculos",
+    "herr-domicilios": "herr-domicilios",
+    "herr-etiquetas": "herr-etiquetas",
+    "herr-recargas": "herr-recargas",
+    "herr-rutas": "herr-rutas",
+    "herr-telefono": "herr-telefono",
+    "herr-voz": "herr-voz",
+    "herr-agenda": "herr-agenda",
+    "herr-utilidades": "herr-utilidades"
+  },
+  "dependsOn": [
+    "subject-vehiculos"
+  ]
+}
