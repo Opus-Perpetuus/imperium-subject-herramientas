@@ -21,7 +21,7 @@ import { texto_buscable } from "../../lib/formulas/busqueda.ts";
 import { calcular_valores, calculados_de } from "../../lib/formulas/calculadora.ts";
 import { spec_de_fila, type CampoSpec, type TablaSpec } from "../../lib/formulas/esquema.ts";
 import { formatear as unir_multivalor } from "../../lib/formulas/multivalor.ts";
-import { objeto, registro_como_fila, registros_de, tabla_activa } from "../herr-tablas/herr-tablas.flow.ts";
+import { registro_como_fila, registros_de, tabla_activa } from "../herr-tablas/herr-tablas.flow.ts";
 
 /** Un valor capturado se guarda como texto; los compuestos del formulario se aplanan. */
 function como_texto(v: unknown): string {
