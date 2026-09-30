@@ -24,7 +24,7 @@ bun run manifest:emit   # regenera manifest.json tras tocar módulos o menús
 
 | Herramienta | Qué hace | Módulos (`resource`) |
 |---|---|---|
-| **Tablas personalizadas** | Bases de datos a medida: campos tipados, constantes, resúmenes y fórmulas; plantillas; cierre que archiva las filas. | `herr-tablas`, `herr-registros`, `herr-cierres` |
+| **Tablas personalizadas** | Bases de datos a medida sin programar: diseñador guiado (columnas escritas como texto, tipo adivinado por el nombre, cálculos y totales guiados, valores fijos), plantillas; cierre que archiva las filas. | `herr-tablas`, `herr-registros`, `herr-cierres` |
 | **Reparto a domicilio** | Jornadas de reparto con vehículo (el registro es la app **Vehículos**, dependencia; aquí solo los ajustes de reparto: tanque, medidor, calibración), pedidos con precio automático desde un catálogo, directorio de domicilios con enlaces a mapas, gastos, caja y liquidación, recargas de combustible con calibración del medidor, rutas GPS con detección de paradas. | `herr-jornadas`, `herr-pedidos`, `herr-gastos`, `herr-caja`, `herr-vehiculos`, `herr-domicilios`, `herr-etiquetas`, `herr-recargas`, `herr-rutas`, `herr-menu-categorias`, `herr-menu-tamanos`, `herr-menu-productos`, `herr-menu-extras`, `herr-menu-complementos`, `herr-menu-promos` |
 | **Teléfono** | Reglas del contestador automático (a quién contestar, rechazar o silenciar; locución), registro de llamadas. La ejecución (filtrar y contestar llamadas) es **solo de la app Android**. | `herr-telefono` |
 | **Asistente de voz** | Interpreta órdenes en español (intención + datos) y las ejecuta sobre Reparto. Escuchar y hablar es **solo de la app Android**; el intérprete sirve también para una caja de texto. | `herr-voz` |
@@ -67,6 +67,9 @@ prefijo `herr-`.
 | Ruta | Para qué |
 |---|---|
 | `GET /herr-tablas/plantillas` · `POST /herr-tablas/desde-plantilla` | Plantillas de tabla listas para usar |
+| `POST /herr-tablas/nueva` `{name, columnas}` | Tabla nueva con las columnas escritas como texto (una por renglón; `Categoría: A, B` es una lista) |
+| `POST /herr-tablas/:id/campos` · `PATCH\|DELETE /herr-tablas/:id/campos/:clave` | Diseñador: agregar (tipo `auto` = por el nombre), editar (incluye `posicion` y fórmula guiada `operacion`+`dato_a`+`dato_b`) y quitar columnas. Responden `{id, modo, campo, v}` para el `then` del formulario |
+| `POST /herr-tablas/:id/constantes` · `PATCH\|DELETE …/constantes/:clave` · `POST /herr-tablas/:id/resumenes` · `DELETE …/resumenes/:clave` | Valores fijos y totales (guiados con `tipo`+`campo` o con fórmula escrita con los nombres visibles) |
 | `GET /herr-tablas/:id/resumen` | Agregados y resúmenes de la tabla |
 | `POST /herr-tablas/:id/cerrar` | Cierre: archiva las filas en `herr-cierres` y vacía la tabla |
 | `POST /herr-tablas/:id/buscar` `{q}` | Búsqueda por prefijos sobre los registros |
