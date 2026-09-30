@@ -196,7 +196,7 @@ describe("integración entre herramientas", () => {
   test("3. tabla desde plantilla capturada con el body exacto del formulario dinámico", async () => {
     const plantillas = await api("GET", "/herr-tablas/plantillas");
     expect(plantillas.status).toBe(200);
-    const plantilla_id = String(plantillas.data[0].id);
+    const plantilla_id = String(plantillas.data.find((p: { id: string }) => p.id === "jornada_moto").id);
     const tabla = await api("POST", "/herr-tablas/desde-plantilla", { plantilla_id });
     expect(tabla.status).toBe(201);
     const tabla_id = String(tabla.data.id);

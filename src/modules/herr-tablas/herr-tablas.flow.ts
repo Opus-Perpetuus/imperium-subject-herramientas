@@ -135,7 +135,7 @@ export function fila_de_plantilla(p: TablaSpec, name: string, actor: string | nu
     plantilla_id: p.plantilla_id,
     orden_campo: p.orden_campo ?? null,
     orden_desc: p.orden_desc !== false,
-    cerrable: true,
+    cerrable: p.cerrable !== false,
     version_esquema: 1,
     created_at: ts,
     updated_at: ts,

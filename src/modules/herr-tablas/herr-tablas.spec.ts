@@ -9,6 +9,8 @@ import {
   type NoxUiNode,
 } from "@opus-perpetuus/imperium-core-kit";
 import { LIMITE_FILAS } from "../../lib/comun.ts";
+import { validar_esquema } from "../../lib/formulas/esquema.ts";
+import { plantillas } from "../../lib/formulas/plantillas.ts";
 import { herr_cierres_module } from "../herr-cierres/herr-cierres.routes.ts";
 import { herr_registros_module } from "../herr-registros/herr-registros.routes.ts";
 import { herr_tablas_module } from "./herr-tablas.routes.ts";
@@ -88,8 +90,17 @@ describe("plantillas", () => {
   test("se listan y crean una tabla lista para usar", async () => {
     const lista = await call("GET", "/herr-tablas/plantillas");
     expect(lista.status).toBe(200);
-    expect(lista.data.map((p: { id: string }) => p.id)).toEqual(["jornada_moto", "gastos", "deudas"]);
-    expect(lista.data[0].nombre).toBe("Jornada en moto");
+    expect(lista.data.map((p: { id: string }) => p.id)).toEqual([
+      "gastos",
+      "inventario",
+      "clientes",
+      "deudas",
+      "prestamos",
+      "tareas",
+      "coleccion",
+      "jornada_moto",
+    ]);
+    expect(lista.data[0].nombre).toBe("Gastos");
 
     const tabla = await tabla_de_plantilla("jornada_moto", "Mi moto");
     expect(tabla.name).toBe("Mi moto");
@@ -99,6 +110,12 @@ describe("plantillas", () => {
 
     const inexistente = await call("POST", "/herr-tablas/desde-plantilla", { plantilla_id: "nada" });
     expect(inexistente.status).toBe(404);
+  });
+
+  test("todas son válidas y los catálogos no se cierran", async () => {
+    for (const p of plantillas()) expect([p.id, validar_esquema(p)]).toEqual([p.id, []]);
+    expect((await tabla_de_plantilla("inventario")).cerrable).toBe(false);
+    expect((await tabla_de_plantilla("gastos")).cerrable).toBe(true);
   });
 });
 
