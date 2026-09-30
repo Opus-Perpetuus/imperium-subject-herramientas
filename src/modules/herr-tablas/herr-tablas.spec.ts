@@ -444,7 +444,7 @@ describe("páginas", () => {
 
     const doc = await pagina(`/pages/herramientas.herr-tabla?id=${tabla.id}`);
     expect(doc.title).toBe("Deudas");
-    expect(componentes(doc)).toEqual(expect.arrayContaining(["nox.stats", "nox.table", "nox.link", "nox.button"]));
+    expect(componentes(doc)).toEqual(expect.arrayContaining(["nox.toolbar", "nox.stats", "nox.table", "nox.button"]));
     const [stats] = nodos(doc, "nox.stats");
     expect(stats!.props!.items).toEqual([
       { id: "abonado", label: "Abonado", value: "3000.00 $" },
@@ -454,14 +454,16 @@ describe("páginas", () => {
     const [table] = nodos(doc, "nox.table");
     expect((table!.props!.columns as { key: string }[]).map((c) => c.key)).toEqual(["fecha", "acreedor", "pagado"]);
     expect(table!.props!.rows).toEqual([{ fecha: "2026-01-02", acreedor: "Banco", pagado: "3000.00 $" }]);
-    const [link] = nodos(doc, "nox.link");
-    expect(link!.props!.href).toBe(`/internal/herr-registro?tabla=${tabla.id}`);
-    const [button] = nodos(doc, "nox.button");
-    expect(button!.props).toMatchObject({ method: "POST", action: `api://herr-tablas/${tabla.id}/cerrar` });
-    expect(String(button!.props!.confirm)).not.toBe("");
+    const botones = nodos(doc, "nox.button").map((b) => b.props!);
+    expect(botones.map((b) => b.href)).toContain(`/internal/herr-registro?tabla=${tabla.id}`);
+    expect(botones.map((b) => b.href)).toContain(`/internal/herr-tabla?id=${tabla.id}&modo=disenar`);
+    const cerrar = botones.find((b) => b.action === `api://herr-tablas/${tabla.id}/cerrar`);
+    expect(cerrar).toMatchObject({ method: "POST" });
+    expect(String(cerrar!.confirm)).not.toBe("");
 
     const sin_id = await pagina("/pages/herramientas.herr-tabla");
-    expect(nodos(sin_id, "nox.link").map((l) => l.props!.href)).toEqual([`/internal/herr-tabla?id=${tabla.id}`]);
+    expect(sin_id.title).toBe("Mis tablas");
+    expect(nodos(sin_id, "nox.button").map((b) => b.props!.href)).toContain(`/internal/herr-tabla?id=${tabla.id}`);
   });
 
   test("el formulario de registro tiene un input por campo capturable y carga el valor al editar", async () => {
@@ -524,5 +526,197 @@ describe("páginas", () => {
     const form = await pagina(`/pages/herramientas.herr-registro?tabla=${jornadas.data.id}`);
     const moto = nodos(form, "nox.input-datalist")[0]!;
     expect(moto.props!.options).toEqual([{ value: italika.data.id, label: "Italika 150" }]);
+  });
+});
+
+describe("diseñador", () => {
+  async function nueva(name: string, columnas = "") {
+    const r = await call("POST", "/herr-tablas/nueva", { name, columnas });
+    expect(r.status).toBe(201);
+    return r.data as { id: string; campos: { clave: string; tipo: string; etiqueta: string }[] } & Record<string, unknown>;
+  }
+
+  test("crear en blanco con las columnas escritas como texto", async () => {
+    const t = await nueva("Ventas", "Fecha\nCliente\nMonto\n¿Pagado?\nForma de pago: Contado, Crédito");
+    expect(t.campos.map((c) => [c.clave, c.tipo])).toEqual([
+      ["fecha", "fecha"],
+      ["cliente", "texto"],
+      ["monto", "dinero"],
+      ["pagado", "booleano"],
+      ["forma_de_pago", "opcion"],
+    ]);
+    expect(t.resumenes).toEqual([
+      { clave: "total_de_monto", etiqueta: "Total de Monto", formula: "{suma:monto}", unidad: "$", decimales: 2 },
+    ]);
+    expect(t).toMatchObject({ orden_campo: "fecha", cerrable: false, version_esquema: 1 });
+
+    expect((await call("POST", "/herr-tablas/nueva", { name: " " })).status).toBe(400);
+    expect((await nueva("Vacía")).campos).toEqual([]);
+  });
+
+  test("agregar, configurar, mover y quitar columnas sin claves ni JSON", async () => {
+    const t = await nueva("Pedidos");
+    const url = `/herr-tablas/${t.id}/campos`;
+
+    const precio = await call("POST", url, { etiqueta: "Precio", tipo: "auto" });
+    expect(precio.data).toMatchObject({ id: t.id, modo: "disenar", campo: "precio", v: "2" });
+    expect(String(precio.json.message)).toContain("«Precio»");
+
+    const estado = await call("POST", url, { etiqueta: "Estado", tipo: "opcion" });
+    expect(estado.data).toMatchObject({ modo: "campo", campo: "estado" });
+    const con_opciones = await call("PATCH", `${url}/estado`, { opciones: "Pendiente\nPagado/Parcial", multiple: false });
+    expect(con_opciones.data.modo).toBe("disenar");
+
+    await call("POST", url, { etiqueta: "Cantidad" });
+    const importe = await call("POST", url, { etiqueta: "Importe", tipo: "calculado" });
+    expect(importe.data.modo).toBe("campo");
+    const guiada = await call("PATCH", `${url}/importe`, { operacion: "multiplica", dato_a: "precio", dato_b: "cantidad" });
+    expect(guiada.status).toBe(200);
+    expect(guiada.data.modo).toBe("disenar");
+
+    let fila = (await call("GET", `/herr-tablas/${t.id}`)).data;
+    const por_clave = (clave: string) => fila.campos.find((c: { clave: string }) => c.clave === clave);
+    expect(por_clave("estado").opciones).toEqual(["Pendiente", "Pagado/Parcial"]);
+    expect(por_clave("cantidad").tipo).toBe("entero");
+    expect(por_clave("importe").formula).toBe("{precio} * {cantidad}");
+
+    const reg = await call("POST", "/herr-registros/captura", { tabla_id: t.id, precio: "12.5", cantidad: "4", estado: "Pendiente" });
+    expect(reg.data.calculados.importe).toBe("50.00");
+
+    const escrita = await call("PATCH", `${url}/importe`, { operacion: "escrita", formula: "{Precio} × {cantidad} × 2" });
+    expect(escrita.status).toBe(200);
+    const rota = await call("PATCH", `${url}/importe`, { operacion: "", formula: "{Nada} + 1" });
+    expect(rota.status).toBe(400);
+    expect(String(rota.json.message)).toBe("«Importe»: «Nada» no existe");
+
+    const en_uso = await call("DELETE", `${url}/precio`);
+    expect(en_uso.status).toBe(409);
+    expect(String(en_uso.json.message)).toContain("«Importe»");
+
+    await call("PATCH", `${url}/cantidad`, { etiqueta: "Piezas" });
+    await call("PATCH", `${url}/precio`, { posicion: "99" });
+    await call("PATCH", `${url}/cantidad`, { posicion: "0" });
+    const cambio_tipo = await call("PATCH", `${url}/estado`, { tipo: "texto" });
+    expect(cambio_tipo.data.modo).toBe("campo");
+    expect((await call("DELETE", `${url}/estado`)).status).toBe(200);
+
+    fila = (await call("GET", `/herr-tablas/${t.id}`)).data;
+    expect(fila.campos.map((c: { clave: string }) => c.clave)).toEqual(["cantidad", "importe", "precio"]);
+    expect(por_clave("cantidad").etiqueta).toBe("Piezas");
+    expect(por_clave("importe").formula).toBe("{precio} * {cantidad} * 2");
+    expect(fila.version_esquema).toBeGreaterThan(5);
+
+    expect((await call("PATCH", `${url}/nada`, { etiqueta: "X" })).status).toBe(404);
+    expect((await call("POST", url, { etiqueta: "X", tipo: "magia" })).status).toBe(400);
+  });
+
+  test("totales guiados y valores fijos", async () => {
+    const t = await nueva("Abonos", "Fecha\nAbono ($)");
+    const base = `/herr-tablas/${t.id}`;
+    const meta = await call("POST", `${base}/constantes`, { etiqueta: "Deuda a saldar", valor: "1000", unidad: "$" });
+    expect(meta.status).toBe(200);
+    expect((await call("PATCH", `${base}/constantes/deuda_a_saldar`, { valor: "2000" })).status).toBe(200);
+
+    expect((await call("POST", `${base}/resumenes`, { tipo: "promedio", campo: "abono" })).status).toBe(200);
+    expect((await call("POST", `${base}/resumenes`, { tipo: "registros" })).status).toBe(200);
+    const falta = await call("POST", `${base}/resumenes`, { etiqueta: "Falta", formula: "{Deuda a saldar} - {suma:Abono}" });
+    expect(falta.status).toBe(200);
+    expect((await call("POST", `${base}/resumenes`, { tipo: "suma" })).status).toBe(400);
+
+    await call("POST", "/herr-registros/captura", { tabla_id: t.id, fecha: "2026-09-01", abono: "500" });
+    await call("POST", "/herr-registros/captura", { tabla_id: t.id, fecha: "2026-09-02", abono: "300" });
+    const resumen = await call("GET", `${base}/resumen`);
+    expect(resumen.data.resumenes.map((r: { etiqueta: string; texto: string }) => [r.etiqueta, r.texto])).toEqual([
+      ["Total de Abono", "800.00"],
+      ["Promedio de Abono", "400.00"],
+      ["Registros", "2"],
+      ["Falta", "1200.00"],
+    ]);
+
+    expect((await call("DELETE", `${base}/constantes/deuda_a_saldar`)).status).toBe(409);
+    expect((await call("DELETE", `${base}/resumenes/falta`)).status).toBe(200);
+    expect((await call("DELETE", `${base}/constantes/deuda_a_saldar`)).status).toBe(200);
+  });
+});
+
+/**
+ * Lo que el lanzador sí pinta (`public-landing-node.component.html`). La
+ * validación del kit acepta todo su catálogo; un nodo fuera de esta lista sale
+ * en pantalla como una etiqueta gris sin que nada falle.
+ */
+const RENDERIZABLES = new Set([
+  "nox.page", "nox.stack", "nox.link", "nox.image-viewer", "nox.carousel", "nox.stats", "nox.collapsible",
+  "nox.card", "nox.form", "nox.markdown-view", "nox.html", "nox.button", "nox.alert", "nox.empty",
+  "nox.catalog-grid", "nox.search", "nox.tabs", "nox.filters", "nox.split", "nox.paginator", "nox.detail",
+  "nox.timeline", "nox.status-progress", "nox.toolbar", "nox.table", "nox.badge", "nox.tag",
+]);
+
+/** Hojas `kind: page` de Herramientas que el lanzador conoce (`launcher-leaf.ts`). */
+const HOJAS = new Set(["herr-tabla", "herr-registro"]);
+
+function problemas_de_render(nodo: NoxUiNode, padre = ""): string[] {
+  const p = nodo.props ?? {};
+  const out: string[] = [];
+  if (nodo.component.startsWith("nox.input-")) {
+    if (padre !== "nox.form") out.push(`${nodo.component} fuera de un nox.form`);
+  } else if (!RENDERIZABLES.has(nodo.component)) out.push(`${nodo.component} no lo pinta el lanzador`);
+  const action = typeof p.action === "string" ? p.action : "";
+  if (action && !/^api:\/\/herr-/.test(action)) out.push(`action no relativa: ${action}`);
+  const href = typeof p.href === "string" ? p.href : "";
+  if (href && !HOJAS.has(href.replace(/^\/internal\//, "").split("?")[0]!)) out.push(`href sin hoja: ${href}`);
+  const then = typeof p.then === "string" ? p.then : "";
+  if (then && !["herramientas.herr-tabla", "herramientas.herr-registro"].includes(then.split("?")[0]!)) {
+    out.push(`then sin hoja: ${then}`);
+  }
+  for (const item of (Array.isArray(p.items) ? p.items : []) as Record<string, unknown>[]) {
+    const h = typeof item.href === "string" ? item.href : "";
+    if (h && !HOJAS.has(h.replace(/^\/internal\//, "").split("?")[0]!)) out.push(`href sin hoja: ${h}`);
+  }
+  for (const hijo of nodo.children ?? []) out.push(...problemas_de_render(hijo, nodo.component));
+  return out;
+}
+
+describe("páginas del diseñador", () => {
+  test("todas las pantallas usan solo nodos que el lanzador pinta y rutas relativas", async () => {
+    const otra = await tabla_de_plantilla("clientes");
+    const t = (await call("POST", "/herr-tablas/nueva", { name: "Todo", columnas: "Fecha\nMonto" })).data;
+    const url = `/herr-tablas/${t.id}/campos`;
+    for (const tipo of ["texto", "numero", "entero", "booleano", "hora", "fecha_hora", "opcion", "foto", "nota", "ruta", "nivel", "geo", "calculado", "referencia"]) {
+      expect((await call("POST", url, { etiqueta: `Col ${tipo}`, tipo })).status).toBe(200);
+    }
+    await call("PATCH", `${url}/col_referencia`, { enlace: `${otra.id}|nombre` });
+    await call("PATCH", `${url}/col_calculado`, { formula: "{Monto} * 2" });
+    await call("POST", `/herr-tablas/${t.id}/constantes`, { etiqueta: "Meta", valor: "10" });
+    await call("POST", "/herr-registros/captura", { tabla_id: t.id, fecha: "2026-09-01", monto: "5" });
+    const fila = (await call("GET", `/herr-tablas/${t.id}`)).data;
+
+    const rutas = [
+      "/pages/herramientas.herr-tabla",
+      `/pages/herramientas.herr-tabla?id=${t.id}`,
+      `/pages/herramientas.herr-tabla?id=${t.id}&modo=disenar&nuevo=1`,
+      ...["columnas", "totales", "fijos", "ajustes"].map((s) => `/pages/herramientas.herr-tabla?id=${t.id}&modo=disenar&seccion=${s}`),
+      ...fila.campos.map((c: { clave: string }) => `/pages/herramientas.herr-tabla?id=${t.id}&modo=campo&campo=${c.clave}`),
+      `/pages/herramientas.herr-tabla?id=${t.id}&modo=campo&campo=no_existe`,
+      `/pages/herramientas.herr-tabla?id=${(await call("POST", "/herr-tablas/nueva", { name: "Sin columnas" })).data.id}`,
+      "/pages/herramientas.herr-registro",
+    ];
+    for (const ruta of rutas) {
+      const doc = await pagina(ruta);
+      expect([ruta, problemas_de_render(doc.page)]).toEqual([ruta, []]);
+    }
+
+    const calculo = await pagina(`/pages/herramientas.herr-tabla?id=${t.id}&modo=campo&campo=col_calculado`);
+    const [previa] = nodos(calculo, "nox.detail");
+    expect(previa!.props!.items).toEqual([{ label: "Con el último registro da", value: "10.00", emphasis: true }]);
+    const formula = nodos(calculo, "nox.input-text").find((n) => n.props!.name === "formula")!;
+    expect(formula.props!.value).toBe("{Monto} * 2");
+
+    const disenar = await pagina(`/pages/herramientas.herr-tabla?id=${t.id}&modo=disenar`);
+    const visibles = nodos(disenar, "nox.detail").flatMap((d) => [
+      d.props!.text,
+      ...(d.props!.items as { label: string; value: string }[]).flatMap((i) => [i.label, i.value]),
+    ]);
+    expect(visibles).toContain("Clientes › Nombre");
+    expect(visibles.filter((v) => /col_|\{[a-z_]+\}/.test(String(v)))).toEqual([]);
   });
 });

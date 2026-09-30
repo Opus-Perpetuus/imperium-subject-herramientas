@@ -1,41 +1,8 @@
-import { define_crud, define_module, type DomainRow, type KirletCtx } from "@opus-perpetuus/imperium-core-kit";
-import { campo_busqueda, falla } from "../../lib/comun.ts";
-import { spec_de_fila, validar_esquema } from "../../lib/formulas/esquema.ts";
+import { define_crud, define_module } from "@opus-perpetuus/imperium-core-kit";
+import { herr_tablas_disenio, preparar_tabla } from "./herr-tablas.disenio.ts";
 import { herr_tablas_flow } from "./herr-tablas.flow.ts";
 import { herr_tablas_pages } from "./herr-tablas.pages.ts";
 import { herr_tablas_tables } from "./herr-tablas.tables.ts";
-
-const ESQUEMA = ["campos", "constantes", "resumenes"] as const;
-
-const huella = (fila: DomainRow) => {
-  const s = spec_de_fila(fila);
-  return JSON.stringify([s.campos, s.constantes, s.resumenes]);
-};
-
-/** Valida el esquema antes de guardarlo, lo deja normalizado y sube `version_esquema` cuando cambia. */
-function preparar_tabla(ctx: KirletCtx, patch: DomainRow, existing: DomainRow | null): DomainRow {
-  if (existing) delete patch.created_by;
-  else patch.created_by = ctx.actor;
-  for (const col of ESQUEMA) {
-    if (typeof patch[col] === "string") falla(400, `${col}: JSON inválido`);
-  }
-  const fila = { ...existing, ...patch };
-  const spec = spec_de_fila(fila);
-  const errores = validar_esquema(spec);
-  if (errores.length) falla(400, errores.join("; "));
-  const toca_esquema = !existing || ESQUEMA.some((col) => col in patch);
-  if (toca_esquema) {
-    patch.campos = spec.campos;
-    patch.constantes = spec.constantes;
-    patch.resumenes = spec.resumenes;
-  }
-  if (!existing) patch.version_esquema = 1;
-  else if (toca_esquema && huella(fila) !== huella(existing)) {
-    patch.version_esquema = Number(existing.version_esquema ?? 0) + 1;
-  }
-  patch.search_field = campo_busqueda(fila.name, fila.description, ...spec.campos.map((c) => c.etiqueta));
-  return patch;
-}
 
 export const herr_tablas_module = define_module({
   resource: "herr-tablas",
@@ -47,6 +14,7 @@ export const herr_tablas_module = define_module({
   },
   routes: [
     ...herr_tablas_flow,
+    ...herr_tablas_disenio,
     ...define_crud({
       resource: "herr-tablas",
       table: "herr_tablas",

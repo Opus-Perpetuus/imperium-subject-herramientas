@@ -1,5 +1,5 @@
 import { build_feature_shell_page, type KirletPageDecl } from "@opus-perpetuus/imperium-core-kit";
-import { API, OWNER } from "../herr-tablas/herr-tablas.pages.ts";
+import { API, OWNER } from "../herr-tablas/herr-tablas.nox.ts";
 
 export const herr_cierres_pages: KirletPageDecl[] = [
   {

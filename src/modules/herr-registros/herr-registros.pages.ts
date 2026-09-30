@@ -3,12 +3,12 @@ import {
   type KirletPageDecl,
   type NoxUiNode,
 } from "@opus-perpetuus/imperium-core-kit";
-import { texto } from "../../lib/comun.ts";
+import { filas_de, texto } from "../../lib/comun.ts";
 import { spec_de_fila, type CampoSpec } from "../../lib/formulas/esquema.ts";
 import { texto_a_numero } from "../../lib/formulas/motor.ts";
 import { parsear } from "../../lib/formulas/multivalor.ts";
 import { etiquetas_referencia, objeto } from "../herr-tablas/herr-tablas.flow.ts";
-import { API, OWNER, boton, nodo, pagina } from "../herr-tablas/herr-tablas.pages.ts";
+import { API, OWNER, boton, nodo, pagina } from "../herr-tablas/herr-tablas.nox.ts";
 
 const ID_REGISTRO = "herramientas.herr-registro";
 
@@ -140,8 +140,17 @@ export const herr_registros_pages: KirletPageDecl[] = [
       const id = texto(url?.searchParams.get("id"));
       const tabla = tabla_id ? await data.findOne("herr_tablas", { id: tabla_id }) : null;
       if (!tabla || tabla.is_active === false) {
+        const tablas = await filas_de({ data }, "herr_tablas", { is_active: true });
         return pagina(ID_REGISTRO, "Nuevo registro", [
-          nodo("nox.empty", { text: "Elige una tabla", description: "Abre esta pantalla desde una tabla personalizada." }),
+          nodo(
+            "nox.empty",
+            tablas.length
+              ? { text: "¿En qué tabla anotas?", description: "Elige una de tus tablas." }
+              : { text: "Aún no tienes tablas", description: "Crea una en «Mis tablas» y vuelve para anotar." },
+            tablas.length
+              ? tablas.map((t) => boton(texto(t.name), { href: `/internal/herr-registro?tabla=${t.id}`, icon: "fa-pen-to-square" }))
+              : [boton("Crear una tabla", { href: "/internal/herr-tabla", icon: "fa-plus" })],
+          ),
         ]);
       }
       const spec = spec_de_fila(tabla);

@@ -24,10 +24,11 @@ export const HERRAMIENTAS: Herramienta[] = [
     id: "tablas",
     nombre: "Tablas personalizadas",
     descripcion:
-      "Bases de datos a la medida: campos tipados, constantes, resúmenes y fórmulas; plantillas listas y cierre que archiva las filas.",
+      "Bases de datos a la medida sin programar: escribe las columnas o parte de una plantilla; totales, valores fijos y cálculos guiados, y cierre que archiva las filas.",
     icono: "fa-table-list",
     accesos: [
-      { texto: "Tablas", segmento: "herr-tablas" },
+      { texto: "Mis tablas", segmento: "herr-tabla" },
+      { texto: "Capturar", segmento: "herr-registro" },
       { texto: "Registros", segmento: "herr-registros" },
       { texto: "Cierres", segmento: "herr-cierres" },
     ],

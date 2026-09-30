@@ -1,41 +1,19 @@
 import {
   build_feature_shell_page,
   type KirletPageDecl,
-  type NoxPageDescriptor,
   type NoxUiNode,
 } from "@opus-perpetuus/imperium-core-kit";
-import { filas_de, texto } from "../../lib/comun.ts";
+import { texto } from "../../lib/comun.ts";
 import { formatear, valores_resumen } from "../../lib/formulas/calculadora.ts";
 import { decimales_de, spec_de_fila, type CampoSpec } from "../../lib/formulas/esquema.ts";
 import { texto_a_numero } from "../../lib/formulas/motor.ts";
 import { parsear } from "../../lib/formulas/multivalor.ts";
 import { ordenar } from "../../lib/formulas/orden.ts";
+import { ID_TABLA, href_tabla, pagina_campo, pagina_disenar, pagina_inicio } from "./herr-tablas.disenador.ts";
 import { etiquetas_referencia, filas_recalculadas, registros_de } from "./herr-tablas.flow.ts";
-
-export const API = "api://m/subject-herramientas";
-export const OWNER = "subject-herramientas";
-
-export function nodo(component: string, props: Record<string, unknown> = {}, children?: NoxUiNode[]): NoxUiNode {
-  return { component, props, ...(children?.length ? { children } : {}) };
-}
-
-export function enlace(text: string, href: string): NoxUiNode {
-  return { component: "nox.link", props: { href, text }, text };
-}
-
-export function boton(text: string, props: Record<string, unknown> = {}): NoxUiNode {
-  return { component: "nox.button", props: { ...props, text }, text };
-}
-
-export function pagina(id: string, title: string, hijos: NoxUiNode[]): NoxPageDescriptor {
-  return { id, owner: OWNER, title, page: nodo("nox.page", {}, hijos) };
-}
+import { API, OWNER, boton, con_unidad, nodo, pagina } from "./herr-tablas.nox.ts";
 
 const NUMERICOS = new Set(["numero", "dinero", "entero", "calculado"]);
-
-function con_unidad(valor: string, unidad?: string | null): string {
-  return valor && unidad ? `${valor} ${unidad}` : valor;
-}
 
 /** El valor de un campo como se lee en la lista: números con sus decimales y unidad, referencias por etiqueta. */
 export function valor_presentado(
@@ -59,8 +37,6 @@ export function valor_presentado(
   return con_unidad(raw, campo.unidad);
 }
 
-const ID_TABLA = "herramientas.herr-tabla";
-
 export const herr_tablas_pages: KirletPageDecl[] = [
   {
     id: "herramientas.herr-tablas",
@@ -77,11 +53,11 @@ export const herr_tablas_pages: KirletPageDecl[] = [
           nameKey: "name",
           view: {
             title: "Tablas personalizadas",
-            subtitle: "Bases de datos a medida: campos, valores fijos, resúmenes y fórmulas",
+            subtitle: "Bases de datos a medida. Para crearlas y diseñar sus columnas abre «Ver tabla».",
             pluralLabel: "tablas",
             singularLabel: "tabla",
             emptyTitle: "Sin tablas",
-            emptyDescription: "Crea la primera o parte de una plantilla (Jornada en moto, Gastos, Deudas)",
+            emptyDescription: "Créala desde «Ver tabla»: en blanco escribiendo sus columnas o desde una plantilla",
           },
           data: {
             list: `${API}/herr-tablas`,
@@ -107,37 +83,11 @@ export const herr_tablas_pages: KirletPageDecl[] = [
               { name: "description", component: "input-textarea", label: "Descripción" },
               { name: "icono", component: "input-icon", label: "Ícono" },
               {
-                name: "campos",
-                component: "input-json",
-                label: "Campos",
-                help: "Lista JSON de { clave, etiqueta, tipo, requerido, formula, unidad, decimales, en_resumen, opciones… }",
-                column_span: "full",
+                name: "cerrable",
+                component: "input-checkbox",
+                label: "Se puede cerrar el día",
+                help: "Las columnas, totales y valores fijos se diseñan en «Ver tabla» → Diseñar.",
               },
-              {
-                name: "constantes",
-                component: "input-json",
-                label: "Valores fijos",
-                help: "Lista JSON de { clave, etiqueta, valor, unidad, decimales }",
-                column_span: "full",
-              },
-              {
-                name: "resumenes",
-                component: "input-json",
-                label: "Resúmenes",
-                help: "Lista JSON de { clave, etiqueta, formula, unidad, decimales }",
-                column_span: "full",
-              },
-              { name: "orden_campo", component: "input-text", label: "Ordenar por (clave del campo)" },
-              {
-                name: "orden_desc",
-                component: "input-switch",
-                label: "Sentido",
-                options: [
-                  { value: true, label: "Descendente" },
-                  { value: false, label: "Ascendente" },
-                ],
-              },
-              { name: "cerrable", component: "input-checkbox", label: "Se puede cerrar el día" },
             ],
           },
         },
@@ -148,26 +98,35 @@ export const herr_tablas_pages: KirletPageDecl[] = [
     path: "herr-tabla",
     permission: "subject.herramientas.herr-tablas.read",
     build: async ({ url, data }) => {
-      const id = texto(url?.searchParams.get("id"));
+      const params = url?.searchParams ?? new URLSearchParams();
+      const id = texto(params.get("id"));
       const tabla = id ? await data.findOne("herr_tablas", { id }) : null;
-      if (!tabla || tabla.is_active === false) {
-        const tablas = await filas_de({ data }, "herr_tablas", { is_active: true });
-        return pagina(ID_TABLA, "Tablas personalizadas", [
-          nodo(
-            "nox.empty",
-            { text: id ? "La tabla no existe" : "Elige una tabla", description: "Abre una de tus tablas:" },
-            tablas.map((t) => enlace(texto(t.name), `/internal/herr-tabla?id=${t.id}`)),
-          ),
-        ]);
-      }
+      if (!tabla || tabla.is_active === false) return pagina_inicio(data, id ? "La tabla no existe" : "");
       const spec = spec_de_fila(tabla);
+      const modo = params.get("modo");
+      if (modo === "disenar") return pagina_disenar(data, spec, params);
+      if (modo === "campo") return pagina_campo(data, spec, texto(params.get("campo")));
       const filas = ordenar(spec, filas_recalculadas(spec, await registros_de({ data }, spec.id)));
       const etiquetas = await etiquetas_referencia(data, spec);
       const columnas = spec.campos.some((c) => c.en_resumen)
         ? spec.campos.filter((c) => c.en_resumen)
         : spec.campos;
-      const hijos: NoxUiNode[] = [];
+      const hijos: NoxUiNode[] = [
+        nodo("nox.toolbar", {}, [
+          boton("Nuevo registro", { href: `/internal/herr-registro?tabla=${spec.id}`, icon: "fa-plus", variant: "primary" }),
+          boton("Diseñar", { href: href_tabla(spec.id, { modo: "disenar" }), icon: "fa-pen-ruler" }),
+          boton("Mis tablas", { href: "/internal/herr-tabla", icon: "fa-table-list", variant: "ghost" }),
+        ]),
+      ];
       if (spec.description) hijos.push(nodo("nox.markdown-view", { content: spec.description }));
+      if (!spec.campos.length) {
+        hijos.push(
+          nodo("nox.empty", { text: "Esta tabla aún no tiene columnas", description: "Diséñala: dile qué quieres anotar." }, [
+            boton("Diseñar la tabla", { href: href_tabla(spec.id, { modo: "disenar" }), icon: "fa-pen-ruler" }),
+          ]),
+        );
+        return pagina(ID_TABLA, spec.name, hijos);
+      }
       if (spec.resumenes.length) {
         hijos.push(
           nodo("nox.stats", {
@@ -188,7 +147,6 @@ export const herr_tablas_pages: KirletPageDecl[] = [
           text: "Sin registros",
         }),
       );
-      hijos.push(enlace("Nuevo registro", `/internal/herr-registro?tabla=${spec.id}`));
       if (spec.cerrable) {
         hijos.push(
           boton("Cerrar día", {
