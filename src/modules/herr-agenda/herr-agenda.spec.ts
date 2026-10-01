@@ -184,11 +184,11 @@ describe("páginas", () => {
       title: string;
       page: { children: Array<{ component: string; props?: { rows?: Array<Record<string, string>> }; children?: Array<{ props: { href: string } }> }> };
     };
-    expect(doc.title).toBe("Agenda del 2026-09-28");
+    expect(doc.title).toBe("Agenda · Lunes 28 de septiembre de 2026");
     expect(doc.page.children[0]!.children!.map((l) => l.props.href)).toEqual([
       "/internal/herr-agenda-dia?fecha=2026-09-27",
-      "/internal/herr-agenda-dia",
       "/internal/herr-agenda-dia?fecha=2026-09-29",
+      "/internal/herr-agenda-dia",
       "/internal/herr-agenda",
     ]);
     const tabla = doc.page.children[1]!;

@@ -46,7 +46,7 @@ function titulo(t: string): NoxUiNode {
   return nodo("nox.markdown-view", { content: `### ${t}` });
 }
 
-function migas(...partes: Array<[string, string]>): NoxUiNode {
+export function migas(...partes: Array<[string, string]>): NoxUiNode {
   return nodo(
     "nox.toolbar",
     { block: "migas" },
@@ -132,9 +132,11 @@ export async function pagina_inicio(data: Datos, aviso = ""): Promise<NoxPageDes
       plantillas().map((p) =>
         nodo("nox.card", { title: p.name }, [
           nodo("nox.markdown-view", {
-            content: `${p.description}\n\n**Columnas:** ${lista_corta(p.campos.map((c) => c.etiqueta))}`,
+            content: `${p.description}\n\n**Columnas:** ${lista_corta(p.campos.map((c) => c.etiqueta), 4)}`,
           }),
+          // Secundario: en la página ya manda «Crear tabla», y ocho botones de color competían con él.
           boton("Usar plantilla", {
+            variant: "secondary",
             method: "POST",
             action: "api://herr-tablas/desde-plantilla",
             body: { plantilla_id: p.plantilla_id },

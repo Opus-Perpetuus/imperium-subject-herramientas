@@ -30,8 +30,8 @@ function boton(text: string, path: string, extra: { confirm?: string; variant?: 
   };
 }
 
-function enlace(text: string, href: string): NoxUiNode {
-  return { component: "nox.link", props: { text, href }, text };
+function ir(text: string, href: string, icon: string): NoxUiNode {
+  return { component: "nox.button", props: { text, href, icon, variant: "secondary" }, text };
 }
 
 /** La jornada pedida por la URL (`?id=` / `?jornada=`), o null si no viene o no existe. */
@@ -93,8 +93,8 @@ async function pagina_jornada(args: KirletPageBuildArgs): Promise<NoxPageDescrip
     abiertos.length
       ? nodo("nox.table", {
           columns: [
-            { key: "orden", label: "Orden" },
             { key: "domicilio", label: "Domicilio" },
+            { key: "orden", label: "Orden" },
             { key: "cobrar", label: "A cobrar" },
             { key: "estado", label: "Estado" },
           ],
@@ -111,7 +111,7 @@ async function pagina_jornada(args: KirletPageBuildArgs): Promise<NoxPageDescrip
         ? [boton("Terminar jornada", `herr-jornadas/${id}/terminar`, { confirm: "¿Terminar la jornada? Se entregan los cobros pendientes.", variant: "primary" })]
         : []),
       ...iniciar,
-      enlace("Ver liquidación", `/internal/herr-liquidacion?jornada=${encodeURIComponent(id)}`),
+      ir("Ver liquidación", `/internal/herr-liquidacion?jornada=${encodeURIComponent(id)}`, "fa-cash-register"),
     ]),
   ]);
 }

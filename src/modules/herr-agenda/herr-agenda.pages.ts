@@ -92,8 +92,16 @@ function hora_de(minuto: number | null): string {
   return `${String(Math.floor(minuto / 60)).padStart(2, "0")}:${String(minuto % 60).padStart(2, "0")}`;
 }
 
-function enlace(text: string, href: string): NoxUiNode {
-  return { component: "nox.link", props: { href, text }, text };
+function boton(text: string, href: string, icon: string): NoxUiNode {
+  return { component: "nox.button", props: { href, text, icon, variant: "secondary" }, text };
+}
+
+const FECHA_LARGA = new Intl.DateTimeFormat("es-MX", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+
+/** «Jueves 1 de octubre de 2026»: el día de la semana es lo que se busca en una agenda. */
+function fecha_larga(fecha: string): string {
+  const larga = FECHA_LARGA.format(new Date(`${fecha}T12:00:00Z`)).replace(",", "");
+  return larga.charAt(0).toUpperCase() + larga.slice(1);
 }
 
 function dia_desplazado(fecha: string, dias: number): string {
@@ -121,19 +129,19 @@ const dia: KirletPageDecl = {
     return {
       id: "herramientas.herr-agenda-dia",
       owner: "subject-herramientas",
-      title: `Agenda del ${fecha}`,
+      title: `Agenda · ${fecha_larga(fecha)}`,
       page: {
         component: "nox.stack",
         props: { gap: "md" },
         children: [
           {
-            component: "nox.stack",
-            props: { gap: "sm" },
+            component: "nox.toolbar",
+            props: {},
             children: [
-              enlace("← Día anterior", `/internal/herr-agenda-dia?fecha=${dia_desplazado(fecha, -1)}`),
-              enlace("Hoy", "/internal/herr-agenda-dia"),
-              enlace("Día siguiente →", `/internal/herr-agenda-dia?fecha=${dia_desplazado(fecha, 1)}`),
-              enlace("Todos los eventos", "/internal/herr-agenda"),
+              boton("Anterior", `/internal/herr-agenda-dia?fecha=${dia_desplazado(fecha, -1)}`, "fa-chevron-left"),
+              boton("Siguiente", `/internal/herr-agenda-dia?fecha=${dia_desplazado(fecha, 1)}`, "fa-chevron-right"),
+              boton("Hoy", "/internal/herr-agenda-dia", "fa-calendar-day"),
+              boton("Todos los eventos", "/internal/herr-agenda", "fa-list"),
             ],
           },
           rows.length
@@ -141,8 +149,8 @@ const dia: KirletPageDecl = {
                 component: "nox.table",
                 props: {
                   columns: [
-                    { key: "hora", label: "Hora" },
                     { key: "titulo", label: "Evento" },
+                    { key: "hora", label: "Hora" },
                     { key: "duracion", label: "Duración" },
                     { key: "aviso", label: "Aviso" },
                     { key: "hecho", label: "Hecho" },

@@ -6,6 +6,7 @@ import {
   validate_page_descriptor_renderable,
   type KirletIdentity,
 } from "@opus-perpetuus/imperium-core-kit";
+import { CAPACIDADES } from "./herr-utilidades.flow.ts";
 import { herr_utilidades_module } from "./herr-utilidades.routes.ts";
 
 const SUBJECT = define_subject({
@@ -185,6 +186,8 @@ describe("herr-utilidades", () => {
     const page = await r.json();
     const v = validate_page_descriptor_renderable(page);
     expect(v).toMatchObject({ ok: true });
-    expect(page.page.children[1].props.rows.length).toBeGreaterThanOrEqual(10);
+    const grupos = page.page.children[1].props.items as Array<{ body: string }>;
+    const rutas = grupos.flatMap((g) => g.body.match(/\*\*(GET|POST)\*\*/g) ?? []);
+    expect(rutas.length).toBe(CAPACIDADES.length);
   });
 });

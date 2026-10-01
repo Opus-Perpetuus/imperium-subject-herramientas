@@ -9,7 +9,7 @@ import { decimales_de, spec_de_fila, type CampoSpec } from "../../lib/formulas/e
 import { texto_a_numero } from "../../lib/formulas/motor.ts";
 import { parsear } from "../../lib/formulas/multivalor.ts";
 import { ordenar } from "../../lib/formulas/orden.ts";
-import { ID_TABLA, href_tabla, pagina_campo, pagina_disenar, pagina_inicio } from "./herr-tablas.disenador.ts";
+import { ID_TABLA, href_tabla, migas, pagina_campo, pagina_disenar, pagina_inicio } from "./herr-tablas.disenador.ts";
 import { etiquetas_referencia, filas_recalculadas, registros_de } from "./herr-tablas.flow.ts";
 import { API, OWNER, boton, con_unidad, nodo, pagina } from "./herr-tablas.nox.ts";
 
@@ -112,10 +112,10 @@ export const herr_tablas_pages: KirletPageDecl[] = [
         ? spec.campos.filter((c) => c.en_resumen)
         : spec.campos;
       const hijos: NoxUiNode[] = [
+        migas(["Mis tablas", "/internal/herr-tabla"], [spec.name, href_tabla(spec.id)]),
         nodo("nox.toolbar", {}, [
           boton("Nuevo registro", { href: `/internal/herr-registro?tabla=${spec.id}`, icon: "fa-plus", variant: "primary" }),
-          boton("Diseñar", { href: href_tabla(spec.id, { modo: "disenar" }), icon: "fa-pen-ruler" }),
-          boton("Mis tablas", { href: "/internal/herr-tabla", icon: "fa-table-list", variant: "ghost" }),
+          boton("Diseñar", { href: href_tabla(spec.id, { modo: "disenar" }), icon: "fa-pen-ruler", variant: "secondary" }),
         ]),
       ];
       if (spec.description) hijos.push(nodo("nox.markdown-view", { content: spec.description }));
@@ -150,6 +150,7 @@ export const herr_tablas_pages: KirletPageDecl[] = [
       if (spec.cerrable) {
         hijos.push(
           boton("Cerrar día", {
+            variant: "secondary",
             method: "POST",
             action: `api://herr-tablas/${spec.id}/cerrar`,
             confirm: "¿Cerrar el día? Los registros se archivan en Cierres y la tabla queda vacía.",

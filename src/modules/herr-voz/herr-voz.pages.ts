@@ -174,7 +174,7 @@ export function construir_asistente(rows: Array<Record<string, unknown>>): NoxPa
     text: "Escribe la orden como la dirías",
     props: {
       description:
-        "Escuchar y hablar lo hace la app Android de Imperium; aquí la orden se escribe. Ejemplos: «anota un pedido de 250 en la calle 5», «saqué de cambio 200», «cuánto llevo hoy», «terminar jornada». Lo que escribe datos primero se pregunta: revisa la respuesta, marca «Confirmo» y vuelve a enviar.",
+        "Por ejemplo «anota un pedido de 250 en la calle 5» o «cuánto llevo hoy». Lo que guarda datos primero se pregunta: revisa la respuesta, marca «Confirmo» y vuelve a enviar. Hablarle es de la app Android.",
     },
   };
   const formulario: NoxUiNode = {
@@ -216,7 +216,17 @@ export function construir_asistente(rows: Array<Record<string, unknown>>): NoxPa
     page: {
       component: "nox.page",
       props: { title: "Asistente" },
-      children: [aviso, formulario, tabla],
+      children: [
+        aviso,
+        formulario,
+        { component: "nox.markdown-view", props: { content: "### Últimas órdenes" } },
+        tabla,
+        {
+          component: "nox.button",
+          text: "Ver la bitácora",
+          props: { text: "Ver la bitácora", href: "/internal/herr-voz-bitacora", icon: "fa-clock-rotate-left", variant: "ghost" },
+        },
+      ],
     },
   };
 }

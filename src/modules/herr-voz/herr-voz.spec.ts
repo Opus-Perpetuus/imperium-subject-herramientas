@@ -310,7 +310,7 @@ describe("CRUD y páginas", () => {
     for (let i = 0; i < 17; i++) await post("/herr-voz/interpretar", { texto: `orden ${i} cuánto llevo hoy` });
     const r = await get("/pages/herramientas.herr-asistente");
     const page = r.body.page as { children: Array<{ component: string; props: Record<string, unknown>; children?: unknown[] }> };
-    expect(page.children.map((c) => c.component)).toEqual(["nox.alert", "nox.form", "nox.table"]);
+    expect(page.children.map((c) => c.component)).toEqual(["nox.alert", "nox.form", "nox.markdown-view", "nox.table", "nox.button"]);
     const form = page.children[1]!;
     expect(form.props.invoke).toEqual({ method: "POST", action: "api://herr-voz/ejecutar" });
     // Sin `confirmado` fijo: lo que escribe primero se pregunta y se confirma marcando la casilla.
@@ -318,7 +318,7 @@ describe("CRUD y páginas", () => {
     const campos = form.children as Array<{ component: string; props?: { name?: string; value?: unknown } }>;
     expect(campos[0]).toMatchObject({ component: "nox.input-text", props: { name: "orden" } });
     expect(campos[1]).toMatchObject({ component: "nox.input-checkbox", props: { name: "confirmado", value: false } });
-    const rows = page.children[2]!.props.rows as Array<Record<string, unknown>>;
+    const rows = page.children[3]!.props.rows as Array<Record<string, unknown>>;
     expect(rows).toHaveLength(15);
     expect(rows[0]).toMatchObject({ texto: "orden 16 cuánto llevo hoy", intencion: "consulta_hoy", estado: "interpretado" });
     expect(Object.keys(rows[0]!)).toEqual(["texto", "intencion", "respuesta", "estado"]);

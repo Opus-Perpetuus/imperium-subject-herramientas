@@ -1,10 +1,8 @@
 import type { KirletPageDecl } from "@opus-perpetuus/imperium-core-kit";
 import { CAPACIDADES } from "./herr-utilidades.flow.ts";
 
-const GUIA = `# Utilidades
-
-Servicios **sin tabla** que Herramientas ofrece a otras apps. La tabla de abajo
-es la misma lista que devuelve \`GET /herr-utilidades/capacidades\`.
+const GUIA = `Servicios **sin tabla** que Herramientas ofrece a otras apps. Las rutas de
+abajo son la misma lista que devuelve \`GET /herr-utilidades/capacidades\`.
 
 ## Cómo llamarlas
 
@@ -18,10 +16,9 @@ es la misma lista que devuelve \`GET /herr-utilidades/capacidades\`.
 - **Quién:** las rutas \`/herr-utilidades/*\` las puede llamar cualquier usuario
   interno con sesión, aunque no tenga el menú de Herramientas (sin sesión
   interna, 401). Las demás exigen el permiso de su herramienta.
+`;
 
-## Markdown
-
-\`POST /herr-utilidades/markdown\` con \`{ texto, sanear?: true }\` devuelve
+const MARKDOWN = `\`POST /herr-utilidades/markdown\` con \`{ texto, sanear?: true }\` devuelve
 \`{ html, ast, encabezados, etiquetas }\`. Reconoce encabezados, citas, código
 cercado, viñetas, numeradas, tareas \`- [ ]\`, tablas, reglas, metadatos YAML,
 **negrita**, *cursiva*, ~~tachado~~, ==resaltado==, \`código\`, enlaces,
@@ -35,6 +32,18 @@ ejecutable (\`javascript:\`, \`vbscript:\`, \`data:\` salvo imágenes) se omiten
 \`ast\` nunca se sanea: lleva el texto original como dato, así que quien lo
 pinte por su cuenta debe escaparlo.
 `;
+
+/** Un grupo plegable por herramienta: en el teléfono, seis columnas por ruta no cabían. */
+function rutas_por_herramienta(): Array<{ id: string; title: string; body: string }> {
+  const grupos = Map.groupBy(CAPACIDADES, (c) => c.herramienta);
+  return [...grupos].map(([herramienta, rutas]) => ({
+    id: herramienta,
+    title: `${herramienta} · ${rutas.length} ${rutas.length === 1 ? "ruta" : "rutas"}`,
+    body: rutas
+      .map((c) => `**${c.metodo}** \`${c.ruta}\`  \n${c.descripcion}  \nEntrada: \`${c.entrada}\` · Salida: \`${c.salida}\``)
+      .join("\n\n"),
+  }));
+}
 
 export const herr_utilidades_pages: KirletPageDecl[] = [
   {
@@ -51,17 +60,13 @@ export const herr_utilidades_pages: KirletPageDecl[] = [
         children: [
           { component: "nox.markdown-view", props: { content: GUIA } },
           {
-            component: "nox.table",
+            component: "nox.collapsible",
+            text: "Rutas por herramienta",
             props: {
-              columns: [
-                { key: "herramienta", label: "Herramienta" },
-                { key: "metodo", label: "Método" },
-                { key: "ruta", label: "Ruta" },
-                { key: "entrada", label: "Entrada" },
-                { key: "salida", label: "Salida" },
-                { key: "descripcion", label: "Descripción" },
+              items: [
+                ...rutas_por_herramienta(),
+                { id: "markdown", title: "Markdown: qué reconoce y cómo se sanea", body: MARKDOWN },
               ],
-              rows: CAPACIDADES,
             },
           },
         ],
