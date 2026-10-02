@@ -16,6 +16,7 @@ import {
 } from "../../lib/formulas/disenio.ts";
 import {
   PARTES_REF,
+  TIPOS_CAMPO_CIERRE,
   spec_de_fila,
   type CampoSpec,
   type ResumenTabla,
@@ -172,6 +173,7 @@ const SECCIONES = [
   { id: "columnas", nombre: "Columnas" },
   { id: "totales", nombre: "Totales" },
   { id: "fijos", nombre: "Valores fijos" },
+  { id: "cierre", nombre: "Cierre" },
   { id: "ajustes", nombre: "Ajustes" },
 ] as const;
 
@@ -382,6 +384,72 @@ function seccion_fijos(spec: TablaSpec): NoxUiNode[] {
   return out;
 }
 
+function seccion_cierre(spec: TablaSpec): NoxUiNode[] {
+  const base = `api://herr-tablas/${spec.id}/campos-cierre`;
+  const out: NoxUiNode[] = [
+    nodo("nox.markdown-view", {
+      content:
+        "Al hacer un cierre se pide su **nombre** y su **fecha**. Agrega aquí lo demás que quieras anotar en cada cierre: " +
+        "el efectivo contado, quién cerró, una observación… Sirve después para compararlos.",
+    }),
+  ];
+  if (!spec.cerrable) {
+    out.push(nodo("nox.alert", { text: "Esta tabla no se cierra", description: "Actívalo en Ajustes («Permitir cierres»)." }));
+  }
+  const datos = spec.campos_cierre ?? [];
+  if (datos.length) {
+    out.push(
+      nodo(
+        "nox.stack",
+        { layout: "grid" },
+        datos.map((c) =>
+          nodo(
+            "nox.detail",
+            {
+              text: c.etiqueta,
+              items: [
+                { label: "Tipo", value: TIPOS_UI[c.tipo]?.nombre ?? c.tipo },
+                ...(c.tipo === "opcion" ? [{ label: "Opciones", value: (c.opciones ?? []).join(" · ") }] : []),
+                ...(c.requerido ? [{ label: "Captura", value: "Obligatorio" }] : []),
+              ],
+            },
+            [
+            boton("Quitar", {
+              method: "DELETE",
+              action: `${base}/${c.clave}`,
+              confirm: `¿Quitar «${c.etiqueta}» del cierre? Lo ya anotado en cierres hechos se queda.`,
+              icon: "fa-trash",
+              variant: "ghost",
+            }),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+  out.push(
+    nodo("nox.card", { title: "Agregar dato al cierre" }, [
+      nodo("nox.form", { method: "POST", action: base, then: `${ID_TABLA}?id={id}&modo=disenar&seccion=cierre&v={v}` }, [
+        nodo("nox.input-text", { name: "etiqueta", label: "Nombre del dato", placeholder: "Ej.: Efectivo contado", required: true }),
+        menu(
+          "tipo",
+          "¿Qué guarda?",
+          TIPOS_CAMPO_CIERRE.map((t) => ({ value: t, label: `${TIPOS_UI[t].nombre} — ${TIPOS_UI[t].ayuda}` })),
+          { value: "texto" },
+        ),
+        nodo("nox.input-textarea", {
+          name: "opciones",
+          label: "Opciones",
+          help: "Solo para «Lista de opciones»: una por renglón o separadas por comas.",
+        }),
+        nodo("nox.input-checkbox", { name: "requerido", label: "Obligatorio", value: false }),
+        boton("Agregar", { icon: "fa-plus" }),
+      ]),
+    ]),
+  );
+  return out;
+}
+
 function seccion_ajustes(spec: TablaSpec): NoxUiNode[] {
   return [
     nodo("nox.form", { method: "PATCH", action: `api://herr-tablas/${spec.id}` }, [
@@ -404,8 +472,8 @@ function seccion_ajustes(spec: TablaSpec): NoxUiNode[] {
       }),
       nodo("nox.input-checkbox", {
         name: "cerrable",
-        label: "Permitir «Cerrar día»",
-        help: "Archiva los registros en Cierres y deja la tabla vacía: sirve para jornadas o cortes de caja, no para catálogos.",
+        label: "Permitir cierres",
+        help: "Un cierre archiva los registros con un nombre y una fecha y deja la tabla vacía: sirve para jornadas, cortes de caja o inventarios, no para catálogos.",
         value: spec.cerrable !== false,
       }),
       boton("Guardar ajustes", { icon: "fa-floppy-disk" }),
@@ -436,6 +504,7 @@ export async function pagina_disenar(data: Datos, spec: TablaSpec, params: URLSe
     columnas: spec.campos.length,
     totales: spec.resumenes.length,
     fijos: spec.constantes.length,
+    cierre: spec.campos_cierre?.length,
     ajustes: undefined,
   };
   const hijos: NoxUiNode[] = [migas(["Mis tablas", HOJA], [spec.name, href_tabla(spec.id)])];
@@ -463,6 +532,7 @@ export async function pagina_disenar(data: Datos, spec: TablaSpec, params: URLSe
   if (seccion === "columnas") hijos.push(...seccion_columnas(spec, await tablas_por_id(data)));
   if (seccion === "totales") hijos.push(...(await seccion_totales(data, spec)));
   if (seccion === "fijos") hijos.push(...seccion_fijos(spec));
+  if (seccion === "cierre") hijos.push(...seccion_cierre(spec));
   if (seccion === "ajustes") hijos.push(...seccion_ajustes(spec));
   hijos.push(
     nodo("nox.toolbar", {}, [

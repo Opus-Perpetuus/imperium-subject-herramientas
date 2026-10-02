@@ -52,7 +52,7 @@ const huella = (fila: DomainRow) => {
 export function preparar_tabla(ctx: KirletCtx, patch: DomainRow, existing: DomainRow | null): DomainRow {
   if (existing) delete patch.created_by;
   else patch.created_by = ctx.actor;
-  for (const col of ESQUEMA) {
+  for (const col of [...ESQUEMA, "campos_cierre"]) {
     if (typeof patch[col] === "string") falla(400, `${col}: JSON inválido`);
   }
   const fila = { ...existing, ...patch };
@@ -65,6 +65,7 @@ export function preparar_tabla(ctx: KirletCtx, patch: DomainRow, existing: Domai
     patch.constantes = spec.constantes;
     patch.resumenes = spec.resumenes;
   }
+  if ("campos_cierre" in patch) patch.campos_cierre = spec.campos_cierre;
   if (!existing) patch.version_esquema = 1;
   else if (toca_esquema && huella(fila) !== huella(existing)) {
     patch.version_esquema = Number(existing.version_esquema ?? 0) + 1;

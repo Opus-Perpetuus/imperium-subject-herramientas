@@ -26,6 +26,8 @@ export const herr_tablas_tables: KirletTableDecl[] = [
       { name: "orden_campo", type: "text" },
       { name: "orden_desc", type: "boolean" },
       { name: "cerrable", type: "boolean", notNull: true, default: true },
+      /** `CampoSpec[]`: lo que pide el formulario de un cierre además del nombre y la fecha. */
+      { name: "campos_cierre", type: "json" },
       { name: "version_esquema", type: "integer" },
     ],
     indexes: [

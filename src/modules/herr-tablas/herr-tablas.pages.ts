@@ -8,6 +8,7 @@ import { valores_resumen } from "../../lib/formulas/calculadora.ts";
 import { spec_de_fila } from "../../lib/formulas/esquema.ts";
 import { ID_TABLA, href_registro, href_tabla, migas, pagina_campo, pagina_disenar, pagina_inicio } from "./herr-tablas.disenador.ts";
 import { tabla_de_registros, vista_de_tabla } from "./herr-tablas.flow.ts";
+import { pagina_cerrar, pagina_cierre, pagina_cierres, pagina_comparar } from "./herr-tablas.cierres.ts";
 import { pagina_impreso, pagina_imprimir } from "./herr-tablas.impresion.ts";
 import { API, OWNER, boton, con_unidad, nodo, pagina } from "./herr-tablas.nox.ts";
 
@@ -82,6 +83,10 @@ export const herr_tablas_pages: KirletPageDecl[] = [
       if (modo === "campo") return pagina_campo(data, spec, texto(params.get("campo")));
       if (modo === "imprimir") return pagina_imprimir(data, spec, params);
       if (modo === "impreso") return pagina_impreso(data, spec, params);
+      if (modo === "cerrar") return pagina_cerrar(data, spec);
+      if (modo === "cierres") return pagina_cierres(data, spec);
+      if (modo === "cierre") return pagina_cierre(data, spec, params);
+      if (modo === "comparar") return pagina_comparar(data, spec, params);
       const { filas, etiquetas, columnas } = await vista_de_tabla(data, spec);
       const hijos: NoxUiNode[] = [
         migas(["Mis tablas", "/internal/herr-tabla"], [spec.name, href_tabla(spec.id)]),

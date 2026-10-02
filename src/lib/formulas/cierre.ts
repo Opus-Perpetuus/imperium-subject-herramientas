@@ -26,11 +26,11 @@ export function planear_cierre(
   filas: Registro[],
   cerrado_at: string,
   calculados_por_fila: Record<string, Record<string, string>> = {},
+  cierre_id = `cierre-${Date.parse(cerrado_at)}`,
 ): PlanCierre | null {
   if (origen.cerrable === false) return null;
   if (!filas.length) return null;
 
-  const cierre_id = `cierre-${Date.parse(cerrado_at)}`;
   const esquema = esquema_archivo(origen);
   const sello = sello_ahora(zona_valida(), new Date(cerrado_at)).replace(" ", "T");
   const claves_resumen = claves_resumen_archivo(origen);

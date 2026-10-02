@@ -8,8 +8,7 @@ import {
 } from "@opus-perpetuus/imperium-core-kit";
 import { LIMITE_FILAS, campo_busqueda, es_foto_guardada, falla, fila_o_404, texto } from "../../lib/comun.ts";
 import { buscar, construir_indice, texto_buscable } from "../../lib/formulas/busqueda.ts";
-import { calcular_valores, calculados_de, formatear, numero_de, valores_resumen } from "../../lib/formulas/calculadora.ts";
-import { claves_resumen_archivo, planear_cierre } from "../../lib/formulas/cierre.ts";
+import { calcular_valores, formatear, numero_de, valores_resumen } from "../../lib/formulas/calculadora.ts";
 import {
   PARTES_REF,
   decimales_de,
@@ -142,15 +141,6 @@ export type OpcionRef = {
   image?: string;
 };
 
-/** La miniatura de la primera foto (en el orden de las columnas) que tenga el registro. */
-export function primera_miniatura(spec: TablaSpec, fila: Registro): string {
-  for (const campo of spec.campos) {
-    const mini = campo.tipo === "foto" ? fila.miniaturas?.[campo.clave] : "";
-    if (mini) return mini;
-  }
-  return "";
-}
-
 function opcion_de(
   campo: CampoSpec,
   destino: TablaSpec | null,
@@ -167,7 +157,7 @@ function opcion_de(
     const t = rellenar_plantilla(campo[parte], presentados);
     if (t) partes[opcion] = t;
   }
-  const image = destino ? primera_miniatura(destino, registro) : "";
+  const image = destino?.campos.map((c) => (c.tipo === "foto" ? registro.miniaturas?.[c.clave] : "")).find(Boolean) ?? "";
   return { ...partes, label: partes.label || texto(fila.name) || String(fila.id), ...(image ? { image } : {}) };
 }
 
@@ -346,56 +336,6 @@ export const herr_tablas_flow = define_routes({
       texto: t,
     }));
     return { data: { agregados, resumenes, total_filas: filas.length } };
-  },
-
-  /** Archiva las filas en `herr_cierres` (con resúmenes y fijos del momento) y vacía la tabla. */
-  "POST /herr-tablas/:id/cerrar": async (ctx) => {
-    const spec = spec_de_fila(await tabla_activa(ctx, ctx.params.id));
-    if (!spec.cerrable) falla(409, "Esta tabla no se cierra: es un catálogo", "conflict");
-    const registros = await registros_de(ctx, spec.id);
-    if (!registros.length) falla(409, "No hay registros que cerrar", "conflict");
-    const filas = filas_recalculadas(spec, registros);
-    const cerrado_at = now_iso();
-    const resumen = Object.fromEntries(valores_resumen(spec, filas).map((r) => [r.resumen.clave, r.texto]));
-    const resumen_archivo = Object.fromEntries(
-      claves_resumen_archivo(spec).map(([clave, clave_archivo]) => [clave_archivo, resumen[clave] ?? ""]),
-    );
-    const calculados_por_fila = Object.fromEntries(
-      filas.map((f) => [f.id, { ...calculados_de(spec, f.valores), ...resumen_archivo }]),
-    );
-    const plan = planear_cierre(spec, filas, cerrado_at, calculados_por_fila)!;
-    const por_id = new Map(registros.map((r) => [String(r.id), r]));
-    await ctx.data.batch([
-      ...plan.filas_archivadas.map((f) => {
-        const r = por_id.get(f.id)!;
-        return {
-          op: "insert",
-          table: "herr_cierres",
-          row: {
-            id: new_id("cierre"),
-            name: texto(r.name),
-            description: "",
-            is_active: true,
-            created_by: ctx.actor,
-            search_field: texto(r.search_field),
-            tabla_id: spec.id,
-            cierre_id: plan.cierre_id,
-            cerrado_at,
-            valores: f.valores,
-            custom_data: { registro_id: f.id },
-            created_at: cerrado_at,
-            updated_at: cerrado_at,
-          },
-        };
-      }),
-      ...registros.map((r) => ({
-        op: "update",
-        table: "herr_registros",
-        where: { id: String(r.id) },
-        patch: { is_active: false, updated_at: cerrado_at },
-      })),
-    ]);
-    return { data: { cierre_id: plan.cierre_id, filas: plan.filas_archivadas.length } };
   },
 
   "POST /herr-tablas/:id/buscar": async (ctx) => {

@@ -24,7 +24,7 @@ bun run manifest:emit   # regenera manifest.json tras tocar módulos o menús
 
 | Herramienta | Qué hace | Módulos (`resource`) |
 |---|---|---|
-| **Tablas personalizadas** | Bases de datos a medida sin programar: diseñador guiado (columnas escritas como texto, tipo adivinado por el nombre, cálculos y totales guiados, valores fijos), plantillas; cierre que archiva las filas; impresión en PDF o PNG. | `herr-tablas`, `herr-registros`, `herr-cierres` |
+| **Tablas personalizadas** | Bases de datos a medida sin programar: diseñador guiado (columnas escritas como texto, tipo adivinado por el nombre, cálculos y totales guiados, valores fijos), plantillas; fotos con miniatura en listas, opciones de enlaces e impresos; cada registro se edita desde «Ver tabla» y guarda su historial; cierres con nombre, fecha y datos propios que se comparan entre sí o contra lo actual; reportes en PDF o PNG con nombre. | `herr-tablas`, `herr-registros`, `herr-cierres` |
 | **Reparto a domicilio** | Jornadas de reparto con vehículo (el registro es la app **Vehículos**, dependencia; aquí solo los ajustes de reparto: tanque, medidor, calibración), pedidos con precio automático desde un catálogo, directorio de domicilios con enlaces a mapas, gastos, caja y liquidación, recargas de combustible con calibración del medidor, rutas GPS con detección de paradas. | `herr-jornadas`, `herr-pedidos`, `herr-gastos`, `herr-caja`, `herr-vehiculos`, `herr-domicilios`, `herr-etiquetas`, `herr-recargas`, `herr-rutas`, `herr-menu-categorias`, `herr-menu-tamanos`, `herr-menu-productos`, `herr-menu-extras`, `herr-menu-complementos`, `herr-menu-promos` |
 | **Teléfono** | Reglas del contestador automático (a quién contestar, rechazar o silenciar; locución), registro de llamadas. La ejecución (filtrar y contestar llamadas) es **solo de la app Android**. | `herr-telefono` |
 | **Asistente de voz** | Interpreta órdenes en español (intención + datos) y las ejecuta sobre Reparto. Escuchar y hablar es **solo de la app Android**; el intérprete sirve también para una caja de texto. | `herr-voz` |
@@ -60,7 +60,12 @@ prefijo `herr-`.
   `America/Mexico_City`): `fecha_hoy`, `hora_ahora`, `sello_ahora` y `solo_dia`
   de `src/lib/comun.ts`; nunca `toISOString()` para «hoy».
 - Imágenes (papelito, ticket, fotos): el formulario manda data URL;
-  `guardar_imagen` las sube como adjunto (`nox.files`) y en la fila queda la URL.
+  `subir_foto` / `guardar_imagen` las suben como adjunto (`nox.files`) y en la fila
+  queda la URL (`/api/media/:id`). Si el núcleo no devuelve URL, falla (502): nunca
+  se guarda un "undefined". Las fotos de un registro guardan además la miniatura que
+  da el núcleo en `herr_registros.miniaturas` (clave → data URL): listas, opciones de
+  datalist e impresos la pintan en línea, porque desde la APK un `<img>` a
+  `/api/media` sale sin la cookie de sesión.
 
 ## Rutas propias (además del CRUD de cada módulo)
 
@@ -72,10 +77,13 @@ prefijo `herr-`.
 | `PATCH /herr-tablas/:id/campos/:clave/opcion` | Qué se ve de un enlace al elegirlo: por parte de la opción (`ref_leyenda`, `ref_leyenda_secundaria`, `ref_descripcion`, `ref_descripcion_secundaria`) una columna (`columna_<parte>`) o una plantilla con los nombres entre llaves (`plantilla_<parte>`: `{Nombre} · Tel. {Teléfono}`) |
 | `POST /herr-tablas/:id/constantes` · `PATCH\|DELETE …/constantes/:clave` · `POST /herr-tablas/:id/resumenes` · `DELETE …/resumenes/:clave` | Valores fijos y totales (guiados con `tipo`+`campo` o con fórmula escrita con los nombres visibles) |
 | `GET /herr-tablas/:id/resumen` | Agregados y resúmenes de la tabla |
-| `POST /herr-tablas/:id/cerrar` | Cierre: archiva las filas en `herr-cierres` y vacía la tabla |
+| `POST /herr-tablas/:id/cerrar` `{nombre, fecha, …datos}` | Cierre: archiva las filas en `herr-cierres` (con miniaturas y el título de cada enlace del momento) bajo un encabezado en `herr_cierres_encabezados` (nombre, fecha, datos de `campos_cierre`, totales) y vacía la tabla. Sin cuerpo: «Cierre del <hoy>». Responde `{id, cierre, cierre_id, filas}` |
+| `PATCH /herr-tablas/:id/cierres/:cierre` | Cambiar nombre, fecha o datos de un cierre hecho |
+| `POST /herr-tablas/:id/cierres/comparar` `{c_<id>, actual, agrupar, medir}` | Qué comparar (dos o más cierres, o cierres y lo actual); responde los parámetros de `herr-tabla?modo=comparar` |
+| `POST /herr-tablas/:id/campos-cierre` · `DELETE …/campos-cierre/:clave` | Diseñador › Cierre: datos que pide el formulario del cierre (texto, número, dinero, entero, sí/no, fecha, hora, lista, nota) |
 | `POST /herr-tablas/:id/buscar` `{q}` | Búsqueda por prefijos sobre los registros |
-| `POST /herr-tablas/:id/imprimir` `{formato, q, r_<id>}` | Pedido de impresión (PDF o PNG; los marcados, o todos los que encuentra `q`). Responde `{id, t}`: la hoja `herr-tabla?modo=impreso&t=…` entrega el archivo como enlace `data:` con `download` (el lanzador no descarga lo que responde una acción). Fuente Montserrat empaquetada en `src/lib/impresion/fuentes/` |
-| `POST /herr-registros/captura` | Alta/edición de un registro con campos planos (lo usa el formulario dinámico) |
+| `POST /herr-tablas/:id/imprimir` `{nombre, formato, q, r_<id>}` | Pedido de impresión (PDF o PNG con fotos; los marcados, o todos los que encuentra `q`; `nombre` es el título y el nombre del archivo). Responde `{id, t}`: la hoja `herr-tabla?modo=impreso&t=…` entrega el archivo como enlace `data:` con `download` (el lanzador no descarga lo que responde una acción). Fuente Montserrat empaquetada en `src/lib/impresion/fuentes/` |
+| `POST /herr-registros/captura` | Alta/edición de un registro con campos planos (lo usa el formulario dinámico); deja asiento en el historial como el CRUD. `GET /herr-registros` agrega a cada fila la miniatura de su primera foto como `foto` |
 | `GET /herr-jornadas/activa` · `POST /herr-jornadas/iniciar` · `POST /herr-jornadas/:id/terminar` · `POST /herr-jornadas/:id/cambiar-vehiculo` | Ciclo de la jornada. `terminar` además entrega los cobros (sin devolver el fondo de cambio) y responde `{data, liquidacion}` |
 | `GET /herr-jornadas/:id/liquidacion` · `POST /herr-jornadas/:id/liquidar` | Vista previa y confirmación de la entrega de cobros |
 | `POST /herr-pedidos/cotizar` · `POST /herr-pedidos/:id/surtir` · `POST /herr-pedidos/:id/en-ruta` · `POST /herr-pedidos/:id/entregar` | Precio automático y estados del pedido |

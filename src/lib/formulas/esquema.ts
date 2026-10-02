@@ -36,6 +36,20 @@ export const TIPOS_CAMPO = [
 
 export type TipoCampo = (typeof TIPOS_CAMPO)[number];
 
+/** Lo que se puede pedir en el formulario de un cierre: datos sueltos, sin fotos, enlaces ni cálculos. */
+export const TIPOS_CAMPO_CIERRE = [
+  "texto",
+  "numero",
+  "dinero",
+  "entero",
+  "booleano",
+  "fecha",
+  "hora",
+  "fecha_hora",
+  "opcion",
+  "nota",
+] as const satisfies readonly TipoCampo[];
+
 /** `clave` es estable y no se muestra; `etiqueta` se puede renombrar sin romper fórmulas. */
 export type CampoSpec = {
   clave: string;
@@ -109,6 +123,8 @@ export type TablaSpec = {
   orden_desc?: boolean;
   /** Si «cerrar el día» puede archivar y vaciar la tabla (falso en catálogos). */
   cerrable?: boolean;
+  /** Lo que se pide al hacer un cierre, además de su nombre y su fecha. */
+  campos_cierre?: CampoSpec[];
 };
 
 /** Una fila como la ve el motor: clave → valor en texto (capturados y calculados juntos). */
@@ -248,6 +264,7 @@ export function spec_de_fila(fila: Record<string, unknown>): TablaSpec {
     orden_campo: texto_o_null(fila.orden_campo),
     orden_desc: fila.orden_desc !== false,
     cerrable: fila.cerrable !== false,
+    campos_cierre: lista(fila.campos_cierre).map(normalizar_campo),
   };
 }
 
@@ -296,6 +313,13 @@ export function validar_esquema(spec: TablaSpec): string[] {
     revisar_clave(r.clave, "Resumen", vistas_resumen);
     if (!r.formula) errores.push(`«${r.clave}»: falta la fórmula`);
     else errores.push(...errores_formula(spec, r.formula, r.clave));
+  }
+  const vistas_cierre = new Set<string>();
+  for (const campo of spec.campos_cierre ?? []) {
+    revisar_clave(campo.clave, "Dato del cierre", vistas_cierre);
+    if (!(TIPOS_CAMPO_CIERRE as readonly string[]).includes(campo.tipo)) {
+      errores.push(`«${campo.clave}»: un cierre no pide datos de tipo «${campo.tipo}»`);
+    }
   }
   return errores;
 }

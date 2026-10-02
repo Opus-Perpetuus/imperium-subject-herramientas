@@ -1,4 +1,5 @@
 import { define_crud, define_module } from "@opus-perpetuus/imperium-core-kit";
+import { herr_tablas_cierres } from "./herr-tablas.cierres.ts";
 import { herr_tablas_disenio, preparar_tabla } from "./herr-tablas.disenio.ts";
 import { herr_tablas_flow } from "./herr-tablas.flow.ts";
 import { herr_tablas_impresion } from "./herr-tablas.impresion.ts";
@@ -15,6 +16,7 @@ export const herr_tablas_module = define_module({
   },
   routes: [
     ...herr_tablas_flow,
+    ...herr_tablas_cierres,
     ...herr_tablas_disenio,
     ...herr_tablas_impresion,
     ...define_crud({
@@ -42,6 +44,7 @@ export const herr_tablas_module = define_module({
         orden_campo: { type: "string" },
         orden_desc: { type: "boolean" },
         cerrable: { type: "boolean" },
+        campos_cierre: { type: "json" },
         version_esquema: { type: "number" },
       },
       options_map: { value: "id", label: "name" },
