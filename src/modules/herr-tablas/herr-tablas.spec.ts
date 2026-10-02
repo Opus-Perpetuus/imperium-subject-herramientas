@@ -70,6 +70,13 @@ function componentes(page: NoxPageDescriptor): string[] {
   return ids;
 }
 
+/** Las celdas de las filas de un nox.table, sin el destino de la fila ni las llaves de sus fotos. */
+function celdas_de(rows: unknown): Record<string, unknown>[] {
+  return (rows as Record<string, unknown>[]).map((r) =>
+    Object.fromEntries(Object.entries(r).filter(([k]) => k !== "_href" && !k.includes("__"))),
+  );
+}
+
 function nodos(page: NoxPageDescriptor, component: string): NoxUiNode[] {
   const out: NoxUiNode[] = [];
   walk_ui_tree(page.page, (n) => {
@@ -441,7 +448,9 @@ describe("páginas", () => {
     await call("PATCH", `/herr-tablas/${tabla.id}`, {
       constantes: [{ clave: "deuda_a_saldar", etiqueta: "Deuda a saldar", valor: "5000" }],
     });
-    await call("POST", "/herr-registros", { tabla_id: tabla.id, valores: { fecha: "2026-01-02", acreedor: "Banco", pagado: "3000" } });
+    const registro = (
+      await call("POST", "/herr-registros", { tabla_id: tabla.id, valores: { fecha: "2026-01-02", acreedor: "Banco", pagado: "3000" } })
+    ).data;
 
     const doc = await pagina(`/pages/herramientas.herr-tabla?id=${tabla.id}`);
     expect(doc.title).toBe("Deudas");
@@ -454,13 +463,19 @@ describe("páginas", () => {
     ]);
     const [table] = nodos(doc, "nox.table");
     expect((table!.props!.columns as { key: string }[]).map((c) => c.key)).toEqual(["fecha", "acreedor", "pagado"]);
-    expect(table!.props!.rows).toEqual([{ fecha: "2026-01-02", acreedor: "Banco", pagado: "3000.00 $" }]);
+    expect(table!.props!.rows).toEqual([
+      {
+        fecha: "2026-01-02",
+        acreedor: "Banco",
+        pagado: "3000.00 $",
+        _href: `/internal/herr-registro?tabla=${tabla.id}&id=${registro.id}`,
+      },
+    ]);
     const botones = nodos(doc, "nox.button").map((b) => b.props!);
     expect(botones.map((b) => b.href)).toContain(`/internal/herr-registro?tabla=${tabla.id}`);
     expect(botones.map((b) => b.href)).toContain(`/internal/herr-tabla?id=${tabla.id}&modo=disenar`);
-    const cerrar = botones.find((b) => b.action === `api://herr-tablas/${tabla.id}/cerrar`);
-    expect(cerrar).toMatchObject({ method: "POST" });
-    expect(String(cerrar!.confirm)).not.toBe("");
+    expect(botones.map((b) => b.href)).toContain(`/internal/herr-tabla?id=${tabla.id}&modo=cierres`);
+    expect(botones.map((b) => b.href)).toContain(`/internal/herr-tabla?id=${tabla.id}&modo=cerrar`);
 
     const sin_id = await pagina("/pages/herramientas.herr-tabla");
     expect(sin_id.title).toBe("Mis tablas");
@@ -519,7 +534,7 @@ describe("páginas", () => {
     await call("POST", "/herr-registros", { tabla_id: jornadas.data.id, valores: { fecha: "2026-03-01", moto: italika.data.id } });
 
     const doc = await pagina(`/pages/herramientas.herr-tabla?id=${jornadas.data.id}`);
-    expect(nodos(doc, "nox.table")[0]!.props!.rows).toEqual([{ fecha: "2026-03-01", moto: "Italika 150" }]);
+    expect(celdas_de(nodos(doc, "nox.table")[0]!.props!.rows)).toEqual([{ fecha: "2026-03-01", moto: "Italika 150" }]);
 
     const por_etiqueta = await call("POST", `/herr-tablas/${jornadas.data.id}/buscar`, { q: "italika" });
     expect(por_etiqueta.data.map((r: { name: string }) => r.name)).toEqual(["2026-03-01"]);
@@ -564,7 +579,7 @@ describe("páginas", () => {
     });
 
     const lista = await pagina(`/pages/herramientas.herr-tabla?id=${bitacora.data.id}`);
-    expect(nodos(lista, "nox.table")[0]!.props!.rows).toContainAllValues([
+    expect(celdas_de(nodos(lista, "nox.table")[0]!.props!.rows)).toContainAllValues([
       { producto: "Vino tinto", cantidad: "35" },
       { producto: "Vino tinto", cantidad: "12" },
     ]);
@@ -737,7 +752,7 @@ describe("diseñador", () => {
     await call("PATCH", opcion, { plantilla_ref_leyenda: "{Nombre} ({Color})" });
     await call("POST", "/herr-registros/captura", { tabla_id: jornadas.id, fecha: "2026-03-01", moto: italika.data.id });
     const lista = await pagina(`/pages/herramientas.herr-tabla?id=${jornadas.id}`);
-    expect(nodos(lista, "nox.table")[0]!.props!.rows).toEqual([{ fecha: "2026-03-01", moto: "Italika 150 (Rojo)" }]);
+    expect(celdas_de(nodos(lista, "nox.table")[0]!.props!.rows)).toEqual([{ fecha: "2026-03-01", moto: "Italika 150 (Rojo)" }]);
 
     // Renombrar una columna de la otra tabla no rompe la plantilla: se guarda con la clave.
     await call("PATCH", `/herr-tablas/${motos.id}/campos/placas`, { etiqueta: "Matrícula" });

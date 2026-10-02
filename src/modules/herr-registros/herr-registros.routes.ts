@@ -1,5 +1,5 @@
 import { define_crud, define_module } from "@opus-perpetuus/imperium-core-kit";
-import { con_filtro_por_tabla, herr_registros_flow, preparar_registro } from "./herr-registros.flow.ts";
+import { con_filtro_por_tabla, herr_registros_flow, preparar_registro, sin_miniaturas } from "./herr-registros.flow.ts";
 import { herr_registros_pages } from "./herr-registros.pages.ts";
 import { herr_registros_tables } from "./herr-registros.tables.ts";
 
@@ -35,8 +35,10 @@ export const herr_registros_module = define_module({
           tabla_id: { type: "string", required: true, search: true },
           valores: { type: "json" },
           calculados: { type: "json" },
+          miniaturas: { type: "json" },
         },
         options_map: { value: "id", label: "name" },
+        redact_history: sin_miniaturas,
         hooks: {
           before_create: (ctx, row) => preparar_registro(ctx, row, null),
           before_update: (ctx, _id, patch, existing) => preparar_registro(ctx, patch, existing),

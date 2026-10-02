@@ -9,11 +9,12 @@ import {
 } from "@opus-perpetuus/imperium-core-kit";
 import {
   campo_busqueda,
+  es_foto_guardada,
   falla,
   fila_o_404,
-  guardar_imagen,
   sello_ahora,
   solo_dia,
+  subir_foto,
   texto,
   zona_valida,
 } from "../../lib/comun.ts";
@@ -21,7 +22,7 @@ import { texto_buscable } from "../../lib/formulas/busqueda.ts";
 import { calcular_valores, calculados_de } from "../../lib/formulas/calculadora.ts";
 import { spec_de_fila, type CampoSpec, type TablaSpec } from "../../lib/formulas/esquema.ts";
 import { formatear as unir_multivalor } from "../../lib/formulas/multivalor.ts";
-import { registro_como_fila, registros_de, tabla_activa } from "../herr-tablas/herr-tablas.flow.ts";
+import { objeto, registro_como_fila, registros_de, tabla_activa } from "../herr-tablas/herr-tablas.flow.ts";
 
 /** Un valor capturado se guarda como texto; los compuestos del formulario se aplanan. */
 function como_texto(v: unknown): string {
@@ -93,9 +94,20 @@ export async function preparar_registro(
   const spec = spec_de_fila(await tabla_activa(ctx, tabla_id));
   const valores = valores_capturados(spec, patch.valores ?? existing?.valores);
   const id = texto(patch.id ?? existing?.id);
+  const antes = objeto(existing?.valores);
+  const miniaturas_previas = objeto(existing?.miniaturas);
+  const miniaturas: Record<string, string> = {};
   for (const campo of spec.campos) {
-    if (campo.tipo === "foto" && valores[campo.clave]) {
-      valores[campo.clave] = String(await guardar_imagen(ctx, "herr-registros", id, valores[campo.clave]));
+    if (campo.tipo !== "foto") continue;
+    const raw = valores[campo.clave] ?? "";
+    const subida = await subir_foto(ctx, "herr-registros", id, raw);
+    if (subida) {
+      valores[campo.clave] = subida.url;
+      if (subida.miniatura) miniaturas[campo.clave] = subida.miniatura;
+    } else if (!es_foto_guardada(raw)) {
+      if (campo.clave in valores) valores[campo.clave] = "";
+    } else if (raw === antes[campo.clave] && miniaturas_previas[campo.clave]) {
+      miniaturas[campo.clave] = miniaturas_previas[campo.clave]!;
     }
   }
   const filas = (await registros_de(ctx, tabla_id))
@@ -109,9 +121,22 @@ export async function preparar_registro(
     tabla_id,
     valores,
     calculados,
+    miniaturas,
     name: nombre_de(spec, todos) || id,
     search_field: campo_busqueda(texto_buscable(valores, calculados, spec)),
   };
+}
+
+/** Las miniaturas pesan y no son un cambio que leer: fuera del historial. */
+export function sin_miniaturas(row: DomainRow): DomainRow {
+  const { miniaturas: _, ...resto } = row;
+  return resto;
+}
+
+/** La miniatura de la primera foto como `foto`: así la lista de Registros la pinta como imagen. */
+export function con_foto(row: DomainRow): DomainRow {
+  const primera = Object.values(objeto(row.miniaturas)).find(Boolean);
+  return primera ? { ...row, foto: primera } : row;
 }
 
 /**
@@ -124,7 +149,11 @@ export function con_filtro_por_tabla(rutas: KirletRouteTable): KirletRouteTable 
   const original = lista.handler as (ctx: KirletCtx) => Promise<unknown>;
   lista.handler = async (ctx: KirletCtx) => {
     const tabla_id = texto(ctx.query.get("tabla_id"));
-    if (!tabla_id) return original(ctx);
+    if (!tabla_id) {
+      const res = (await original(ctx)) as { data?: unknown } | null;
+      if (res && Array.isArray(res.data)) res.data = res.data.map((r) => con_foto(r as DomainRow));
+      return res;
+    }
     const lq = ctx.list_query();
     const where: FindManyOptions["where"] = { tabla_id };
     if (!["1", "true"].includes(ctx.query.get("include_inactive") ?? "")) where.is_active = true;
@@ -141,9 +170,26 @@ export function con_filtro_por_tabla(rutas: KirletRouteTable): KirletRouteTable 
       return { data: rows.map((r) => ({ value: r.id, label: r.name })) };
     }
     const total = await ctx.data.count("herr_registros", where, opts.search);
-    return { data: rows, total_elementos: total, message: "Ruta encontrada" };
+    return { data: rows.map(con_foto), total_elementos: total, message: "Ruta encontrada" };
   };
   return rutas;
+}
+
+/** El mismo asiento que deja el CRUD genérico: la captura escribe directo y sin esto no quedaba rastro. */
+async function anotar_historial(
+  ctx: KirletCtx,
+  action: "create" | "update",
+  before: DomainRow | null,
+  after: DomainRow,
+): Promise<void> {
+  await ctx.nox.history.append({
+    resource: "herr-registros",
+    action,
+    entity_id: String(after.id),
+    actor_id: ctx.identity?.user_id ?? null,
+    actor_label: ctx.actor,
+    payload: { before: before && sin_miniaturas(before), after: sin_miniaturas(after) },
+  });
 }
 
 export const herr_registros_flow = define_routes({
@@ -166,6 +212,7 @@ export const herr_registros_flow = define_routes({
         { id: String(existing.id) },
         { ...patch, updated_at: now_iso() },
       );
+      if (updated) await anotar_historial(ctx, "update", existing, updated);
       return { data: updated };
     }
     const ts = now_iso();
@@ -182,6 +229,8 @@ export const herr_registros_flow = define_routes({
       },
       null,
     );
-    return ctx.created(await ctx.data.insert("herr_registros", row));
+    const creado = await ctx.data.insert("herr_registros", row);
+    await anotar_historial(ctx, "create", null, creado);
+    return ctx.created(creado);
   },
 });

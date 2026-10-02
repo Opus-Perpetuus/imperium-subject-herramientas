@@ -6,8 +6,8 @@ import {
 import { texto } from "../../lib/comun.ts";
 import { valores_resumen } from "../../lib/formulas/calculadora.ts";
 import { spec_de_fila } from "../../lib/formulas/esquema.ts";
-import { ID_TABLA, href_tabla, migas, pagina_campo, pagina_disenar, pagina_inicio } from "./herr-tablas.disenador.ts";
-import { valor_presentado, vista_de_tabla } from "./herr-tablas.flow.ts";
+import { ID_TABLA, href_registro, href_tabla, migas, pagina_campo, pagina_disenar, pagina_inicio } from "./herr-tablas.disenador.ts";
+import { tabla_de_registros, vista_de_tabla } from "./herr-tablas.flow.ts";
 import { pagina_impreso, pagina_imprimir } from "./herr-tablas.impresion.ts";
 import { API, OWNER, boton, con_unidad, nodo, pagina } from "./herr-tablas.nox.ts";
 
@@ -91,6 +91,9 @@ export const herr_tablas_pages: KirletPageDecl[] = [
           ...(spec.campos.length
             ? [boton("Imprimir", { href: href_tabla(spec.id, { modo: "imprimir" }), icon: "fa-print", variant: "secondary" })]
             : []),
+          ...(spec.cerrable
+            ? [boton("Cierres", { href: href_tabla(spec.id, { modo: "cierres" }), icon: "fa-box-archive", variant: "secondary" })]
+            : []),
         ]),
       ];
       if (spec.description) hijos.push(nodo("nox.markdown-view", { content: spec.description }));
@@ -113,25 +116,9 @@ export const herr_tablas_pages: KirletPageDecl[] = [
           }),
         );
       }
-      hijos.push(
-        nodo("nox.table", {
-          columns: columnas.map((c) => ({ key: c.clave, label: c.etiqueta })),
-          rows: filas.map((f) =>
-            Object.fromEntries(columnas.map((c) => [c.clave, valor_presentado(c, f.valores[c.clave] ?? "", etiquetas)])),
-          ),
-          text: "Sin registros",
-        }),
-      );
-      if (spec.cerrable) {
-        hijos.push(
-          boton("Cerrar día", {
-            variant: "secondary",
-            method: "POST",
-            action: `api://herr-tablas/${spec.id}/cerrar`,
-            confirm: "¿Cerrar el día? Los registros se archivan en Cierres y la tabla queda vacía.",
-            icon: "fa-box-archive",
-          }),
-        );
+      hijos.push(tabla_de_registros(columnas, filas, etiquetas, (f) => href_registro(spec.id, f.id)));
+      if (spec.cerrable && filas.length) {
+        hijos.push(boton("Hacer cierre", { href: href_tabla(spec.id, { modo: "cerrar" }), icon: "fa-box-archive", variant: "secondary" }));
       }
       return pagina(ID_TABLA, spec.name, hijos);
     },

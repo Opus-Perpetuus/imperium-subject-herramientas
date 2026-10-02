@@ -4,8 +4,9 @@ import {
   now_iso,
   type DomainRow,
   type KirletCtx,
+  type NoxUiNode,
 } from "@opus-perpetuus/imperium-core-kit";
-import { LIMITE_FILAS, campo_busqueda, falla, fila_o_404, texto } from "../../lib/comun.ts";
+import { LIMITE_FILAS, campo_busqueda, es_foto_guardada, falla, fila_o_404, texto } from "../../lib/comun.ts";
 import { buscar, construir_indice, texto_buscable } from "../../lib/formulas/busqueda.ts";
 import { calcular_valores, calculados_de, formatear, numero_de, valores_resumen } from "../../lib/formulas/calculadora.ts";
 import { claves_resumen_archivo, planear_cierre } from "../../lib/formulas/cierre.ts";
@@ -27,7 +28,7 @@ import {
 import { ordenar } from "../../lib/formulas/orden.ts";
 import { rellenar_plantilla } from "../../lib/formulas/plantilla.ts";
 import { plantilla_de, plantillas } from "../../lib/formulas/plantillas.ts";
-import { con_unidad } from "./herr-tablas.nox.ts";
+import { con_unidad, nodo } from "./herr-tablas.nox.ts";
 
 type Datos = Pick<KirletCtx, "data">;
 
@@ -81,6 +82,7 @@ export function registro_como_fila(row: DomainRow): Registro {
     valores: { ...objeto(row.valores), ...objeto(row.calculados) },
     created_at: texto(row.created_at),
     updated_at: texto(row.updated_at),
+    miniaturas: objeto(row.miniaturas),
   };
 }
 
@@ -116,7 +118,7 @@ export function valor_presentado(
   etiquetas: Map<string, Map<string, string>>,
 ): string {
   if (!raw) return "";
-  if (campo.tipo === "foto") return "Foto";
+  if (campo.tipo === "foto") return es_foto_guardada(raw) ? "Foto" : "";
   if (campo.tipo === "booleano") return raw === "true" ? "Sí" : "No";
   if (campo.tipo === "referencia") {
     const de = etiquetas.get(campo.clave);
@@ -131,13 +133,23 @@ export function valor_presentado(
   return con_unidad(raw, campo.unidad);
 }
 
-/** Un registro enlazado como opción del datalist del lanzador: una entrada por parte con texto. */
+/** Un registro enlazado como opción del datalist del lanzador: una entrada por parte con texto y su foto. */
 export type OpcionRef = {
   label: string;
   leyend_secondary?: string;
   description?: string;
   description_secondary?: string;
+  image?: string;
 };
+
+/** La miniatura de la primera foto (en el orden de las columnas) que tenga el registro. */
+export function primera_miniatura(spec: TablaSpec, fila: Registro): string {
+  for (const campo of spec.campos) {
+    const mini = campo.tipo === "foto" ? fila.miniaturas?.[campo.clave] : "";
+    if (mini) return mini;
+  }
+  return "";
+}
 
 function opcion_de(
   campo: CampoSpec,
@@ -145,7 +157,8 @@ function opcion_de(
   fila: DomainRow,
   anidadas: Map<string, Map<string, string>>,
 ): OpcionRef {
-  const { valores } = registro_como_fila(fila);
+  const registro = registro_como_fila(fila);
+  const { valores } = registro;
   const presentados = destino
     ? Object.fromEntries(destino.campos.map((c) => [c.clave, valor_presentado(c, valores[c.clave] ?? "", anidadas)]))
     : valores;
@@ -154,7 +167,8 @@ function opcion_de(
     const t = rellenar_plantilla(campo[parte], presentados);
     if (t) partes[opcion] = t;
   }
-  return { ...partes, label: partes.label || texto(fila.name) || String(fila.id) };
+  const image = destino ? primera_miniatura(destino, registro) : "";
+  return { ...partes, label: partes.label || texto(fila.name) || String(fila.id), ...(image ? { image } : {}) };
 }
 
 /**
@@ -216,6 +230,43 @@ export async function vista_de_tabla(data: KirletCtx["data"], spec: TablaSpec) {
   const etiquetas = await etiquetas_referencia(data, spec);
   const columnas = spec.campos.some((c) => c.en_resumen) ? spec.campos.filter((c) => c.en_resumen) : spec.campos;
   return { filas, etiquetas, columnas };
+}
+
+const llave_miniatura = (clave: string) => `${clave}__mini`;
+const llave_foto = (clave: string) => `${clave}__url`;
+
+/**
+ * El `nox.table` de unos registros: cada foto como miniatura que abre la
+ * completa en el visor y, con `destino`, cada fila abre lo que diga.
+ */
+export function tabla_de_registros(
+  columnas: CampoSpec[],
+  filas: Registro[],
+  etiquetas: Map<string, Map<string, string>>,
+  destino?: (fila: Registro) => string,
+  vacio = "Sin registros",
+): NoxUiNode {
+  return nodo("nox.table", {
+    columns: columnas.map((c) =>
+      c.tipo === "foto"
+        ? { key: c.clave, label: c.etiqueta, image_key: llave_miniatura(c.clave), image_full_key: llave_foto(c.clave) }
+        : { key: c.clave, label: c.etiqueta },
+    ),
+    rows: filas.map((f) => {
+      const fila: Record<string, string> = {};
+      for (const c of columnas) {
+        const raw = f.valores[c.clave] ?? "";
+        fila[c.clave] = valor_presentado(c, raw, etiquetas);
+        if (c.tipo === "foto" && es_foto_guardada(raw)) {
+          fila[llave_miniatura(c.clave)] = f.miniaturas?.[c.clave] || raw;
+          fila[llave_foto(c.clave)] = raw;
+        }
+      }
+      if (destino) fila._href = destino(f);
+      return fila;
+    }),
+    text: vacio,
+  });
 }
 
 /** Etiquetas resueltas de las referencias de una fila, para indexarlas como texto. */

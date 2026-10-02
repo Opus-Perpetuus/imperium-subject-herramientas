@@ -117,6 +117,8 @@ export type Registro = {
   valores: Record<string, string>;
   created_at?: string;
   updated_at?: string;
+  /** Clave de cada foto → su miniatura en data URL; el motor no la lee. */
+  miniaturas?: Record<string, string>;
 };
 
 export const DECIMALES = 2;

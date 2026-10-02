@@ -1,13 +1,26 @@
 import {
   build_feature_shell_page,
+  type DomainRow,
+  type KirletDataClient,
   type KirletPageDecl,
+  type NoxPageDescriptor,
+  type NoxServices,
   type NoxUiNode,
 } from "@opus-perpetuus/imperium-core-kit";
-import { filas_de, texto } from "../../lib/comun.ts";
-import { spec_de_fila, type CampoSpec } from "../../lib/formulas/esquema.ts";
+import { es_foto_guardada, filas_de, momento_legible, texto } from "../../lib/comun.ts";
+import { spec_de_fila, type CampoSpec, type TablaSpec } from "../../lib/formulas/esquema.ts";
+import { cambios_de, describir_cambios, titulo_de_cambios } from "../../lib/formulas/historial.ts";
 import { texto_a_numero } from "../../lib/formulas/motor.ts";
 import { parsear } from "../../lib/formulas/multivalor.ts";
-import { ids_referencia, objeto, opciones_referencia, type OpcionRef } from "../herr-tablas/herr-tablas.flow.ts";
+import { href_registro, href_tabla, migas } from "../herr-tablas/herr-tablas.disenador.ts";
+import {
+  etiquetas_referencia,
+  ids_referencia,
+  objeto,
+  opciones_referencia,
+  valor_presentado,
+  type OpcionRef,
+} from "../herr-tablas/herr-tablas.flow.ts";
 import { API, OWNER, boton, nodo, pagina } from "../herr-tablas/herr-tablas.nox.ts";
 
 const ID_REGISTRO = "herramientas.herr-registro";
@@ -19,7 +32,7 @@ function coordenadas(raw: string): { latitude: number; longitude: number } | "" 
 }
 
 /** Un `nox.input-*` por tipo de campo, con el valor ya capturado si se edita. */
-function nodo_entrada(campo: CampoSpec, raw: string, opciones?: Map<string, OpcionRef>): NoxUiNode {
+export function nodo_entrada(campo: CampoSpec, raw: string, opciones?: Map<string, OpcionRef>): NoxUiNode {
   const base = {
     name: campo.clave,
     label: campo.unidad ? `${campo.etiqueta} (${campo.unidad})` : campo.etiqueta,
@@ -48,7 +61,7 @@ function nodo_entrada(campo: CampoSpec, raw: string, opciones?: Map<string, Opci
         : nodo("nox.input-menu", { ...base, options, value: raw });
     }
     case "foto":
-      return nodo("nox.input-image", { ...base, value: raw });
+      return nodo("nox.input-image", { ...base, value: es_foto_guardada(raw) ? raw : "" });
     case "nota":
       return nodo("nox.input-markdown", { ...base, value: raw });
     case "geo":
@@ -71,6 +84,63 @@ function nodo_entrada(campo: CampoSpec, raw: string, opciones?: Map<string, Opci
     default:
       return nodo("nox.input-text", { ...base, value: raw });
   }
+}
+
+type Entrada = Awaited<ReturnType<NoxServices["history"]["list"]>>[number];
+
+/** Lo que dice una entrada del historial: qué pasó, cuándo y quién, y qué cambió. */
+function punto_de_historial(spec: TablaSpec, e: Entrada, presentar: (c: CampoSpec, raw: string) => string) {
+  const payload = (e.payload ?? {}) as { before?: DomainRow | null; after?: DomainRow | null };
+  const antes = objeto(payload.before?.valores);
+  const despues = objeto(payload.after?.valores);
+  const cuando = [momento_legible(e.created_at), texto(e.actor_label)].filter(Boolean).join(" · ");
+  if (e.action === "create") {
+    const capturado = cambios_de(spec.campos, {}, despues, presentar);
+    return {
+      title: "Se capturó",
+      when: cuando,
+      description: capturado.map((c) => `${c.etiqueta}: ${c.despues}`).join(" · "),
+    };
+  }
+  if (e.action === "delete") return { title: "Se eliminó", when: cuando, description: "" };
+  const cambios = cambios_de(spec.campos, antes, despues, presentar);
+  return { title: titulo_de_cambios(cambios), when: cuando, description: describir_cambios(cambios) };
+}
+
+async function pagina_historial(
+  data: KirletDataClient,
+  nox: NoxServices,
+  spec: TablaSpec,
+  registro: DomainRow,
+): Promise<NoxPageDescriptor> {
+  const id = String(registro.id);
+  const entradas = (await nox.history.list({ resource: "herr-registros", entity_id: id, limit: 200 })).sort((a, b) =>
+    b.created_at.localeCompare(a.created_at),
+  );
+  const etiquetas = await etiquetas_referencia(data, spec);
+  const presentar = (c: CampoSpec, raw: string) => valor_presentado(c, raw, etiquetas);
+  const nombre = texto(registro.name) || "Registro";
+  const hijos: NoxUiNode[] = [
+    migas(["Mis tablas", "/internal/herr-tabla"], [spec.name, href_tabla(spec.id)], [nombre, href_registro(spec.id, id)]),
+  ];
+  hijos.push(
+    entradas.length
+      ? nodo("nox.timeline", {
+          text: "Cambios, del más reciente al primero",
+          items: entradas.map((e, i) => ({ id: e.id, state: i ? "done" : "current", ...punto_de_historial(spec, e, presentar) })),
+        })
+      : nodo("nox.empty", {
+          text: "Aún no hay cambios guardados",
+          description: "Desde ahora cada vez que se capture o edite este registro queda aquí quién lo hizo y qué cambió.",
+        }),
+  );
+  hijos.push(
+    nodo("nox.toolbar", {}, [
+      boton("Editar registro", { href: href_registro(spec.id, id), icon: "fa-pen", variant: "secondary" }),
+      boton("Volver a la tabla", { href: href_tabla(spec.id), icon: "fa-arrow-left" }),
+    ]),
+  );
+  return pagina(ID_REGISTRO, `Historial · ${nombre}`, hijos);
 }
 
 export const herr_registros_pages: KirletPageDecl[] = [
@@ -136,7 +206,7 @@ export const herr_registros_pages: KirletPageDecl[] = [
     id: ID_REGISTRO,
     path: "herr-registro",
     permission: "subject.herramientas.herr-registros.write",
-    build: async ({ url, data }) => {
+    build: async ({ url, data, nox }) => {
       const tabla_id = texto(url?.searchParams.get("tabla"));
       const id = texto(url?.searchParams.get("id"));
       const tabla = tabla_id ? await data.findOne("herr_tablas", { id: tabla_id }) : null;
@@ -156,6 +226,7 @@ export const herr_registros_pages: KirletPageDecl[] = [
       }
       const spec = spec_de_fila(tabla);
       const registro = id ? await data.findOne("herr_registros", { id }) : null;
+      if (registro && url?.searchParams.get("modo") === "historial") return pagina_historial(data, nox, spec, registro);
       const valores = objeto(registro?.valores);
       const opciones = await opciones_referencia(data, spec);
       const entradas = spec.campos
@@ -175,7 +246,28 @@ export const herr_registros_pages: KirletPageDecl[] = [
           boton(registro ? "Guardar cambios" : "Guardar", { icon: "fa-floppy-disk" }),
         ],
       );
-      return pagina(ID_REGISTRO, `${registro ? "Editar" : "Nuevo"} · ${spec.name}`, [form]);
+      const acciones = registro
+        ? [
+            boton("Historial de cambios", {
+              href: href_registro(spec.id, String(registro.id), { modo: "historial" }),
+              icon: "fa-clock-rotate-left",
+              variant: "secondary",
+            }),
+            boton("Eliminar", {
+              method: "DELETE",
+              action: `api://herr-registros/${registro.id}`,
+              confirm: "¿Eliminar este registro? Deja de verse en la tabla.",
+              then: `herramientas.herr-tabla?id=${spec.id}`,
+              icon: "fa-trash",
+              variant: "ghost",
+            }),
+          ]
+        : [];
+      return pagina(ID_REGISTRO, `${registro ? "Editar" : "Nuevo"} · ${spec.name}`, [
+        migas(["Mis tablas", "/internal/herr-tabla"], [spec.name, href_tabla(spec.id)]),
+        form,
+        nodo("nox.toolbar", {}, [...acciones, boton("Volver a la tabla", { href: href_tabla(spec.id), icon: "fa-arrow-left" })]),
+      ]);
     },
   },
 ];

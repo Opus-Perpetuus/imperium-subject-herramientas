@@ -2,6 +2,7 @@ import {
   KirletHttpError,
   type DomainRow,
   type KirletCtx,
+  type NoxFileRef,
 } from "@opus-perpetuus/imperium-core-kit";
 
 /**
@@ -124,6 +125,21 @@ export function sello_ahora(zona = zona_valida(), instante = new Date()): string
   return pared(zona, instante).slice(0, 16).replace("T", " ");
 }
 
+const DIA_LEGIBLE = new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+
+/** `AAAA-MM-DD` → «2 de octubre de 2026»; lo que no es un día vuelve tal cual. */
+export function dia_legible(dia: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/.test(dia) ? DIA_LEGIBLE.format(new Date(`${dia}T12:00:00Z`)) : dia;
+}
+
+/** Un instante ISO en la zona del negocio: «2 de octubre de 2026, 10:35». */
+export function momento_legible(iso: string, zona = zona_valida()): string {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return iso;
+  const [dia, hora] = sello_ahora(zona, new Date(ms)).split(" ");
+  return `${dia_legible(dia!)}, ${hora}`;
+}
+
 /**
  * Solo el día de una fecha. El selector de fecha del lanzador manda un `Date`
  * serializado (`2026-09-27T06:00:00.000Z`, medianoche local en UTC): se toma el
@@ -135,31 +151,63 @@ export function solo_dia(value: unknown): unknown {
 
 const DATA_URL = /^data:([a-z]+\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/i;
 
+/** Una foto subida: la URL del adjunto y, si el núcleo la da, su miniatura en data URL. */
+export type FotoGuardada = { url: string; miniatura: string };
+
+/** Hasta 13.62 el núcleo respondía `ok` sin guardar nada y en la fila quedaba el texto "undefined". */
+export function es_foto_guardada(valor: unknown): valor is string {
+  return typeof valor === "string" && /^(\/|https?:\/\/|data:image\/)/i.test(valor.trim());
+}
+
+/** El motivo que dio el núcleo, sin el envoltorio del cliente del kit. */
+function motivo_del_nucleo(error: unknown): string {
+  const mensaje = error instanceof Error ? error.message : String(error);
+  return /"error"\s*:\s*"([^"]+)"/.exec(mensaje)?.[1] ?? mensaje;
+}
+
 /**
  * Una imagen del formulario llega como data URL; se guarda como adjunto de la
- * plataforma (`nox.files`, sobrevive a un redeploy) y en la fila queda su URL.
- * Lo que no es data URL (URL ya guardada, vacío) se devuelve tal cual.
+ * plataforma (`nox.files`, sobrevive a un redeploy). Lo que no es data URL
+ * (URL ya guardada, vacío) da `null`.
  */
+export async function subir_foto(
+  ctx: Pick<KirletCtx, "nox">,
+  recurso: string,
+  record_id: string,
+  valor: unknown,
+): Promise<FotoGuardada | null> {
+  if (typeof valor !== "string") return null;
+  const m = DATA_URL.exec(valor.trim());
+  if (!m) return null;
+  const tipo = m[1]!.toLowerCase();
+  if (!tipo.startsWith("image/")) falla(400, "Solo se aceptan imágenes", "archivo_invalido");
+  const bytes = Uint8Array.from(atob(m[2]!.replace(/\s+/g, "")), (c) => c.charCodeAt(0));
+  let guardado: NoxFileRef & { thumbnail?: string };
+  try {
+    guardado = await ctx.nox.files.save({
+      resource: recurso,
+      record_id,
+      data: bytes,
+      filename: `${recurso}-${record_id}.${tipo.split("/")[1]!.replace("jpeg", "jpg")}`,
+      content_type: tipo,
+    });
+  } catch (error) {
+    falla(502, `No se pudo guardar la foto: ${motivo_del_nucleo(error)}`, "archivo_no_guardado");
+  }
+  if (!es_foto_guardada(guardado?.url)) {
+    falla(502, "No se pudo guardar la foto: el servidor no la almacenó", "archivo_no_guardado");
+  }
+  return { url: guardado.url, miniatura: es_foto_guardada(guardado.thumbnail) ? guardado.thumbnail : "" };
+}
+
+/** Como `subir_foto`, para las columnas que solo guardan la URL: lo que no es data URL vuelve tal cual. */
 export async function guardar_imagen(
   ctx: Pick<KirletCtx, "nox">,
   recurso: string,
   record_id: string,
   valor: unknown,
 ): Promise<unknown> {
-  if (typeof valor !== "string") return valor;
-  const m = DATA_URL.exec(valor.trim());
-  if (!m) return valor;
-  const tipo = m[1]!.toLowerCase();
-  if (!tipo.startsWith("image/")) falla(400, "Solo se aceptan imágenes", "archivo_invalido");
-  const bytes = Uint8Array.from(atob(m[2]!.replace(/\s+/g, "")), (c) => c.charCodeAt(0));
-  const guardado = await ctx.nox.files.save({
-    resource: recurso,
-    record_id,
-    data: bytes,
-    filename: `${recurso}-${record_id}.${tipo.split("/")[1]!.replace("jpeg", "jpg")}`,
-    content_type: tipo,
-  });
-  return guardado.url;
+  return (await subir_foto(ctx, recurso, record_id, valor))?.url ?? valor;
 }
 
 export async function filas_de(

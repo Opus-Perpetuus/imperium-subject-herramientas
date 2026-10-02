@@ -49,6 +49,10 @@ export function href_tabla(id: string, extra: Record<string, string> = {}): stri
 
 const href_captura = (id: string) => `/internal/herr-registro?tabla=${id}`;
 
+export function href_registro(tabla_id: string, id: string, extra: Record<string, string> = {}): string {
+  return `/internal/herr-registro?${new URLSearchParams({ tabla: tabla_id, id, ...extra })}`;
+}
+
 /** A dónde sigue un formulario del diseñador según lo que responde la ruta. */
 const THEN_DISENO = `${ID_TABLA}?id={id}&modo={modo}&campo={campo}&v={v}`;
 
