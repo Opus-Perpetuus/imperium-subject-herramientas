@@ -7,7 +7,7 @@ import { filas_de, texto } from "../../lib/comun.ts";
 import { spec_de_fila, type CampoSpec } from "../../lib/formulas/esquema.ts";
 import { texto_a_numero } from "../../lib/formulas/motor.ts";
 import { parsear } from "../../lib/formulas/multivalor.ts";
-import { objeto, opciones_referencia, type OpcionRef } from "../herr-tablas/herr-tablas.flow.ts";
+import { ids_referencia, objeto, opciones_referencia, type OpcionRef } from "../herr-tablas/herr-tablas.flow.ts";
 import { API, OWNER, boton, nodo, pagina } from "../herr-tablas/herr-tablas.nox.ts";
 
 const ID_REGISTRO = "herramientas.herr-registro";
@@ -61,9 +61,10 @@ function nodo_entrada(campo: CampoSpec, raw: string, opciones?: Map<string, Opci
       });
     case "referencia": {
       const options = [...(opciones ?? [])].map(([value, opcion]) => ({ value, ...opcion }));
+      const ids = ids_referencia(raw);
       return campo.multiple
-        ? nodo("nox.input-checkbox-group", { ...base, options, value: parsear(raw) })
-        : nodo("nox.input-datalist", { ...base, options, value: raw });
+        ? nodo("nox.input-checkbox-group", { ...base, options, value: ids })
+        : nodo("nox.input-datalist", { ...base, options, value: ids[0] ?? "" });
     }
     case "ruta":
       return nodo("nox.input-text", { ...base, value: raw, help: "Id de la ruta registrada" });

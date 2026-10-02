@@ -39,9 +39,13 @@ function como_texto(v: unknown): string {
 
 const CON_ZONA = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
 
+/** El datalist del lanzador manda la opción entera (`{_id, name}`), no su valor. */
+const id_de_opcion = (v: unknown) => (v && typeof v === "object" && "_id" in v ? v._id : v);
+
 /** Fecha como día `AAAA-MM-DD`; fecha y hora como hora de pared del negocio `AAAA-MM-DDTHH:mm`. */
 function valor_de_campo(campo: CampoSpec, v: unknown): string {
   if (campo.tipo === "fecha") return como_texto(solo_dia(v));
+  if (campo.tipo === "referencia") return como_texto(Array.isArray(v) ? v.map(id_de_opcion) : id_de_opcion(v));
   if (campo.tipo === "fecha_hora" && typeof v === "string" && CON_ZONA.test(v.trim())) {
     const ms = Date.parse(v.trim());
     if (!Number.isFinite(ms)) falla(400, `«${campo.etiqueta}» no es una fecha y hora válida`, "validation_error");

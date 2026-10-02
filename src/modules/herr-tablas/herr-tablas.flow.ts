@@ -95,6 +95,19 @@ export function filas_recalculadas(spec: TablaSpec, registros: DomainRow[]): Reg
 
 const NUMERICOS = new Set(["numero", "dinero", "entero", "calculado"]);
 
+/** Ids de un campo referencia. Hay filas con la opción entera del datalist en JSON (`{"_id":…}`): valen por su id. */
+export function ids_referencia(raw: string): string[] {
+  if (raw.startsWith("{")) {
+    try {
+      const id = texto((JSON.parse(raw) as { _id?: unknown })._id);
+      if (id) return [id];
+    } catch {
+      // No era una opción en JSON: se lee como cualquier otro valor.
+    }
+  }
+  return parsear(raw);
+}
+
 /** El valor de un campo como se lee en la lista: números con sus decimales y unidad, referencias por etiqueta. */
 export function valor_presentado(
   campo: CampoSpec,
@@ -106,7 +119,7 @@ export function valor_presentado(
   if (campo.tipo === "booleano") return raw === "true" ? "Sí" : "No";
   if (campo.tipo === "referencia") {
     const de = etiquetas.get(campo.clave);
-    return (campo.multiple ? parsear(raw) : [raw]).map((id) => de?.get(id) ?? "—").join(" · ");
+    return ids_referencia(raw).map((id) => de?.get(id) ?? "—").join(" · ");
   }
   if (campo.multiple) return parsear(raw).join(" · ");
   if (NUMERICOS.has(campo.tipo)) {
@@ -188,7 +201,7 @@ function etiquetas_de_fila(
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [clave, de] of etiquetas) {
-    const nombres = parsear(valores[clave]).map((id) => de.get(id) ?? "");
+    const nombres = ids_referencia(valores[clave] ?? "").map((id) => de.get(id) ?? "");
     if (nombres.length) out[`${clave}_etiqueta`] = nombres.join(" ");
   }
   return out;

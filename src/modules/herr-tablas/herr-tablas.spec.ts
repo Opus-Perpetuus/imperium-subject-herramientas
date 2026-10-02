@@ -527,6 +527,51 @@ describe("páginas", () => {
     const moto = nodos(form, "nox.input-datalist")[0]!;
     expect(moto.props!.options).toEqual([{ value: italika.data.id, label: "Italika 150" }]);
   });
+
+  test("un enlace llega como la opción entera del datalist: se guarda su id, y lo ya guardado así se lee", async () => {
+    server.stop();
+    const data = new MemoryKirletDataClient(SUBJECT.schema());
+    server = create_kirlet_test_context(SUBJECT, { data });
+    const productos = await call("POST", "/herr-tablas", {
+      name: "Productos",
+      cerrable: false,
+      campos: [{ clave: "nombre", etiqueta: "Nombre", tipo: "texto", en_resumen: true }],
+    });
+    const vino = await call("POST", "/herr-registros", { tabla_id: productos.data.id, valores: { nombre: "Vino tinto" } });
+    const bitacora = await call("POST", "/herr-tablas", {
+      name: "Bitácora",
+      campos: [
+        { clave: "producto", etiqueta: "Producto", tipo: "referencia", tabla_ref_id: productos.data.id, en_resumen: true },
+        { clave: "cantidad", etiqueta: "Cantidad", tipo: "entero", en_resumen: true },
+      ],
+    });
+    const opcion = { _id: vino.data.id, name: "Vino tinto" };
+    const nueva = await call("POST", "/herr-registros/captura", { tabla_id: bitacora.data.id, producto: opcion, cantidad: 35 });
+    expect(nueva.status).toBe(201);
+    expect(nueva.data.valores.producto).toBe(vino.data.id);
+
+    const ts = "2026-10-01T12:00:00.000Z";
+    await data.insert("herr_registros", {
+      id: "registro_guardado_como_opcion",
+      name: JSON.stringify(opcion),
+      tabla_id: bitacora.data.id,
+      valores: { producto: JSON.stringify(opcion), cantidad: "12" },
+      calculados: {},
+      is_active: true,
+      created_at: ts,
+      updated_at: ts,
+    });
+
+    const lista = await pagina(`/pages/herramientas.herr-tabla?id=${bitacora.data.id}`);
+    expect(nodos(lista, "nox.table")[0]!.props!.rows).toContainAllValues([
+      { producto: "Vino tinto", cantidad: "35" },
+      { producto: "Vino tinto", cantidad: "12" },
+    ]);
+    const encontrados = await call("POST", `/herr-tablas/${bitacora.data.id}/buscar`, { q: "vino" });
+    expect(encontrados.data).toHaveLength(2);
+    const editar = await pagina(`/pages/herramientas.herr-registro?tabla=${bitacora.data.id}&id=registro_guardado_como_opcion`);
+    expect(nodos(editar, "nox.input-datalist")[0]!.props!.value).toBe(vino.data.id);
+  });
 });
 
 describe("diseñador", () => {
