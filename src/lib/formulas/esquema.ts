@@ -30,7 +30,7 @@ export const TIPOS_CAMPO = [
   "geo",
   /** No se captura: se calcula con `formula`. */
   "calculado",
-  /** Id de un registro de `tabla_ref_id`; `clave_ref_display` dice qué campo se enseña. */
+  /** Id de un registro de `tabla_ref_id`; las `PARTES_REF` dicen qué se enseña de él. */
   "referencia",
 ] as const;
 
@@ -54,10 +54,28 @@ export type CampoSpec = {
   /** Solo nivel: valor a escala completa, en `unidad`. */
   capacidad?: number | null;
   tabla_ref_id?: string | null;
-  clave_ref_display?: string | null;
+  /** Solo referencia: plantillas con `{clave}` de la tabla enlazada (ver `PARTES_REF`). */
+  ref_leyenda?: string | null;
+  ref_leyenda_secundaria?: string | null;
+  ref_descripcion?: string | null;
+  ref_descripcion_secundaria?: string | null;
   /** Solo referencia y opción: varios valores en una cadena (ver multivalor). */
   multiple?: boolean;
 };
+
+/**
+ * Las cuatro partes con que se ve un registro enlazado al elegirlo: las del
+ * datalist del lanzador, con sus nombres de opción. Sin título se enseña el
+ * nombre del registro.
+ */
+export const PARTES_REF = [
+  { campo: "ref_leyenda", opcion: "label" },
+  { campo: "ref_leyenda_secundaria", opcion: "leyend_secondary" },
+  { campo: "ref_descripcion", opcion: "description" },
+  { campo: "ref_descripcion_secundaria", opcion: "description_secondary" },
+] as const;
+
+export type ParteRef = (typeof PARTES_REF)[number]["campo"];
 
 /** Se captura una vez y vale para todos los registros; las fórmulas lo usan como `{clave}`. */
 export type ConstanteTabla = {
@@ -168,6 +186,8 @@ const entero = (v: unknown, defecto: number): number =>
 
 function normalizar_campo(x: Record<string, unknown>): CampoSpec {
   const clave = texto(x.clave);
+  // Hay filas guardadas con `clave_ref_display` (una sola columna): esa columna es su título.
+  const display = texto(x.clave_ref_display);
   return {
     clave,
     etiqueta: texto(x.etiqueta) || clave,
@@ -182,7 +202,10 @@ function normalizar_campo(x: Record<string, unknown>): CampoSpec {
     pasos: entero(x.pasos, 0),
     capacidad: Number.isFinite(Number(x.capacidad)) && texto(x.capacidad) ? Number(x.capacidad) : null,
     tabla_ref_id: texto_o_null(x.tabla_ref_id),
-    clave_ref_display: texto_o_null(x.clave_ref_display),
+    ref_leyenda: texto_o_null(x.ref_leyenda) ?? (display ? `{${display}}` : null),
+    ref_leyenda_secundaria: texto_o_null(x.ref_leyenda_secundaria),
+    ref_descripcion: texto_o_null(x.ref_descripcion),
+    ref_descripcion_secundaria: texto_o_null(x.ref_descripcion_secundaria),
     multiple: x.multiple === true,
   };
 }

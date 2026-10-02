@@ -1,6 +1,6 @@
 import { clave_desde_etiqueta, normalizar, texto } from "../comun.ts";
 import { parsear_agregado, TIPOS_AGREGADO, type TipoAgregado } from "./motor.ts";
-import type { CampoSpec, ResumenTabla, TablaSpec, TipoCampo } from "./esquema.ts";
+import type { CampoSpec, ParteRef, ResumenTabla, TablaSpec, TipoCampo } from "./esquema.ts";
 
 /**
  * Diseñador de tablas para quien no programa: tipos con nombre de todos los
@@ -194,7 +194,10 @@ export function campo_nuevo(
     pasos: tipo === "nivel" ? 6 : 0,
     capacidad: null,
     tabla_ref_id: null,
-    clave_ref_display: null,
+    ref_leyenda: null,
+    ref_leyenda_secundaria: null,
+    ref_descripcion: null,
+    ref_descripcion_secundaria: null,
     multiple: false,
   };
 }
@@ -217,6 +220,17 @@ export function campos_desde_propuestas(spec: TablaSpec, propuestas: ColumnaProp
     return campo;
   });
 }
+
+export const PARTES_UI: Record<ParteRef, string> = {
+  ref_leyenda: "Título",
+  ref_leyenda_secundaria: "Junto al título",
+  ref_descripcion: "Descripción",
+  ref_descripcion_secundaria: "Segunda descripción",
+};
+
+/** Lo que el menú de una parte ofrece además de las columnas: una clave nunca lleva paréntesis, no chocan. */
+export const SIN_COLUMNA = "(ninguna)";
+export const CON_PLANTILLA = "(plantilla)";
 
 /** Si al elegir este tipo hace falta un segundo paso para que la columna sirva. */
 export function necesita_ajustes(campo: CampoSpec): boolean {

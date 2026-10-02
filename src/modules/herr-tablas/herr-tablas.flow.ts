@@ -7,9 +7,16 @@ import {
 } from "@opus-perpetuus/imperium-core-kit";
 import { LIMITE_FILAS, campo_busqueda, falla, fila_o_404, texto } from "../../lib/comun.ts";
 import { buscar, construir_indice, texto_buscable } from "../../lib/formulas/busqueda.ts";
-import { calcular_valores, calculados_de, numero_de, valores_resumen } from "../../lib/formulas/calculadora.ts";
+import { calcular_valores, calculados_de, formatear, numero_de, valores_resumen } from "../../lib/formulas/calculadora.ts";
 import { claves_resumen_archivo, planear_cierre } from "../../lib/formulas/cierre.ts";
-import { spec_de_fila, type Registro, type TablaSpec } from "../../lib/formulas/esquema.ts";
+import {
+  PARTES_REF,
+  decimales_de,
+  spec_de_fila,
+  type CampoSpec,
+  type Registro,
+  type TablaSpec,
+} from "../../lib/formulas/esquema.ts";
 import { parsear } from "../../lib/formulas/multivalor.ts";
 import {
   TIPOS_AGREGADO,
@@ -17,7 +24,9 @@ import {
   texto_a_numero,
   type TipoAgregado,
 } from "../../lib/formulas/motor.ts";
+import { rellenar_plantilla } from "../../lib/formulas/plantilla.ts";
 import { plantilla_de, plantillas } from "../../lib/formulas/plantillas.ts";
+import { con_unidad } from "./herr-tablas.nox.ts";
 
 type Datos = Pick<KirletCtx, "data">;
 
@@ -84,26 +93,92 @@ export function filas_recalculadas(spec: TablaSpec, registros: DomainRow[]): Reg
   return base.map((f, i) => ({ ...f, valores: calcular_valores(spec, objeto(registros[i]!.valores), base) }));
 }
 
-/** Clave de cada campo referencia → (id del registro apuntado → etiqueta que se enseña). */
+const NUMERICOS = new Set(["numero", "dinero", "entero", "calculado"]);
+
+/** El valor de un campo como se lee en la lista: números con sus decimales y unidad, referencias por etiqueta. */
+export function valor_presentado(
+  campo: CampoSpec,
+  raw: string,
+  etiquetas: Map<string, Map<string, string>>,
+): string {
+  if (!raw) return "";
+  if (campo.tipo === "foto") return "Foto";
+  if (campo.tipo === "booleano") return raw === "true" ? "Sí" : "No";
+  if (campo.tipo === "referencia") {
+    const de = etiquetas.get(campo.clave);
+    return (campo.multiple ? parsear(raw) : [raw]).map((id) => de?.get(id) ?? "—").join(" · ");
+  }
+  if (campo.multiple) return parsear(raw).join(" · ");
+  if (NUMERICOS.has(campo.tipo)) {
+    const n = texto_a_numero(raw);
+    const valor = n === null ? raw : formatear(n, campo.tipo === "entero" ? 0 : decimales_de(campo));
+    return con_unidad(valor, campo.unidad);
+  }
+  return con_unidad(raw, campo.unidad);
+}
+
+/** Un registro enlazado como opción del datalist del lanzador: una entrada por parte con texto. */
+export type OpcionRef = {
+  label: string;
+  leyend_secondary?: string;
+  description?: string;
+  description_secondary?: string;
+};
+
+function opcion_de(
+  campo: CampoSpec,
+  destino: TablaSpec | null,
+  fila: DomainRow,
+  anidadas: Map<string, Map<string, string>>,
+): OpcionRef {
+  const { valores } = registro_como_fila(fila);
+  const presentados = destino
+    ? Object.fromEntries(destino.campos.map((c) => [c.clave, valor_presentado(c, valores[c.clave] ?? "", anidadas)]))
+    : valores;
+  const partes: Record<string, string> = {};
+  for (const { campo: parte, opcion } of PARTES_REF) {
+    const t = rellenar_plantilla(campo[parte], presentados);
+    if (t) partes[opcion] = t;
+  }
+  return { ...partes, label: partes.label || texto(fila.name) || String(fila.id) };
+}
+
+/**
+ * Clave de cada campo referencia → (id del registro apuntado → su opción). Un
+ * enlace de la tabla enlazada se enseña por su título sin bajar más: dos tablas
+ * que se enlazan entre sí no se resolverían nunca.
+ */
+export async function opciones_referencia(
+  data: KirletCtx["data"],
+  spec: TablaSpec,
+  profundidad = 1,
+): Promise<Map<string, Map<string, OpcionRef>>> {
+  const out = new Map<string, Map<string, OpcionRef>>();
+  for (const campo of spec.campos) {
+    if (campo.tipo !== "referencia" || !campo.tabla_ref_id) continue;
+    const tabla = await data.findOne("herr_tablas", { id: campo.tabla_ref_id });
+    const destino = tabla ? spec_de_fila(tabla) : null;
+    const usada = (clave: string) => PARTES_REF.some((p) => (campo[p.campo] ?? "").includes(`{${clave}}`));
+    const enlaces =
+      destino && profundidad > 0 ? destino.campos.filter((c) => c.tipo === "referencia" && usada(c.clave)) : [];
+    const anidadas =
+      destino && enlaces.length
+        ? await etiquetas_referencia(data, { ...destino, campos: enlaces }, profundidad - 1)
+        : new Map<string, Map<string, string>>();
+    const filas = await registros_de({ data }, campo.tabla_ref_id);
+    out.set(campo.clave, new Map(filas.map((r) => [String(r.id), opcion_de(campo, destino, r, anidadas)])));
+  }
+  return out;
+}
+
+/** Clave de cada campo referencia → (id del registro apuntado → título que se enseña). */
 export async function etiquetas_referencia(
   data: KirletCtx["data"],
   spec: TablaSpec,
+  profundidad = 1,
 ): Promise<Map<string, Map<string, string>>> {
-  const out = new Map<string, Map<string, string>>();
-  for (const campo of spec.campos) {
-    if (campo.tipo !== "referencia" || !campo.tabla_ref_id) continue;
-    const filas = await registros_de({ data }, campo.tabla_ref_id);
-    out.set(
-      campo.clave,
-      new Map(
-        filas.map((r) => [
-          String(r.id),
-          (campo.clave_ref_display && objeto(r.valores)[campo.clave_ref_display]) || texto(r.name) || String(r.id),
-        ]),
-      ),
-    );
-  }
-  return out;
+  const opciones = await opciones_referencia(data, spec, profundidad);
+  return new Map([...opciones].map(([clave, de]) => [clave, new Map([...de].map(([id, o]) => [id, o.label]))]));
 }
 
 /** Etiquetas resueltas de las referencias de una fila, para indexarlas como texto. */

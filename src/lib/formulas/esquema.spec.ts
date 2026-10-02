@@ -95,7 +95,10 @@ describe("lectura desde una fila", () => {
         pasos: 0,
         capacidad: null,
         tabla_ref_id: null,
-        clave_ref_display: null,
+        ref_leyenda: null,
+        ref_leyenda_secundaria: null,
+        ref_descripcion: null,
+        ref_descripcion_secundaria: null,
         multiple: false,
       },
     ]);
@@ -103,5 +106,19 @@ describe("lectura desde una fila", () => {
     expect(s.resumenes).toEqual([]);
     expect(s.cerrable).toBe(false);
     expect(s.orden_desc).toBe(true);
+  });
+
+  test("el enlace de antes, que enseñaba una sola columna, la tiene de título", () => {
+    const [vieja, nueva] = spec_de_fila({
+      id: "t2",
+      name: "Jornadas",
+      campos: [
+        { clave: "moto", tipo: "referencia", tabla_ref_id: "tabla_motos", clave_ref_display: "nombre" },
+        { clave: "otra", tipo: "referencia", tabla_ref_id: "tabla_motos", clave_ref_display: "nombre", ref_leyenda: "{placas}" },
+      ],
+    }).campos;
+    expect(vieja).toMatchObject({ ref_leyenda: "{nombre}", ref_descripcion: null });
+    expect(vieja).not.toHaveProperty("clave_ref_display");
+    expect(nueva!.ref_leyenda).toBe("{placas}");
   });
 });

@@ -2,8 +2,11 @@ import type { DomainRow, KirletCtx, NoxPageDescriptor, NoxUiNode } from "@opus-p
 import { filas_de, texto } from "../../lib/comun.ts";
 import { valores_resumen } from "../../lib/formulas/calculadora.ts";
 import {
+  CON_PLANTILLA,
   OPERACIONES,
   ORDEN_TIPOS,
+  PARTES_UI,
+  SIN_COLUMNA,
   TIPOS_UI,
   TIPO_AUTOMATICO,
   TOTALES,
@@ -11,10 +14,17 @@ import {
   formula_con_etiquetas,
   opciones_numericas,
 } from "../../lib/formulas/disenio.ts";
-import { spec_de_fila, type CampoSpec, type ResumenTabla, type TablaSpec } from "../../lib/formulas/esquema.ts";
+import {
+  PARTES_REF,
+  spec_de_fila,
+  type CampoSpec,
+  type ResumenTabla,
+  type TablaSpec,
+} from "../../lib/formulas/esquema.ts";
 import { parsear_agregado } from "../../lib/formulas/motor.ts";
+import { columna_unica, plantilla_con_etiquetas } from "../../lib/formulas/plantilla.ts";
 import { plantillas } from "../../lib/formulas/plantillas.ts";
-import { filas_recalculadas, registros_de } from "./herr-tablas.flow.ts";
+import { filas_recalculadas, opciones_referencia, registros_de } from "./herr-tablas.flow.ts";
 import { boton, con_unidad, enlace, nodo, pagina } from "./herr-tablas.nox.ts";
 
 /**
@@ -179,7 +189,8 @@ function detalle_columna(spec: TablaSpec, campo: CampoSpec, tablas: Map<string, 
   }
   if (campo.tipo === "referencia") {
     const destino = campo.tabla_ref_id ? tablas.get(campo.tabla_ref_id) : undefined;
-    const mostrar = destino?.campos.find((c) => c.clave === campo.clave_ref_display)?.etiqueta;
+    const sola = destino?.campos.find((c) => c.clave === columna_unica(campo.ref_leyenda))?.etiqueta;
+    const mostrar = destino && campo.ref_leyenda ? (sola ?? plantilla_con_etiquetas(destino, campo.ref_leyenda)) : "";
     items.push({
       label: "Enlaza con",
       value: destino ? (mostrar ? `${destino.name} › ${mostrar}` : destino.name) : "Sin tabla: toca Editar",
@@ -490,23 +501,15 @@ function entradas_de_tipo(spec: TablaSpec, campo: CampoSpec, tablas: Map<string,
         }),
         nodo("nox.input-checkbox", { name: "multiple", label: "Se pueden elegir varias", value: campo.multiple === true }),
       ];
-    case "referencia": {
-      const opciones: Array<{ value: string; label: string }> = [];
-      for (const t of tablas.values()) {
-        opciones.push({ value: `${t.id}|`, label: `${t.name} (nombre del registro)` });
-        for (const c of t.campos) {
-          if (c.tipo !== "foto") opciones.push({ value: `${t.id}|${c.clave}`, label: `${t.name} › ${c.etiqueta}` });
-        }
-      }
+    case "referencia":
       return [
-        menu("enlace", "Elegir de la tabla", opciones, {
-          value: campo.tabla_ref_id ? `${campo.tabla_ref_id}|${campo.clave_ref_display ?? ""}` : "",
+        menu("enlace", "Elegir de la tabla", [...tablas.values()].map((t) => ({ value: t.id, label: t.name })), {
+          value: campo.tabla_ref_id ?? "",
           required: true,
-          help: "Al capturar se elige un registro de esa tabla; en la lista se ve la columna que elijas.",
+          help: "Al capturar se elige un registro de esa tabla. Al guardar decides qué se ve de cada uno.",
         }),
         nodo("nox.input-checkbox", { name: "multiple", label: "Se pueden elegir varios", value: campo.multiple === true }),
       ];
-    }
     case "calculado": {
       const datos = opciones_numericas(spec, campo.clave);
       const formula = campo.formula && campo.formula !== "0" ? formula_con_etiquetas(spec, campo.formula) : "";
@@ -571,6 +574,85 @@ async function vista_previa(data: Datos, spec: TablaSpec, campo: CampoSpec): Pro
   return nodo("nox.detail", { text: "Vista previa", items: [{ label: "Con el último registro da", value: valor, emphasis: true }] });
 }
 
+/** Las cuatro partes de la opción con el último registro de la tabla enlazada. */
+async function vista_opcion(data: Datos, spec: TablaSpec, campo: CampoSpec, destino: TablaSpec): Promise<NoxUiNode> {
+  const ultima = (await registros_de({ data }, destino.id)).reduce<DomainRow | null>(
+    (a, f) => (!a || texto(f.created_at) >= texto(a.created_at) ? f : a),
+    null,
+  );
+  if (!ultima) {
+    return nodo("nox.alert", { text: "Vista previa", description: `Captura un registro en «${destino.name}» para ver cómo queda.` });
+  }
+  const opcion = (await opciones_referencia(data, { ...spec, campos: [campo] })).get(campo.clave)?.get(String(ultima.id));
+  return nodo("nox.detail", {
+    text: "Así se ve el último registro",
+    items: PARTES_REF.map((p) => ({
+      label: PARTES_UI[p.campo],
+      value: opcion?.[p.opcion] || "—",
+      ...(p.opcion === "label" ? { emphasis: true } : {}),
+    })),
+  });
+}
+
+/**
+ * Qué se ve de cada registro de la tabla enlazada al elegirlo en la captura.
+ * Elegir una columna y escribir una plantilla son dos formularios: cada uno
+ * guarda lo que enseña, sin adivinar cuál de los dos se quiso.
+ */
+async function seccion_opcion(data: Datos, spec: TablaSpec, campo: CampoSpec, destino: TablaSpec): Promise<NoxUiNode[]> {
+  const action = `api://herr-tablas/${spec.id}/campos/${campo.clave}/opcion`;
+  const columnas = destino.campos.filter((c) => c.tipo !== "foto");
+  const nombres = columnas.map((c) => `{${c.etiqueta}}`);
+  return [
+    titulo("Cómo se ve cada opción"),
+    nodo("nox.markdown-view", {
+      content:
+        `Al capturar eliges un registro de «${destino.name}». Cada opción tiene un título, algo junto al título ` +
+        "y dos descripciones: pon una columna en cada parte o escribe una plantilla con texto y columnas.",
+    }),
+    await vista_opcion(data, spec, campo, destino),
+    nodo("nox.card", { title: "Elegir columnas" }, [
+      nodo("nox.form", { method: "PATCH", action, then: THEN_DISENO }, [
+        ...PARTES_REF.map(({ campo: parte }) => {
+          const plantilla = campo[parte] ?? "";
+          // Más que una columna (o una que ya no existe) se ve como su plantilla.
+          const sola = columnas.find((c) => c.clave === columna_unica(plantilla))?.clave;
+          const opciones = [
+            { value: SIN_COLUMNA, label: parte === "ref_leyenda" ? "El nombre del registro" : "Nada" },
+            ...columnas.map((c) => ({ value: c.clave, label: c.etiqueta })),
+          ];
+          if (plantilla && !sola) {
+            opciones.push({ value: CON_PLANTILLA, label: `La plantilla «${plantilla_con_etiquetas(destino, plantilla)}»` });
+          }
+          return menu(`columna_${parte}`, PARTES_UI[parte], opciones, {
+            value: sola ?? (plantilla ? CON_PLANTILLA : SIN_COLUMNA),
+          });
+        }),
+        boton("Guardar columnas", { icon: "fa-floppy-disk" }),
+      ]),
+    ]),
+    nodo("nox.card", { title: "Escribir plantillas" }, [
+      nodo("nox.markdown-view", {
+        content:
+          "Escribe texto y pon los nombres de las columnas entre llaves, como en los cálculos. " +
+          (nombres.length ? `Puedes usar: ${lista_corta(nombres, 12)}.` : ""),
+      }),
+      nodo("nox.form", { method: "PATCH", action, then: THEN_DISENO }, [
+        ...PARTES_REF.map((p, i) => {
+          const ejemplo = columnas[i % columnas.length]?.etiqueta;
+          return nodo("nox.input-text", {
+            name: `plantilla_${p.campo}`,
+            label: PARTES_UI[p.campo],
+            value: plantilla_con_etiquetas(destino, campo[p.campo]),
+            placeholder: !ejemplo ? "" : i === 0 ? `Ej.: {${ejemplo}}` : `Ej.: ${ejemplo}: {${ejemplo}}`,
+          });
+        }),
+        boton("Guardar plantillas", { icon: "fa-floppy-disk" }),
+      ]),
+    ]),
+  ];
+}
+
 export async function pagina_campo(data: Datos, spec: TablaSpec, clave: string): Promise<NoxPageDescriptor> {
   const campo = spec.campos.find((c) => c.clave === clave);
   const disenar = href_tabla(spec.id, { modo: "disenar" });
@@ -584,13 +666,14 @@ export async function pagina_campo(data: Datos, spec: TablaSpec, clave: string):
   const previa = await vista_previa(data, spec, campo);
   if (previa) hijos.push(previa);
   const otras = spec.campos.filter((c) => c.clave !== campo.clave);
+  const tablas = await tablas_por_id(data);
   const entradas: NoxUiNode[] = [
     nodo("nox.input-text", { name: "etiqueta", label: "Nombre", value: campo.etiqueta, required: true }),
     menu("tipo", "Qué guarda", opciones_tipo(false), {
       value: campo.tipo,
       help: "Si cambias el tipo, al guardar verás sus ajustes.",
     }),
-    ...entradas_de_tipo(spec, campo, await tablas_por_id(data)),
+    ...entradas_de_tipo(spec, campo, tablas),
   ];
   if (CON_VALOR_INICIAL.has(campo.tipo)) {
     entradas.push(
@@ -626,6 +709,8 @@ export async function pagina_campo(data: Datos, spec: TablaSpec, clave: string):
       [...entradas, boton("Guardar columna", { icon: "fa-floppy-disk" })],
     ),
   );
+  const destino = campo.tipo === "referencia" && campo.tabla_ref_id ? tablas.get(campo.tabla_ref_id) : undefined;
+  if (destino) hijos.push(...(await seccion_opcion(data, spec, campo, destino)));
   hijos.push(
     nodo("nox.toolbar", {}, [
       boton("Volver", { href: disenar, icon: "fa-arrow-left" }),

@@ -7,7 +7,7 @@ import { filas_de, texto } from "../../lib/comun.ts";
 import { spec_de_fila, type CampoSpec } from "../../lib/formulas/esquema.ts";
 import { texto_a_numero } from "../../lib/formulas/motor.ts";
 import { parsear } from "../../lib/formulas/multivalor.ts";
-import { etiquetas_referencia, objeto } from "../herr-tablas/herr-tablas.flow.ts";
+import { objeto, opciones_referencia, type OpcionRef } from "../herr-tablas/herr-tablas.flow.ts";
 import { API, OWNER, boton, nodo, pagina } from "../herr-tablas/herr-tablas.nox.ts";
 
 const ID_REGISTRO = "herramientas.herr-registro";
@@ -19,7 +19,7 @@ function coordenadas(raw: string): { latitude: number; longitude: number } | "" 
 }
 
 /** Un `nox.input-*` por tipo de campo, con el valor ya capturado si se edita. */
-function nodo_entrada(campo: CampoSpec, raw: string, etiquetas?: Map<string, string>): NoxUiNode {
+function nodo_entrada(campo: CampoSpec, raw: string, opciones?: Map<string, OpcionRef>): NoxUiNode {
   const base = {
     name: campo.clave,
     label: campo.unidad ? `${campo.etiqueta} (${campo.unidad})` : campo.etiqueta,
@@ -60,7 +60,7 @@ function nodo_entrada(campo: CampoSpec, raw: string, etiquetas?: Map<string, str
         help: campo.pasos ? `0..${campo.pasos}` : undefined,
       });
     case "referencia": {
-      const options = [...(etiquetas ?? [])].map(([value, label]) => ({ value, label }));
+      const options = [...(opciones ?? [])].map(([value, opcion]) => ({ value, ...opcion }));
       return campo.multiple
         ? nodo("nox.input-checkbox-group", { ...base, options, value: parsear(raw) })
         : nodo("nox.input-datalist", { ...base, options, value: raw });
@@ -156,10 +156,10 @@ export const herr_registros_pages: KirletPageDecl[] = [
       const spec = spec_de_fila(tabla);
       const registro = id ? await data.findOne("herr_registros", { id }) : null;
       const valores = objeto(registro?.valores);
-      const etiquetas = await etiquetas_referencia(data, spec);
+      const opciones = await opciones_referencia(data, spec);
       const entradas = spec.campos
         .filter((c) => c.tipo !== "calculado")
-        .map((c) => nodo_entrada(c, valores[c.clave] ?? c.valor_por_defecto ?? "", etiquetas.get(c.clave)));
+        .map((c) => nodo_entrada(c, valores[c.clave] ?? c.valor_por_defecto ?? "", opciones.get(c.clave)));
       const form = nodo(
         "nox.form",
         {

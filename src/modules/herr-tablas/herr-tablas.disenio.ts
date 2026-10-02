@@ -7,7 +7,10 @@ import {
 } from "@opus-perpetuus/imperium-core-kit";
 import { booleano, campo_busqueda, falla, numero, texto } from "../../lib/comun.ts";
 import {
+  CON_PLANTILLA,
   OPERACIONES,
+  PARTES_UI,
+  SIN_COLUMNA,
   TIPO_AUTOMATICO,
   TOTAL_REGISTROS,
   campos_desde_propuestas,
@@ -26,6 +29,7 @@ import {
   totales_por_defecto,
 } from "../../lib/formulas/disenio.ts";
 import {
+  PARTES_REF,
   TIPOS_CAMPO,
   spec_de_fila,
   validar_esquema,
@@ -34,6 +38,7 @@ import {
   type TipoCampo,
 } from "../../lib/formulas/esquema.ts";
 import { claves_referenciadas, parsear_agregado } from "../../lib/formulas/motor.ts";
+import { plantilla_con_claves } from "../../lib/formulas/plantilla.ts";
 import { tabla_activa } from "./herr-tablas.flow.ts";
 
 const ESQUEMA = ["campos", "constantes", "resumenes"] as const;
@@ -142,12 +147,13 @@ async function aplicar_cambios(ctx: KirletCtx, spec: TablaSpec, antes: CampoSpec
   if ("capacidad" in body) campo.capacidad = numero(body.capacidad);
   if ("opciones" in body) campo.opciones = opciones_desde_texto(body.opciones);
   if ("enlace" in body) {
-    const [tabla_ref, mostrar] = texto(body.enlace).split("|");
+    const tabla_ref = texto(body.enlace) || null;
     if (tabla_ref && !(await ctx.data.findOne("herr_tablas", { id: tabla_ref }))) {
       falla(400, "La tabla enlazada no existe", "validation_error");
     }
-    campo.tabla_ref_id = tabla_ref || null;
-    campo.clave_ref_display = mostrar || null;
+    // Las plantillas nombran columnas de la tabla de antes.
+    if (tabla_ref !== campo.tabla_ref_id) for (const { campo: parte } of PARTES_REF) campo[parte] = null;
+    campo.tabla_ref_id = tabla_ref;
   }
   const op = texto(body.operacion);
   if (es_operacion(op)) {
@@ -231,9 +237,47 @@ export const herr_tablas_disenio = define_routes({
     const posicion = numero(body.posicion);
     campos.splice(posicion === null ? i : Math.min(campos.length, Math.max(0, Math.round(posicion))), 0, campo);
     const guardada = await guardar(ctx, fila, { ...spec, campos });
-    // Otro tipo trae otros ajustes (opciones, fórmula, tabla): se vuelve a abrir la columna para verlos.
-    const modo = campo.tipo !== antes.tipo || necesita_ajustes(campo) ? "campo" : "disenar";
+    // Otro tipo u otra tabla traen otros ajustes (opciones, fórmula, qué se ve): se vuelve a abrir la columna para verlos.
+    const modo =
+      campo.tipo !== antes.tipo || campo.tabla_ref_id !== antes.tabla_ref_id || necesita_ajustes(campo) ? "campo" : "disenar";
     return { data: siguiente(guardada, modo, campo.clave), message: `Columna «${campo.etiqueta}» guardada` };
+  },
+
+  /**
+   * Qué se ve de cada registro enlazado al elegirlo, parte por parte: una
+   * columna del menú (`columna_<parte>`) o una plantilla escrita con los
+   * nombres de las columnas (`plantilla_<parte>`).
+   */
+  "PATCH /herr-tablas/:id/campos/:clave/opcion": async (ctx) => {
+    const { fila, spec } = await esquema(ctx);
+    const i = indice_de(spec.campos, ctx.params.clave, "La columna");
+    const campo = { ...spec.campos[i]! };
+    if (campo.tipo !== "referencia" || !campo.tabla_ref_id) {
+      falla(409, `Elige primero de qué tabla se toma «${campo.etiqueta}»`, "conflict");
+    }
+    const destino = spec_de_fila(await tabla_activa(ctx, campo.tabla_ref_id));
+    const body = await ctx.body<Record<string, unknown>>();
+    for (const { campo: parte } of PARTES_REF) {
+      const columna = texto(body[`columna_${parte}`]);
+      if (columna === SIN_COLUMNA) campo[parte] = null;
+      else if (columna && columna !== CON_PLANTILLA) {
+        if (!destino.campos.some((c) => c.clave === columna)) {
+          falla(400, `«${PARTES_UI[parte]}»: «${destino.name}» no tiene esa columna`, "validation_error");
+        }
+        campo[parte] = `{${columna}}`;
+      }
+      if (`plantilla_${parte}` in body) {
+        const { plantilla, desconocidos } = plantilla_con_claves(destino, texto(body[`plantilla_${parte}`]));
+        if (desconocidos.length) {
+          const cuales = desconocidos.map((n) => `«${n}»`).join(", ");
+          const verbo = desconocidos.length === 1 ? "no es una columna" : "no son columnas";
+          falla(400, `«${PARTES_UI[parte]}»: ${cuales} ${verbo} de «${destino.name}»`, "validation_error");
+        }
+        campo[parte] = plantilla || null;
+      }
+    }
+    const guardada = await guardar(ctx, fila, { ...spec, campos: spec.campos.with(i, campo) });
+    return { data: siguiente(guardada, "campo", campo.clave), message: `Así se verá «${campo.etiqueta}» al capturar` };
   },
 
   "DELETE /herr-tablas/:id/campos/:clave": async (ctx) => {

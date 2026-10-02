@@ -68,7 +68,8 @@ prefijo `herr-`.
 |---|---|
 | `GET /herr-tablas/plantillas` · `POST /herr-tablas/desde-plantilla` | Plantillas de tabla listas para usar |
 | `POST /herr-tablas/nueva` `{name, columnas}` | Tabla nueva con las columnas escritas como texto (una por renglón; `Categoría: A, B` es una lista) |
-| `POST /herr-tablas/:id/campos` · `PATCH\|DELETE /herr-tablas/:id/campos/:clave` | Diseñador: agregar (tipo `auto` = por el nombre), editar (incluye `posicion` y fórmula guiada `operacion`+`dato_a`+`dato_b`) y quitar columnas. Responden `{id, modo, campo, v}` para el `then` del formulario |
+| `POST /herr-tablas/:id/campos` · `PATCH\|DELETE /herr-tablas/:id/campos/:clave` | Diseñador: agregar (tipo `auto` = por el nombre), editar (incluye `posicion`, fórmula guiada `operacion`+`dato_a`+`dato_b` y `enlace` = id de la tabla enlazada) y quitar columnas. Responden `{id, modo, campo, v}` para el `then` del formulario |
+| `PATCH /herr-tablas/:id/campos/:clave/opcion` | Qué se ve de un enlace al elegirlo: por parte de la opción (`ref_leyenda`, `ref_leyenda_secundaria`, `ref_descripcion`, `ref_descripcion_secundaria`) una columna (`columna_<parte>`) o una plantilla con los nombres entre llaves (`plantilla_<parte>`: `{Nombre} · Tel. {Teléfono}`) |
 | `POST /herr-tablas/:id/constantes` · `PATCH\|DELETE …/constantes/:clave` · `POST /herr-tablas/:id/resumenes` · `DELETE …/resumenes/:clave` | Valores fijos y totales (guiados con `tipo`+`campo` o con fórmula escrita con los nombres visibles) |
 | `GET /herr-tablas/:id/resumen` | Agregados y resúmenes de la tabla |
 | `POST /herr-tablas/:id/cerrar` | Cierre: archiva las filas en `herr-cierres` y vacía la tabla |

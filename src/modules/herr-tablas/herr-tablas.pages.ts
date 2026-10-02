@@ -4,38 +4,12 @@ import {
   type NoxUiNode,
 } from "@opus-perpetuus/imperium-core-kit";
 import { texto } from "../../lib/comun.ts";
-import { formatear, valores_resumen } from "../../lib/formulas/calculadora.ts";
-import { decimales_de, spec_de_fila, type CampoSpec } from "../../lib/formulas/esquema.ts";
-import { texto_a_numero } from "../../lib/formulas/motor.ts";
-import { parsear } from "../../lib/formulas/multivalor.ts";
+import { valores_resumen } from "../../lib/formulas/calculadora.ts";
+import { spec_de_fila } from "../../lib/formulas/esquema.ts";
 import { ordenar } from "../../lib/formulas/orden.ts";
 import { ID_TABLA, href_tabla, migas, pagina_campo, pagina_disenar, pagina_inicio } from "./herr-tablas.disenador.ts";
-import { etiquetas_referencia, filas_recalculadas, registros_de } from "./herr-tablas.flow.ts";
+import { etiquetas_referencia, filas_recalculadas, registros_de, valor_presentado } from "./herr-tablas.flow.ts";
 import { API, OWNER, boton, con_unidad, nodo, pagina } from "./herr-tablas.nox.ts";
-
-const NUMERICOS = new Set(["numero", "dinero", "entero", "calculado"]);
-
-/** El valor de un campo como se lee en la lista: números con sus decimales y unidad, referencias por etiqueta. */
-export function valor_presentado(
-  campo: CampoSpec,
-  raw: string,
-  etiquetas: Map<string, Map<string, string>>,
-): string {
-  if (!raw) return "";
-  if (campo.tipo === "foto") return "Foto";
-  if (campo.tipo === "booleano") return raw === "true" ? "Sí" : "No";
-  if (campo.tipo === "referencia") {
-    const de = etiquetas.get(campo.clave);
-    return (campo.multiple ? parsear(raw) : [raw]).map((id) => de?.get(id) ?? "—").join(" · ");
-  }
-  if (campo.multiple) return parsear(raw).join(" · ");
-  if (NUMERICOS.has(campo.tipo)) {
-    const n = texto_a_numero(raw);
-    const valor = n === null ? raw : formatear(n, campo.tipo === "entero" ? 0 : decimales_de(campo));
-    return con_unidad(valor, campo.unidad);
-  }
-  return con_unidad(raw, campo.unidad);
-}
 
 export const herr_tablas_pages: KirletPageDecl[] = [
   {

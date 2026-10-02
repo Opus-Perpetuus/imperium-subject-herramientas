@@ -637,6 +637,118 @@ describe("diseñador", () => {
     expect((await call("DELETE", `${base}/resumenes/falta`)).status).toBe(200);
     expect((await call("DELETE", `${base}/constantes/deuda_a_saldar`)).status).toBe(200);
   });
+
+  test("qué se ve de un enlace: una columna o una plantilla por cada parte de la opción", async () => {
+    const motos = await nueva("Motos", "Nombre\nPlacas\nColor: Rojo, Negro\nKilometraje (km)");
+    const italika = await call("POST", "/herr-registros/captura", {
+      tabla_id: motos.id,
+      nombre: "Italika 150",
+      placas: "JAL-123",
+      color: "Rojo",
+      kilometraje: "1500",
+    });
+    const jornadas = await nueva("Jornadas", "Fecha");
+    const url = `/herr-tablas/${jornadas.id}/campos`;
+    expect((await call("POST", url, { etiqueta: "Moto", tipo: "referencia" })).data.modo).toBe("campo");
+    const sin_tabla = await call("PATCH", `${url}/moto/opcion`, { columna_ref_leyenda: "nombre" });
+    expect(sin_tabla.status).toBe(409);
+    expect((await call("PATCH", `${url}/moto`, { enlace: motos.id })).data.modo).toBe("campo");
+
+    const opcion = `${url}/moto/opcion`;
+    const columnas = await call("PATCH", opcion, {
+      columna_ref_leyenda: "nombre",
+      columna_ref_leyenda_secundaria: "(ninguna)",
+      columna_ref_descripcion: "color",
+      columna_ref_descripcion_secundaria: "(ninguna)",
+    });
+    expect(columnas.data).toMatchObject({ modo: "campo", campo: "moto" });
+    const plantillas_escritas = await call("PATCH", opcion, {
+      plantilla_ref_leyenda: "{Nombre}",
+      plantilla_ref_leyenda_secundaria: "Placas {placas}",
+      plantilla_ref_descripcion: "{Color}",
+      plantilla_ref_descripcion_secundaria: "{KILOMETRAJE} recorridos",
+    });
+    expect(plantillas_escritas.status).toBe(200);
+    const moto = (await call("GET", `/herr-tablas/${jornadas.id}`)).data.campos[1];
+    expect(moto).toMatchObject({
+      ref_leyenda: "{nombre}",
+      ref_leyenda_secundaria: "Placas {placas}",
+      ref_descripcion: "{color}",
+      ref_descripcion_secundaria: "{kilometraje} recorridos",
+    });
+
+    const captura = await pagina(`/pages/herramientas.herr-registro?tabla=${jornadas.id}`);
+    expect(nodos(captura, "nox.input-datalist")[0]!.props!.options).toEqual([
+      {
+        value: italika.data.id,
+        label: "Italika 150",
+        leyend_secondary: "Placas JAL-123",
+        description: "Rojo",
+        description_secondary: "1500.00 km recorridos",
+      },
+    ]);
+
+    await call("PATCH", opcion, { plantilla_ref_leyenda: "{Nombre} ({Color})" });
+    await call("POST", "/herr-registros/captura", { tabla_id: jornadas.id, fecha: "2026-03-01", moto: italika.data.id });
+    const lista = await pagina(`/pages/herramientas.herr-tabla?id=${jornadas.id}`);
+    expect(nodos(lista, "nox.table")[0]!.props!.rows).toEqual([{ fecha: "2026-03-01", moto: "Italika 150 (Rojo)" }]);
+
+    // Renombrar una columna de la otra tabla no rompe la plantilla: se guarda con la clave.
+    await call("PATCH", `/herr-tablas/${motos.id}/campos/placas`, { etiqueta: "Matrícula" });
+    const editor = await pagina(`/pages/herramientas.herr-tabla?id=${jornadas.id}&modo=campo&campo=moto`);
+    const props = (name: string) =>
+      [...nodos(editor, "nox.input-menu"), ...nodos(editor, "nox.input-text")].find((n) => n.props!.name === name)!.props!;
+    expect(props("columna_ref_leyenda").value).toBe("(plantilla)");
+    expect(props("columna_ref_leyenda").options).toContainEqual({ value: "(plantilla)", label: "La plantilla «{Nombre} ({Color})»" });
+    expect(props("columna_ref_descripcion").value).toBe("color");
+    expect(props("plantilla_ref_leyenda_secundaria").value).toBe("Placas {Matrícula}");
+    const [previa] = nodos(editor, "nox.detail");
+    expect(previa!.props!.items).toEqual([
+      { label: "Título", value: "Italika 150 (Rojo)", emphasis: true },
+      { label: "Junto al título", value: "Placas JAL-123" },
+      { label: "Descripción", value: "Rojo" },
+      { label: "Segunda descripción", value: "1500.00 km recorridos" },
+    ]);
+
+    const desconocidas = await call("PATCH", opcion, { plantilla_ref_descripcion: "{Placa} de {Marca}" });
+    expect(desconocidas.status).toBe(400);
+    expect(String(desconocidas.json.message)).toBe("«Descripción»: «Placa», «Marca» no son columnas de «Motos»");
+    expect((await call("PATCH", opcion, { columna_ref_descripcion: "marca" })).status).toBe(400);
+    expect((await call("PATCH", `${url}/fecha/opcion`, { columna_ref_leyenda: "nombre" })).status).toBe(409);
+
+    // Otra tabla: las plantillas nombraban columnas de la de antes.
+    const otra = await nueva("Bicis", "Modelo");
+    await call("PATCH", `${url}/moto`, { enlace: otra.id });
+    expect((await call("GET", `/herr-tablas/${jornadas.id}`)).data.campos[1]).toMatchObject({
+      tabla_ref_id: otra.id,
+      ref_leyenda: null,
+      ref_leyenda_secundaria: null,
+      ref_descripcion: null,
+      ref_descripcion_secundaria: null,
+    });
+  });
+
+  test("un enlace de la tabla enlazada se lee por su título, y dos tablas que se enlazan entre sí no se persiguen", async () => {
+    const personas = await nueva("Personas", "Nombre");
+    const motos = await nueva("Motos", "Nombre");
+    const enlazar = async (tabla: string, etiqueta: string, clave: string, destino: string, titulo: string) => {
+      await call("POST", `/herr-tablas/${tabla}/campos`, { etiqueta, tipo: "referencia" });
+      await call("PATCH", `/herr-tablas/${tabla}/campos/${clave}`, { enlace: destino });
+      return call("PATCH", `/herr-tablas/${tabla}/campos/${clave}/opcion`, { plantilla_ref_leyenda: titulo });
+    };
+    expect((await enlazar(personas.id, "Moto favorita", "moto_favorita", motos.id, "{Nombre}")).status).toBe(200);
+    expect((await enlazar(motos.id, "Dueño", "dueno", personas.id, "{Nombre} ({Moto favorita})")).status).toBe(200);
+    const moto_favorita = { plantilla_ref_leyenda: "{Nombre} de {Dueño}" };
+    expect((await call("PATCH", `/herr-tablas/${personas.id}/campos/moto_favorita/opcion`, moto_favorita)).status).toBe(200);
+    const ana = await call("POST", "/herr-registros/captura", { tabla_id: personas.id, nombre: "Ana" });
+    const italika = await call("POST", "/herr-registros/captura", { tabla_id: motos.id, nombre: "Italika", dueno: ana.data.id });
+    await call("POST", "/herr-registros/captura", { tabla_id: personas.id, id: ana.data.id, nombre: "Ana", moto_favorita: italika.data.id });
+
+    const captura = await pagina(`/pages/herramientas.herr-registro?tabla=${personas.id}`);
+    expect(nodos(captura, "nox.input-datalist")[0]!.props!.options).toEqual([
+      { value: italika.data.id, label: "Italika de Ana (—)" },
+    ]);
+  });
 });
 
 /**
@@ -684,7 +796,8 @@ describe("páginas del diseñador", () => {
     for (const tipo of ["texto", "numero", "entero", "booleano", "hora", "fecha_hora", "opcion", "foto", "nota", "ruta", "nivel", "geo", "calculado", "referencia"]) {
       expect((await call("POST", url, { etiqueta: `Col ${tipo}`, tipo })).status).toBe(200);
     }
-    await call("PATCH", `${url}/col_referencia`, { enlace: `${otra.id}|nombre` });
+    await call("PATCH", `${url}/col_referencia`, { enlace: otra.id });
+    await call("PATCH", `${url}/col_referencia/opcion`, { columna_ref_leyenda: "nombre" });
     await call("PATCH", `${url}/col_calculado`, { formula: "{Monto} * 2" });
     await call("POST", `/herr-tablas/${t.id}/constantes`, { etiqueta: "Meta", valor: "10" });
     await call("POST", "/herr-registros/captura", { tabla_id: t.id, fecha: "2026-09-01", monto: "5" });
