@@ -24,7 +24,7 @@ bun run manifest:emit   # regenera manifest.json tras tocar módulos o menús
 
 | Herramienta | Qué hace | Módulos (`resource`) |
 |---|---|---|
-| **Tablas personalizadas** | Bases de datos a medida sin programar: diseñador guiado (columnas escritas como texto, tipo adivinado por el nombre, cálculos y totales guiados, valores fijos), plantillas; cierre que archiva las filas. | `herr-tablas`, `herr-registros`, `herr-cierres` |
+| **Tablas personalizadas** | Bases de datos a medida sin programar: diseñador guiado (columnas escritas como texto, tipo adivinado por el nombre, cálculos y totales guiados, valores fijos), plantillas; cierre que archiva las filas; impresión en PDF o PNG. | `herr-tablas`, `herr-registros`, `herr-cierres` |
 | **Reparto a domicilio** | Jornadas de reparto con vehículo (el registro es la app **Vehículos**, dependencia; aquí solo los ajustes de reparto: tanque, medidor, calibración), pedidos con precio automático desde un catálogo, directorio de domicilios con enlaces a mapas, gastos, caja y liquidación, recargas de combustible con calibración del medidor, rutas GPS con detección de paradas. | `herr-jornadas`, `herr-pedidos`, `herr-gastos`, `herr-caja`, `herr-vehiculos`, `herr-domicilios`, `herr-etiquetas`, `herr-recargas`, `herr-rutas`, `herr-menu-categorias`, `herr-menu-tamanos`, `herr-menu-productos`, `herr-menu-extras`, `herr-menu-complementos`, `herr-menu-promos` |
 | **Teléfono** | Reglas del contestador automático (a quién contestar, rechazar o silenciar; locución), registro de llamadas. La ejecución (filtrar y contestar llamadas) es **solo de la app Android**. | `herr-telefono` |
 | **Asistente de voz** | Interpreta órdenes en español (intención + datos) y las ejecuta sobre Reparto. Escuchar y hablar es **solo de la app Android**; el intérprete sirve también para una caja de texto. | `herr-voz` |
@@ -74,6 +74,7 @@ prefijo `herr-`.
 | `GET /herr-tablas/:id/resumen` | Agregados y resúmenes de la tabla |
 | `POST /herr-tablas/:id/cerrar` | Cierre: archiva las filas en `herr-cierres` y vacía la tabla |
 | `POST /herr-tablas/:id/buscar` `{q}` | Búsqueda por prefijos sobre los registros |
+| `POST /herr-tablas/:id/imprimir` `{formato, q, r_<id>}` | Pedido de impresión (PDF o PNG; los marcados, o todos los que encuentra `q`). Responde `{id, t}`: la hoja `herr-tabla?modo=impreso&t=…` entrega el archivo como enlace `data:` con `download` (el lanzador no descarga lo que responde una acción). Fuente Montserrat empaquetada en `src/lib/impresion/fuentes/` |
 | `POST /herr-registros/captura` | Alta/edición de un registro con campos planos (lo usa el formulario dinámico) |
 | `GET /herr-jornadas/activa` · `POST /herr-jornadas/iniciar` · `POST /herr-jornadas/:id/terminar` · `POST /herr-jornadas/:id/cambiar-vehiculo` | Ciclo de la jornada. `terminar` además entrega los cobros (sin devolver el fondo de cambio) y responde `{data, liquidacion}` |
 | `GET /herr-jornadas/:id/liquidacion` · `POST /herr-jornadas/:id/liquidar` | Vista previa y confirmación de la entrega de cobros |

@@ -24,6 +24,7 @@ import {
   texto_a_numero,
   type TipoAgregado,
 } from "../../lib/formulas/motor.ts";
+import { ordenar } from "../../lib/formulas/orden.ts";
 import { rellenar_plantilla } from "../../lib/formulas/plantilla.ts";
 import { plantilla_de, plantillas } from "../../lib/formulas/plantillas.ts";
 import { con_unidad } from "./herr-tablas.nox.ts";
@@ -194,6 +195,29 @@ export async function etiquetas_referencia(
   return new Map([...opciones].map(([clave, de]) => [clave, new Map([...de].map(([id, o]) => [id, o.label]))]));
 }
 
+/** Ids de las filas que encuentra `q` en sus valores, calculados y etiquetas de enlaces; las mejores primero. */
+export function coincidencias(
+  spec: TablaSpec,
+  filas: Registro[],
+  etiquetas: Map<string, Map<string, string>>,
+  q: string,
+): string[] {
+  const entradas = filas.map((f) => ({
+    id: f.id,
+    texto: texto_buscable(f.valores, etiquetas_de_fila(f.valores, etiquetas), spec),
+    updated_at: f.updated_at,
+  }));
+  return buscar(construir_indice(entradas), q, new Map(entradas.map((e) => [e.id, e])));
+}
+
+/** Lo que enseña «Ver tabla» (y lo que se imprime): las filas en su orden, las columnas de la lista y las etiquetas de los enlaces. */
+export async function vista_de_tabla(data: KirletCtx["data"], spec: TablaSpec) {
+  const filas = ordenar(spec, filas_recalculadas(spec, await registros_de({ data }, spec.id)));
+  const etiquetas = await etiquetas_referencia(data, spec);
+  const columnas = spec.campos.some((c) => c.en_resumen) ? spec.campos.filter((c) => c.en_resumen) : spec.campos;
+  return { filas, etiquetas, columnas };
+}
+
 /** Etiquetas resueltas de las referencias de una fila, para indexarlas como texto. */
 function etiquetas_de_fila(
   valores: Record<string, string>,
@@ -328,17 +352,10 @@ export const herr_tablas_flow = define_routes({
     const body = await ctx.body<{ q?: string }>();
     const registros = await registros_de(ctx, spec.id);
     const etiquetas = await etiquetas_referencia(ctx.data, spec);
-    const entradas = filas_recalculadas(spec, registros).map((f) => ({
-      id: f.id,
-      texto: texto_buscable(f.valores, etiquetas_de_fila(f.valores, etiquetas), spec),
-      updated_at: f.updated_at,
-    }));
     const por_registro = new Map(registros.map((r) => [String(r.id), r]));
-    const data = buscar(
-      construir_indice(entradas),
-      texto(body.q),
-      new Map(entradas.map((e) => [e.id, e])),
-    ).map((id) => por_registro.get(id)!);
+    const data = coincidencias(spec, filas_recalculadas(spec, registros), etiquetas, texto(body.q)).map(
+      (id) => por_registro.get(id)!,
+    );
     return { data, total_elementos: data.length };
   },
 });

@@ -1,6 +1,7 @@
 import { define_crud, define_module } from "@opus-perpetuus/imperium-core-kit";
 import { herr_tablas_disenio, preparar_tabla } from "./herr-tablas.disenio.ts";
 import { herr_tablas_flow } from "./herr-tablas.flow.ts";
+import { herr_tablas_impresion } from "./herr-tablas.impresion.ts";
 import { herr_tablas_pages } from "./herr-tablas.pages.ts";
 import { herr_tablas_tables } from "./herr-tablas.tables.ts";
 
@@ -15,6 +16,7 @@ export const herr_tablas_module = define_module({
   routes: [
     ...herr_tablas_flow,
     ...herr_tablas_disenio,
+    ...herr_tablas_impresion,
     ...define_crud({
       resource: "herr-tablas",
       table: "herr_tablas",

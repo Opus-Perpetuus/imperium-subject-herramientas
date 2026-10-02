@@ -13,6 +13,7 @@ import { validar_esquema } from "../../lib/formulas/esquema.ts";
 import { plantillas } from "../../lib/formulas/plantillas.ts";
 import { herr_cierres_module } from "../herr-cierres/herr-cierres.routes.ts";
 import { herr_registros_module } from "../herr-registros/herr-registros.routes.ts";
+import { nombre_archivo } from "./herr-tablas.impresion.ts";
 import { herr_tablas_module } from "./herr-tablas.routes.ts";
 
 const SUBJECT = define_subject({
@@ -773,6 +774,56 @@ describe("diseñador", () => {
     });
   });
 
+  test("imprimir: todos, los de una búsqueda o solo los marcados, en PDF o PNG con columnas y total", async () => {
+    const t = await nueva("Bitácora", "Producto\nCantidad");
+    const url = `/herr-tablas/${t.id}`;
+    const capturados = [];
+    for (const [producto, cantidad] of [["Vino tinto", "35"], ["Mezcal", "12"], ["Vino blanco", "7"]]) {
+      capturados.push((await call("POST", "/herr-registros/captura", { tabla_id: t.id, producto, cantidad })).data);
+    }
+    const ver = await pagina(`/pages/herramientas.herr-tabla?id=${t.id}`);
+    expect(nodos(ver, "nox.button").some((b) => b.props!.href === `/internal/herr-tabla?id=${t.id}&modo=imprimir`)).toBe(true);
+
+    const elegir = await pagina(`/pages/herramientas.herr-tabla?id=${t.id}&modo=imprimir`);
+    const [form] = nodos(elegir, "nox.form");
+    expect(form!.props).toMatchObject({ method: "POST", action: `api://herr-tablas/${t.id}/imprimir` });
+    const casillas = nodos(elegir, "nox.input-checkbox");
+    expect(casillas.map((c) => c.props!.label).sort()).toEqual(["Mezcal · 12", "Vino blanco · 7", "Vino tinto · 35"]);
+    const con_q = await pagina(`/pages/herramientas.herr-tabla?id=${t.id}&modo=imprimir&q=vino`);
+    expect(nodos(con_q, "nox.input-checkbox")).toHaveLength(2);
+
+    const impreso = async (body: Record<string, unknown>) => {
+      const r = await call("POST", `${url}/imprimir`, body);
+      expect(r.status).toBe(200);
+      expect(r.data.id).toBe(t.id);
+      return pagina(`/pages/herramientas.herr-tabla?id=${t.id}&modo=impreso&t=${r.data.t}`);
+    };
+    const resumen = (doc: NoxPageDescriptor) => String(nodos(doc, "nox.markdown-view")[0]!.props!.content);
+    const enlaces = (doc: NoxPageDescriptor) => String(nodos(doc, "nox.html")[0]!.props!.html);
+
+    const todos = await impreso({ formato: "pdf", q: "" });
+    expect(resumen(todos)).toStartWith("**3 registros** · 1 hoja");
+    const html = enlaces(todos);
+    expect(html).toContain(`download="Bitacora `);
+    const pdf = Buffer.from(/data:application\/pdf;base64,([^"]+)"/.exec(html)![1]!, "base64");
+    expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+
+    const busqueda = await impreso({ formato: "pdf", q: "vino" });
+    expect(resumen(busqueda)).toStartWith("**2 registros**");
+
+    const marcados = await impreso({ formato: "png", q: "", [`r_${capturados[1].id}`]: true, [`r_${capturados[0].id}`]: false });
+    expect(resumen(marcados)).toStartWith("**1 registro** · 1 hoja");
+    expect(enlaces(marcados)).toContain("data:image/png;base64,");
+    expect(nodos(marcados, "nox.image-viewer")[0]!.props!.images).toHaveLength(1);
+
+    expect(nombre_archivo("Bitácoras Cava: año/2026", "pdf", "2026-10-01")).toBe("Bitacoras Cava ano 2026 2026-10-01.pdf");
+    expect(nombre_archivo("😀", "png", "2026-10-01")).toBe("Tabla 2026-10-01.png");
+
+    const vencido = await pagina(`/pages/herramientas.herr-tabla?id=${t.id}&modo=impreso&t=no-existe`);
+    expect(nodos(vencido, "nox.empty")[0]!.props!.text).toBe("Esta impresión ya no está");
+    expect((await call("POST", `${url}/imprimir`, { formato: "docx" })).status).toBe(400);
+  });
+
   test("un enlace de la tabla enlazada se lee por su título, y dos tablas que se enlazan entre sí no se persiguen", async () => {
     const personas = await nueva("Personas", "Nombre");
     const motos = await nueva("Motos", "Nombre");
@@ -857,6 +908,15 @@ describe("páginas del diseñador", () => {
       `/pages/herramientas.herr-tabla?id=${t.id}&modo=campo&campo=no_existe`,
       `/pages/herramientas.herr-tabla?id=${(await call("POST", "/herr-tablas/nueva", { name: "Sin columnas" })).data.id}`,
       "/pages/herramientas.herr-registro",
+      `/pages/herramientas.herr-tabla?id=${t.id}&modo=imprimir`,
+      `/pages/herramientas.herr-tabla?id=${t.id}&modo=imprimir&q=nada-coincide`,
+      ...(await Promise.all(
+        ["pdf", "png"].map(async (formato) => {
+          const r = await call("POST", `/herr-tablas/${t.id}/imprimir`, { formato });
+          return `/pages/herramientas.herr-tabla?id=${t.id}&modo=impreso&t=${r.data.t}`;
+        }),
+      )),
+      `/pages/herramientas.herr-tabla?id=${t.id}&modo=impreso&t=vencido`,
     ];
     for (const ruta of rutas) {
       const doc = await pagina(ruta);

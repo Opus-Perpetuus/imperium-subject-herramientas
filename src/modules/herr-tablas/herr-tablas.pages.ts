@@ -6,9 +6,9 @@ import {
 import { texto } from "../../lib/comun.ts";
 import { valores_resumen } from "../../lib/formulas/calculadora.ts";
 import { spec_de_fila } from "../../lib/formulas/esquema.ts";
-import { ordenar } from "../../lib/formulas/orden.ts";
 import { ID_TABLA, href_tabla, migas, pagina_campo, pagina_disenar, pagina_inicio } from "./herr-tablas.disenador.ts";
-import { etiquetas_referencia, filas_recalculadas, registros_de, valor_presentado } from "./herr-tablas.flow.ts";
+import { valor_presentado, vista_de_tabla } from "./herr-tablas.flow.ts";
+import { pagina_impreso, pagina_imprimir } from "./herr-tablas.impresion.ts";
 import { API, OWNER, boton, con_unidad, nodo, pagina } from "./herr-tablas.nox.ts";
 
 export const herr_tablas_pages: KirletPageDecl[] = [
@@ -80,16 +80,17 @@ export const herr_tablas_pages: KirletPageDecl[] = [
       const modo = params.get("modo");
       if (modo === "disenar") return pagina_disenar(data, spec, params);
       if (modo === "campo") return pagina_campo(data, spec, texto(params.get("campo")));
-      const filas = ordenar(spec, filas_recalculadas(spec, await registros_de({ data }, spec.id)));
-      const etiquetas = await etiquetas_referencia(data, spec);
-      const columnas = spec.campos.some((c) => c.en_resumen)
-        ? spec.campos.filter((c) => c.en_resumen)
-        : spec.campos;
+      if (modo === "imprimir") return pagina_imprimir(data, spec, params);
+      if (modo === "impreso") return pagina_impreso(data, spec, params);
+      const { filas, etiquetas, columnas } = await vista_de_tabla(data, spec);
       const hijos: NoxUiNode[] = [
         migas(["Mis tablas", "/internal/herr-tabla"], [spec.name, href_tabla(spec.id)]),
         nodo("nox.toolbar", {}, [
           boton("Nuevo registro", { href: `/internal/herr-registro?tabla=${spec.id}`, icon: "fa-plus", variant: "primary" }),
           boton("Diseñar", { href: href_tabla(spec.id, { modo: "disenar" }), icon: "fa-pen-ruler", variant: "secondary" }),
+          ...(spec.campos.length
+            ? [boton("Imprimir", { href: href_tabla(spec.id, { modo: "imprimir" }), icon: "fa-print", variant: "secondary" })]
+            : []),
         ]),
       ];
       if (spec.description) hijos.push(nodo("nox.markdown-view", { content: spec.description }));
