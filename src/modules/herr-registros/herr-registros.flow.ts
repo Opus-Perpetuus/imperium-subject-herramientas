@@ -56,7 +56,7 @@ function valor_de_campo(campo: CampoSpec, v: unknown): string {
 }
 
 /** Solo campos capturables de la tabla, y los requeridos presentes. */
-function valores_capturados(spec: TablaSpec, entrada: unknown): Record<string, string> {
+export function valores_capturados(spec: TablaSpec, entrada: unknown): Record<string, string> {
   const fuente = entrada ?? {};
   if (typeof fuente !== "object" || Array.isArray(fuente)) falla(400, "valores debe ser un objeto clave → valor");
   const capturables = new Map(spec.campos.filter((c) => c.tipo !== "calculado").map((c) => [c.clave, c]));
@@ -100,6 +100,16 @@ export async function preparar_registro(
   for (const campo of spec.campos) {
     if (campo.tipo !== "foto") continue;
     const raw = valores[campo.clave] ?? "";
+    const previa = antes[campo.clave] ?? "";
+    // El formulario enseña la miniatura (o el id del adjunto): si vuelve igual, la foto no cambió.
+    const sin_tocar =
+      es_foto_guardada(previa) &&
+      ((raw !== "" && raw === miniaturas_previas[campo.clave]) || (/^[a-f0-9]{16,}$/i.test(raw) && previa.endsWith(`/${raw}`)));
+    if (sin_tocar) {
+      valores[campo.clave] = previa;
+      if (miniaturas_previas[campo.clave]) miniaturas[campo.clave] = miniaturas_previas[campo.clave]!;
+      continue;
+    }
     const subida = await subir_foto(ctx, "herr-registros", id, raw);
     if (subida) {
       valores[campo.clave] = subida.url;
@@ -175,7 +185,7 @@ export function con_filtro_por_tabla(rutas: KirletRouteTable): KirletRouteTable 
   return rutas;
 }
 
-/** El mismo asiento que deja el CRUD genérico: la captura escribe directo y sin esto no quedaba rastro. */
+/** El mismo asiento que deja el CRUD genérico: la captura escribe directo, sin pasar por él. */
 async function anotar_historial(
   ctx: KirletCtx,
   action: "create" | "update",

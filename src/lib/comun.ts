@@ -154,15 +154,8 @@ const DATA_URL = /^data:([a-z]+\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/i;
 /** Una foto subida: la URL del adjunto y, si el núcleo la da, su miniatura en data URL. */
 export type FotoGuardada = { url: string; miniatura: string };
 
-/** Hasta 13.62 el núcleo respondía `ok` sin guardar nada y en la fila quedaba el texto "undefined". */
 export function es_foto_guardada(valor: unknown): valor is string {
   return typeof valor === "string" && /^(\/|https?:\/\/|data:image\/)/i.test(valor.trim());
-}
-
-/** El motivo que dio el núcleo, sin el envoltorio del cliente del kit. */
-function motivo_del_nucleo(error: unknown): string {
-  const mensaje = error instanceof Error ? error.message : String(error);
-  return /"error"\s*:\s*"([^"]+)"/.exec(mensaje)?.[1] ?? mensaje;
 }
 
 /**
@@ -192,7 +185,10 @@ export async function subir_foto(
       content_type: tipo,
     });
   } catch (error) {
-    falla(502, `No se pudo guardar la foto: ${motivo_del_nucleo(error)}`, "archivo_no_guardado");
+    // El cliente del kit envuelve la respuesta: «Kirlet service plane 400: {"error":"…"}».
+    const mensaje = error instanceof Error ? error.message : String(error);
+    const motivo = /"error"\s*:\s*"([^"]+)"/.exec(mensaje)?.[1] ?? mensaje;
+    falla(502, `No se pudo guardar la foto: ${motivo}`, "archivo_no_guardado");
   }
   if (!es_foto_guardada(guardado?.url)) {
     falla(502, "No se pudo guardar la foto: el servidor no la almacenó", "archivo_no_guardado");

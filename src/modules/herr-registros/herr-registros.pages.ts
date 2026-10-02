@@ -32,7 +32,7 @@ function coordenadas(raw: string): { latitude: number; longitude: number } | "" 
 }
 
 /** Un `nox.input-*` por tipo de campo, con el valor ya capturado si se edita. */
-export function nodo_entrada(campo: CampoSpec, raw: string, opciones?: Map<string, OpcionRef>): NoxUiNode {
+export function nodo_entrada(campo: CampoSpec, raw: string, opciones?: Map<string, OpcionRef>, miniatura?: string): NoxUiNode {
   const base = {
     name: campo.clave,
     label: campo.unidad ? `${campo.etiqueta} (${campo.unidad})` : campo.etiqueta,
@@ -60,8 +60,12 @@ export function nodo_entrada(campo: CampoSpec, raw: string, opciones?: Map<strin
         ? nodo("nox.input-checkbox-group", { ...base, options, value: parsear(raw) })
         : nodo("nox.input-menu", { ...base, options, value: raw });
     }
-    case "foto":
-      return nodo("nox.input-image", { ...base, value: es_foto_guardada(raw) ? raw : "" });
+    case "foto": {
+      // La miniatura se pinta en línea (desde la APK un `<img>` a `/api/media` sale sin la
+      // sesión) y, si vuelve igual, la captura sabe que la foto no cambió. Sin ella, el id del adjunto.
+      const adjunto = /\/media\/([^/?#]+)$/.exec(raw)?.[1] ?? raw;
+      return nodo("nox.input-image", { ...base, value: es_foto_guardada(raw) ? miniatura || adjunto : "" });
+    }
     case "nota":
       return nodo("nox.input-markdown", { ...base, value: raw });
     case "geo":
@@ -86,27 +90,6 @@ export function nodo_entrada(campo: CampoSpec, raw: string, opciones?: Map<strin
   }
 }
 
-type Entrada = Awaited<ReturnType<NoxServices["history"]["list"]>>[number];
-
-/** Lo que dice una entrada del historial: qué pasó, cuándo y quién, y qué cambió. */
-function punto_de_historial(spec: TablaSpec, e: Entrada, presentar: (c: CampoSpec, raw: string) => string) {
-  const payload = (e.payload ?? {}) as { before?: DomainRow | null; after?: DomainRow | null };
-  const antes = objeto(payload.before?.valores);
-  const despues = objeto(payload.after?.valores);
-  const cuando = [momento_legible(e.created_at), texto(e.actor_label)].filter(Boolean).join(" · ");
-  if (e.action === "create") {
-    const capturado = cambios_de(spec.campos, {}, despues, presentar);
-    return {
-      title: "Se capturó",
-      when: cuando,
-      description: capturado.map((c) => `${c.etiqueta}: ${c.despues}`).join(" · "),
-    };
-  }
-  if (e.action === "delete") return { title: "Se eliminó", when: cuando, description: "" };
-  const cambios = cambios_de(spec.campos, antes, despues, presentar);
-  return { title: titulo_de_cambios(cambios), when: cuando, description: describir_cambios(cambios) };
-}
-
 async function pagina_historial(
   data: KirletDataClient,
   nox: NoxServices,
@@ -127,7 +110,22 @@ async function pagina_historial(
     entradas.length
       ? nodo("nox.timeline", {
           text: "Cambios, del más reciente al primero",
-          items: entradas.map((e, i) => ({ id: e.id, state: i ? "done" : "current", ...punto_de_historial(spec, e, presentar) })),
+          items: entradas.map((e, i) => {
+            const payload = (e.payload ?? {}) as { before?: DomainRow | null; after?: DomainRow | null };
+            const despues = objeto(payload.after?.valores);
+            const base = {
+              id: e.id,
+              state: i ? "done" : "current",
+              when: [momento_legible(e.created_at), texto(e.actor_label)].filter(Boolean).join(" · "),
+            };
+            if (e.action === "create") {
+              const capturado = cambios_de(spec.campos, {}, despues, presentar);
+              return { ...base, title: "Se capturó", description: capturado.map((c) => `${c.etiqueta}: ${c.despues}`).join(" · ") };
+            }
+            if (e.action === "delete") return { ...base, title: "Se eliminó", description: "" };
+            const cambios = cambios_de(spec.campos, objeto(payload.before?.valores), despues, presentar);
+            return { ...base, title: titulo_de_cambios(cambios), description: describir_cambios(cambios) };
+          }),
         })
       : nodo("nox.empty", {
           text: "Aún no hay cambios guardados",
@@ -228,10 +226,11 @@ export const herr_registros_pages: KirletPageDecl[] = [
       const registro = id ? await data.findOne("herr_registros", { id }) : null;
       if (registro && url?.searchParams.get("modo") === "historial") return pagina_historial(data, nox, spec, registro);
       const valores = objeto(registro?.valores);
+      const miniaturas = objeto(registro?.miniaturas);
       const opciones = await opciones_referencia(data, spec);
       const entradas = spec.campos
         .filter((c) => c.tipo !== "calculado")
-        .map((c) => nodo_entrada(c, valores[c.clave] ?? c.valor_por_defecto ?? "", opciones.get(c.clave)));
+        .map((c) => nodo_entrada(c, valores[c.clave] ?? c.valor_por_defecto ?? "", opciones.get(c.clave), miniaturas[c.clave]));
       const form = nodo(
         "nox.form",
         {

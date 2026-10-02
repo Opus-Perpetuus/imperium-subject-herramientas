@@ -28,10 +28,13 @@ type Server = ReturnType<typeof create_kirlet_test_context>;
 let server: Server;
 let nox: MemoryNoxServices;
 
-/** El núcleo v13 devuelve una miniatura con cada imagen que guarda. */
+/** Como el núcleo v13: la URL es la de `/api/media` y cada imagen trae su miniatura. */
 function con_miniaturas(n: MemoryNoxServices): MemoryNoxServices {
   const save = n.files.save;
-  n.files.save = async (input) => ({ ...(await save(input)), thumbnail: MINI }) as NoxFileRef;
+  n.files.save = async (input) => {
+    const ref = await save(input);
+    return { ...ref, url: `/api/media/${ref.id}`, thumbnail: MINI } as NoxFileRef;
+  };
   return n;
 }
 
@@ -96,7 +99,7 @@ describe("fotos de un registro", () => {
   test("se guardan como adjunto con su miniatura y Ver tabla las enseña", async () => {
     const tabla_id = await productos();
     const r = await capturar({ tabla_id, nombre: "Mezcal", foto: PNG });
-    expect(r.valores.foto).toStartWith("/api/p/files/");
+    expect(r.valores.foto).toStartWith("/api/media/");
     expect(r.miniaturas).toEqual({ foto: MINI });
 
     const doc = await pagina(`/pages/herramientas.herr-tabla?id=${tabla_id}`);
@@ -125,6 +128,25 @@ describe("fotos de un registro", () => {
     const sin = await capturar({ tabla_id, id: r.id, nombre: "Mezcal joven", foto: "" });
     expect(sin.valores.foto).toBe("");
     expect(sin.miniaturas).toEqual({});
+  });
+
+  test("el formulario enseña la miniatura; si vuelve igual, la foto se queda como estaba", async () => {
+    const tabla_id = await productos();
+    const r = await capturar({ tabla_id, nombre: "Mezcal", foto: PNG });
+    const form = await pagina(`/pages/herramientas.herr-registro?tabla=${tabla_id}&id=${r.id}`);
+    expect(nodos(form, "nox.input-image")[0]!.props!.value).toBe(MINI);
+
+    const igual = await capturar({ tabla_id, id: r.id, nombre: "Mezcal joven", foto: MINI });
+    expect(igual.valores.foto).toBe(r.valores.foto);
+    expect(igual.miniaturas).toEqual({ foto: MINI });
+    expect(await nox.files.list({ resource: "herr-registros" })).toHaveLength(1);
+
+    const id_adjunto = r.valores.foto.split("/").at(-1);
+    await server.data.update("herr_registros", { id: r.id }, { miniaturas: {} });
+    const sin_mini = await pagina(`/pages/herramientas.herr-registro?tabla=${tabla_id}&id=${r.id}`);
+    expect(nodos(sin_mini, "nox.input-image")[0]!.props!.value).toBe(id_adjunto);
+    const por_id = await capturar({ tabla_id, id: r.id, nombre: "Mezcal joven", foto: id_adjunto });
+    expect(por_id.valores.foto).toBe(r.valores.foto);
   });
 
   test("si el servidor no guarda la foto, el registro no se guarda", async () => {
