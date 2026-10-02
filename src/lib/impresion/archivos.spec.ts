@@ -56,3 +56,48 @@ describe("archivos de una impresión", () => {
     expect(svg).not.toContain("<otro>");
   });
 });
+
+describe("fotos en los archivos", () => {
+  /** JPEG rojo de 12×8. */
+  const ROJO = "data:image/jpeg;base64,/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAAIAAwDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAABgf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCIAGltf//Z";
+  const con_foto: Impreso = {
+    titulo: "Productos",
+    subtitulo: "",
+    columnas: [{ titulo: "Nombre" }, { titulo: "Foto", imagen: true }],
+    filas: [["Mezcal", ROJO]],
+    total: "Total: 1 registro",
+  };
+
+  test("el PDF lleva la foto incrustada una vez", async () => {
+    const hojas = componer({ ...con_foto, filas: [["Mezcal", ROJO], ["Otra vez", ROJO]] }, await medida());
+    const pdf = new TextDecoder("latin1").decode(await pdf_de(hojas, "Productos"));
+    expect(pdf.match(/\/Subtype\s*\/Image/g)).toHaveLength(1);
+  });
+
+  test("el PNG pinta la foto dentro de su caja", async () => {
+    const [hoja] = componer(con_foto, await medida());
+    const [png] = await png_de([hoja!]);
+    const { Resvg } = await import("@resvg/resvg-wasm");
+    const imagen = hoja!.imagenes[0]!;
+    const escala = 150 / 72;
+    const svg = svg_de(hoja!);
+    expect(svg).toContain(`<image href="${ROJO}"`);
+    const pixeles = new Resvg(svg, { fitTo: { mode: "width", value: Math.round(hoja!.ancho * escala) } }).render();
+    const x = Math.round((imagen.x + imagen.ancho / 2) * escala);
+    const y = Math.round((imagen.y + imagen.alto / 2) * escala);
+    const i = (y * pixeles.width + x) * 4;
+    const [r, g, b] = [pixeles.pixels[i]!, pixeles.pixels[i + 1]!, pixeles.pixels[i + 2]!];
+    expect(r).toBeGreaterThan(180);
+    expect(g).toBeLessThan(80);
+    expect(b).toBeLessThan(80);
+    expect(dimensiones(png!)).toEqual([1275, 1650]);
+  });
+
+  test("una imagen que no es data URL de JPEG o PNG no se dibuja ni rompe el archivo", async () => {
+    const [hoja] = componer({ ...con_foto, filas: [["Mezcal", "/api/media/abc"]] }, await medida());
+    expect(svg_de(hoja!)).not.toContain("<image");
+    const pdf = await pdf_de([hoja!], "Productos");
+    expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe("%PDF-");
+  });
+});
+

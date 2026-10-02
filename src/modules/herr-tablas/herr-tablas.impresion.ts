@@ -1,5 +1,5 @@
 import { define_routes, type KirletCtx, type NoxPageDescriptor, type NoxUiNode } from "@opus-perpetuus/imperium-core-kit";
-import { booleano, falla, fecha_hoy, hora_ahora, texto, zona_valida } from "../../lib/comun.ts";
+import { booleano, dia_legible, falla, fecha_hoy, hora_ahora, texto, zona_valida } from "../../lib/comun.ts";
 import { spec_de_fila, type Registro, type TablaSpec } from "../../lib/formulas/esquema.ts";
 import { pdf_de, png_de, medida } from "../../lib/impresion/archivos.ts";
 import { componer, type Impreso } from "../../lib/impresion/composicion.ts";
@@ -36,7 +36,7 @@ const NUMERICOS = new Set(["numero", "dinero", "entero", "calculado"]);
 // #region Pedidos
 
 /** Lo que se pidió, entre el formulario y la hoja que entrega el archivo. `ids` nulo es «todos». */
-type Pedido = { tabla_id: string; formato: Formato; ids: string[] | null; q: string; vence: number };
+type Pedido = { tabla_id: string; formato: Formato; ids: string[] | null; q: string; nombre: string; vence: number };
 
 /**
  * En memoria: el pedido vive lo que tarda el lanzador en abrir la hoja
@@ -82,21 +82,24 @@ function nombre_de_fila(vista: Vista, fila: Registro): string {
   return celdas(vista, fila).filter(Boolean).slice(0, 3).join(" · ") || "Registro sin datos";
 }
 
-const FECHA = new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
-
 /** «3 registros», o «2000 de 5321 registros» si se recortó. */
 function cuantos(n: number, de: number): string {
   return `${n}${de > n ? ` de ${de}` : ""} ${de === 1 ? "registro" : "registros"}`;
 }
 
-function impreso_de(spec: TablaSpec, vista: Vista, filas: Registro[], de: number, detalle: string): Impreso {
+function impreso_de(titulo: string, vista: Vista, filas: Registro[], de: number, detalle: string): Impreso {
   const zona = zona_valida();
-  const dia = FECHA.format(new Date(`${fecha_hoy(zona)}T12:00:00Z`));
+  const dia = dia_legible(fecha_hoy(zona));
   return {
-    titulo: spec.name,
+    titulo,
     subtitulo: [`Impreso el ${dia} a las ${hora_ahora(zona)}`, detalle].filter(Boolean).join(" · "),
-    columnas: vista.columnas.map((c) => ({ titulo: c.etiqueta, derecha: NUMERICOS.has(c.tipo) })),
-    filas: filas.map((f) => celdas(vista, f)),
+    columnas: vista.columnas.map((c) => ({ titulo: c.etiqueta, derecha: NUMERICOS.has(c.tipo), imagen: c.tipo === "foto" })),
+    // Una foto va como su miniatura: en el impreso se dibuja.
+    filas: filas.map((f) =>
+      vista.columnas.map((c) =>
+        c.tipo === "foto" ? (f.miniaturas?.[c.clave] ?? "") : valor_presentado(c, f.valores[c.clave] ?? "", vista.etiquetas),
+      ),
+    ),
     total: `Total: ${cuantos(filas.length, de)}`,
   };
 }
@@ -135,7 +138,7 @@ export async function pagina_imprimir(data: Datos, spec: TablaSpec, params: URLS
     migas(["Mis tablas", "/internal/herr-tabla"], [spec.name, href_tabla(spec.id)]),
     nodo("nox.markdown-view", {
       content:
-        "Sale con el nombre de la tabla, los títulos de las columnas y el total de registros. " +
+        "Sale con el nombre que le pongas, los títulos de las columnas, las fotos y el total de registros. " +
         "**Si no marcas ninguno, se imprimen todos los de abajo.**",
     }),
     nodo("nox.search", { label: "Buscar registros", value: q }),
@@ -160,6 +163,13 @@ export async function pagina_imprimir(data: Datos, spec: TablaSpec, params: URLS
         "nox.form",
         { method: "POST", action: `api://herr-tablas/${spec.id}/imprimir`, then: `${ID_TABLA}?id={id}&modo=impreso&t={t}` },
         [
+          nodo("nox.input-text", {
+            name: "nombre",
+            label: "Nombre del reporte",
+            value: spec.name,
+            required: true,
+            help: "Sale como título del reporte y como nombre del archivo.",
+          }),
           nodo("nox.input-menu", {
             name: "formato",
             label: "Formato",
@@ -202,7 +212,8 @@ export async function pagina_impreso(data: Datos, spec: TablaSpec, params: URLSe
   const elegidas = ids ? vista.filas.filter((f) => ids.has(f.id)) : filtrar(spec, vista, pedido.q);
   const filas = elegidas.slice(0, MAX_FILAS);
   const detalle = ids ? "Registros elegidos" : pedido.q ? `Búsqueda: «${pedido.q}»` : "";
-  const hojas = componer(impreso_de(spec, vista, filas, elegidas.length, detalle), await medida());
+  const nombre = pedido.nombre || spec.name;
+  const hojas = componer(impreso_de(nombre, vista, filas, elegidas.length, detalle), await medida());
   const resumen = `**${cuantos(filas.length, elegidas.length)}** · ${hojas.length} ${hojas.length === 1 ? "hoja" : "hojas"}`;
   if (elegidas.length > filas.length) {
     hijos.push(
@@ -213,10 +224,10 @@ export async function pagina_impreso(data: Datos, spec: TablaSpec, params: URLSe
     );
   }
   if (pedido.formato === "pdf") {
-    const pdf = await pdf_de(hojas, spec.name);
+    const pdf = await pdf_de(hojas, nombre);
     hijos.push(
       nodo("nox.markdown-view", { content: `${resumen} · PDF listo.` }),
-      nodo("nox.html", { html: enlace_descarga(pdf, "application/pdf", nombre_archivo(spec.name, "pdf"), "Descargar PDF", "fa-file-pdf") }),
+      nodo("nox.html", { html: enlace_descarga(pdf, "application/pdf", nombre_archivo(nombre, "pdf"), "Descargar PDF", "fa-file-pdf") }),
     );
   } else {
     const pngs = await png_de(hojas.slice(0, MAX_HOJAS_PNG));
@@ -238,14 +249,14 @@ export async function pagina_impreso(data: Datos, spec: TablaSpec, params: URLSe
             enlace_descarga(
               png,
               "image/png",
-              nombre_archivo(spec.name, varias ? `hoja-${i + 1}.png` : "png"),
+              nombre_archivo(nombre, varias ? `hoja-${i + 1}.png` : "png"),
               varias ? `Descargar hoja ${i + 1}` : "Descargar imagen",
               "fa-file-image",
             ),
           )
           .join(""),
       }),
-      nodo("nox.image-viewer", { images: urls, alt: spec.name }),
+      nodo("nox.image-viewer", { images: urls, alt: nombre }),
     );
   }
   hijos.push(
@@ -261,9 +272,9 @@ export async function pagina_impreso(data: Datos, spec: TablaSpec, params: URLSe
 
 export const herr_tablas_impresion = define_routes({
   /**
-   * Guarda qué imprimir: `formato` (pdf | png), `q` (la búsqueda con que se
-   * eligió) y una casilla `r_<id>` por registro. Sin casillas marcadas son
-   * todos los que encuentra la búsqueda.
+   * Guarda qué imprimir: `nombre` del reporte, `formato` (pdf | png), `q` (la
+   * búsqueda con que se eligió) y una casilla `r_<id>` por registro. Sin
+   * casillas marcadas son todos los que encuentra la búsqueda.
    */
   "POST /herr-tablas/:id/imprimir": async (ctx) => {
     const spec = spec_de_fila(await tabla_activa(ctx, ctx.params.id));
@@ -278,6 +289,7 @@ export const herr_tablas_impresion = define_routes({
       formato: formato as Formato,
       ids: marcados.length ? marcados : null,
       q: texto(body.q),
+      nombre: texto(body.nombre).slice(0, 120),
     });
     return { data: { id: spec.id, t } };
   },

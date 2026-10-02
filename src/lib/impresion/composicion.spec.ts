@@ -123,3 +123,34 @@ describe("componer", () => {
     expect(textos(hoja!)).toContain("Total: 0 registros");
   });
 });
+
+describe("fotos en el impreso", () => {
+  const con_fotos: Impreso = {
+    titulo: "Productos",
+    subtitulo: "",
+    columnas: [{ titulo: "Nombre" }, { titulo: "Foto", imagen: true }],
+    filas: [
+      ["Mezcal", "data:image/jpeg;base64,AAAA"],
+      ["Vino", ""],
+    ],
+    total: "Total: 2 registros",
+  };
+
+  test("cada foto ocupa su caja dentro de la celda y su fila crece a ese alto; la cabecera lleva el título", () => {
+    const [hoja] = componer(con_fotos, medir);
+    expect(hoja!.imagenes).toHaveLength(1);
+    const [imagen] = hoja!.imagenes;
+    expect(imagen!.href).toBe("data:image/jpeg;base64,AAAA");
+    expect(imagen!.alto).toBe(40);
+    expect(imagen!.ancho).toBeGreaterThanOrEqual(40);
+    expect(textos(hoja!)).toContain("Foto");
+    expect(textos(hoja!)).not.toContain("data:image/jpeg;base64,AAAA");
+    const rayas = hoja!.rayas.map((r) => r.y1).sort((a, b) => a - b);
+    const alto_fila_con_foto = rayas[1]! - rayas[0]!;
+    const alto_fila_sin_foto = rayas[2]! - rayas[1]!;
+    expect(alto_fila_con_foto).toBeGreaterThanOrEqual(40);
+    expect(alto_fila_sin_foto).toBeLessThan(alto_fila_con_foto);
+    expect(imagen!.y).toBeGreaterThan(rayas[0]!);
+    expect(imagen!.y + imagen!.alto).toBeLessThanOrEqual(rayas[1]!);
+  });
+});

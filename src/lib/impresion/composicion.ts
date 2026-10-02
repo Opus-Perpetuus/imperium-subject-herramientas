@@ -5,7 +5,8 @@
  * estas páginas, así que los dos salen iguales.
  */
 
-export type ColumnaImpresa = { titulo: string; derecha?: boolean };
+/** Con `imagen`, la celda trae la foto en data URL (o vacío) en vez de texto. */
+export type ColumnaImpresa = { titulo: string; derecha?: boolean; imagen?: boolean };
 
 export type Impreso = {
   titulo: string;
@@ -22,7 +23,9 @@ export type Medida = (texto: string, tamano: number, negrita: boolean) => number
 export type Texto = { texto: string; x: number; y: number; tamano: number; negrita: boolean; color: string };
 export type Raya = { x1: number; y1: number; x2: number; y2: number; color: string };
 export type Relleno = { x: number; y: number; ancho: number; alto: number; color: string };
-export type Pagina = { ancho: number; alto: number; textos: Texto[]; rayas: Raya[]; rellenos: Relleno[] };
+/** La foto se dibuja entera y centrada dentro de la caja: el PDF y el PNG saben su proporción, esto no. */
+export type Imagen = { x: number; y: number; ancho: number; alto: number; href: string };
+export type Pagina = { ancho: number; alto: number; textos: Texto[]; rayas: Raya[]; rellenos: Relleno[]; imagenes: Imagen[] };
 
 const CARTA = { corto: 612, largo: 792 };
 const MARGEN = 36;
@@ -35,6 +38,8 @@ const TITULO = 15;
 const SUBTITULO = 9;
 const PIE = 7.5;
 const RESERVA_PIE = 16;
+/** Lado de la caja de una foto: se reconoce lo que es sin agrandar mucho la fila. */
+const LADO_IMAGEN = 40;
 
 export const COLORES = {
   texto: "#1f2430",
@@ -113,16 +118,19 @@ export function componer(original: Impreso, medir: Medida): Pagina[] {
     titulo: limpio(original.titulo),
     subtitulo: limpio(original.subtitulo),
     columnas: original.columnas.map((c) => ({ ...c, titulo: limpio(c.titulo) })),
-    filas: original.filas.map((f) => f.map(limpio)),
+    filas: original.filas.map((f) => f.map((celda, i) => (original.columnas[i]?.imagen ? celda : limpio(celda)))),
     total: limpio(original.total),
   };
   const { columnas, filas } = impreso;
+  const es_imagen = (i: number) => columnas[i]?.imagen === true;
   const naturales = (tamano: number) =>
-    columnas.map(
-      (c, i) =>
-        Math.max(medir(c.titulo, tamano, true), ...filas.map((f) => medir(f[i] ?? "", tamano, false))) + 2 * RELLENO_X,
+    columnas.map((c, i) =>
+      es_imagen(i)
+        ? Math.max(LADO_IMAGEN, medir(c.titulo, tamano, true)) + 2 * RELLENO_X
+        : Math.max(medir(c.titulo, tamano, true), ...filas.map((f) => medir(f[i] ?? "", tamano, false))) + 2 * RELLENO_X,
     );
-  const minimos = (tamano: number) => naturales(tamano).map((n) => Math.min(n, tamano * 6 + 2 * RELLENO_X));
+  const minimos = (tamano: number) =>
+    naturales(tamano).map((n, i) => (es_imagen(i) ? LADO_IMAGEN + 2 * RELLENO_X : Math.min(n, tamano * 6 + 2 * RELLENO_X)));
 
   const vertical = suma(naturales(TAMANOS[0]!)) <= CARTA.corto - 2 * MARGEN;
   const [ancho, alto] = vertical ? [CARTA.corto, CARTA.largo] : [CARTA.largo, CARTA.corto];
@@ -134,18 +142,28 @@ export function componer(original: Impreso, medir: Medida): Pagina[] {
   const limite = alto - MARGEN - RESERVA_PIE;
 
   const paginas: Pagina[] = [];
-  let pagina: Pagina = { ancho, alto, textos: [], rayas: [], rellenos: [] };
+  const hoja_nueva = (): Pagina => ({ ancho, alto, textos: [], rayas: [], rellenos: [], imagenes: [] });
+  let pagina: Pagina = hoja_nueva();
   let y = MARGEN;
 
-  const fila = (celdas: string[], negrita: boolean, fondo: string | null) => {
+  /** En la cabecera las columnas de foto llevan su título como texto. */
+  const fila = (celdas: string[], negrita: boolean, fondo: string | null, con_imagenes = true) => {
+    const imagen = (i: number) => con_imagenes && es_imagen(i);
     const lineas = celdas.map((c, i) =>
-      recortar(partir(c, anchos[i]! - 2 * RELLENO_X, tamano, negrita, medir), MAX_LINEAS, anchos[i]! - 2 * RELLENO_X, tamano, negrita, medir),
+      imagen(i)
+        ? []
+        : recortar(partir(c, anchos[i]! - 2 * RELLENO_X, tamano, negrita, medir), MAX_LINEAS, anchos[i]! - 2 * RELLENO_X, tamano, negrita, medir),
     );
-    const alto_fila = Math.max(1, ...lineas.map((l) => l.length)) * linea + 2 * RELLENO_Y;
+    const con_foto = celdas.some((c, i) => imagen(i) && c);
+    const alto_fila = Math.max(Math.max(1, ...lineas.map((l) => l.length)) * linea, con_foto ? LADO_IMAGEN : 0) + 2 * RELLENO_Y;
     return {
       alto: alto_fila,
       dibujar: () => {
         if (fondo) pagina.rellenos.push({ x: MARGEN, y, ancho: util, alto: alto_fila, color: fondo });
+        celdas.forEach((href, i) => {
+          if (!imagen(i) || !href) return;
+          pagina.imagenes.push({ x: xs[i]! + RELLENO_X, y: y + RELLENO_Y, ancho: anchos[i]! - 2 * RELLENO_X, alto: LADO_IMAGEN, href });
+        });
         lineas.forEach((ls, i) =>
           ls.forEach((texto, k) => {
             const base = y + RELLENO_Y + tamano * 0.85 + k * linea;
@@ -164,10 +182,11 @@ export function componer(original: Impreso, medir: Medida): Pagina[] {
     columnas.map((c) => c.titulo),
     true,
     COLORES.cabecera,
+    false,
   );
   const nueva_pagina = () => {
     paginas.push(pagina);
-    pagina = { ancho, alto, textos: [], rayas: [], rellenos: [] };
+    pagina = hoja_nueva();
     y = MARGEN;
     cabecera.dibujar();
   };
@@ -186,7 +205,7 @@ export function componer(original: Impreso, medir: Medida): Pagina[] {
   });
   if (y + linea * 2 > limite) {
     paginas.push(pagina);
-    pagina = { ancho, alto, textos: [], rayas: [], rellenos: [] };
+    pagina = hoja_nueva();
     y = MARGEN;
   }
   pagina.textos.push({ texto: impreso.total, x: MARGEN, y: y + linea + tamano * 0.85, tamano, negrita: true, color: COLORES.texto });
