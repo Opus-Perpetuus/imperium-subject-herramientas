@@ -1,5 +1,5 @@
-import type { DomainRow, KirletCtx, NoxPageDescriptor, NoxUiNode } from "@opus-perpetuus/imperium-core-kit";
-import { filas_de, texto } from "../../lib/comun.ts";
+import type { DomainRow, KirletCtx, KirletIdentity, NoxPageDescriptor, NoxUiNode } from "@opus-perpetuus/imperium-core-kit";
+import { filas_de, puede, texto } from "../../lib/comun.ts";
 import { valores_resumen } from "../../lib/formulas/calculadora.ts";
 import {
   CON_PLANTILLA,
@@ -100,7 +100,7 @@ async function tarjeta_tabla(data: Datos, fila: DomainRow): Promise<NoxUiNode> {
   ]);
 }
 
-export async function pagina_inicio(data: Datos, aviso = ""): Promise<NoxPageDescriptor> {
+export async function pagina_inicio(data: Datos, aviso: string, identity: KirletIdentity | null): Promise<NoxPageDescriptor> {
   const tablas = await filas_de({ data }, "herr_tablas", { is_active: true });
   const hijos: NoxUiNode[] = [];
   if (aviso) hijos.push(nodo("nox.alert", { text: aviso }));
@@ -115,6 +115,7 @@ export async function pagina_inicio(data: Datos, aviso = ""): Promise<NoxPageDes
     hijos.push(titulo("Tus tablas"));
     hijos.push(nodo("nox.stack", { layout: "grid" }, await Promise.all(tablas.map((t) => tarjeta_tabla(data, t)))));
   }
+  if (!puede(identity, "herr-tablas", "create")) return pagina(ID_TABLA, "Mis tablas", hijos);
   hijos.push(titulo("Crear una tabla"));
   hijos.push(
     nodo("nox.card", { title: "Empezar en blanco" }, [

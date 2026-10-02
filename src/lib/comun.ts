@@ -1,7 +1,9 @@
 import {
   KirletHttpError,
+  kirlet_identity_can,
   type DomainRow,
   type KirletCtx,
+  type KirletIdentity,
   type NoxFileRef,
 } from "@opus-perpetuus/imperium-core-kit";
 
@@ -9,6 +11,19 @@ import {
  * Helpers compartidos por todas las herramientas. Sin lógica de negocio: solo
  * conversión de tipos, errores HTTP y el campo de búsqueda.
  */
+
+/**
+ * Lo que quien mira no puede hacer no se le ofrece: un enlace compartido o un
+ * usuario de solo lectura no deben ver botones que acaban en un 403. Sin
+ * identidad (pruebas, autenticación apagada) no se esconde nada.
+ */
+export function puede(
+  identity: KirletIdentity | null,
+  recurso: string,
+  accion: "create" | "update" | "delete",
+): boolean {
+  return !identity || kirlet_identity_can(identity, `kirlet.herramientas.${recurso}`, accion);
+}
 
 /** Tope de filas que una herramienta lee de golpe (tablas de un solo usuario). */
 export const LIMITE_FILAS = 5000;

@@ -4,6 +4,7 @@ import {
   now_iso,
   type DomainRow,
   type KirletCtx,
+  type KirletIdentity,
   type NoxPageDescriptor,
   type NoxUiNode,
 } from "@opus-perpetuus/imperium-core-kit";
@@ -15,6 +16,7 @@ import {
   falla,
   fecha_hoy,
   momento_legible,
+  puede,
   solo_dia,
   texto,
 } from "../../lib/comun.ts";
@@ -226,7 +228,8 @@ export async function pagina_cerrar(data: Datos, spec: TablaSpec): Promise<NoxPa
 /** Para ordenar cierres: por la fecha elegida y, en la misma fecha, por cuándo se hicieron. */
 const orden_de_cierre = (f: DomainRow) => `${texto(f.fecha)} ${texto(f.cerrado_at)}`;
 
-export async function pagina_cierres(data: Datos, spec: TablaSpec): Promise<NoxPageDescriptor> {
+export async function pagina_cierres(data: Datos, spec: TablaSpec, identity: KirletIdentity | null): Promise<NoxPageDescriptor> {
+  const operar = puede(identity, "herr-tablas", "create");
   const lista = (await data.findMany(ENCABEZADOS, { where: { tabla_id: spec.id, is_active: true }, limit: LIMITE_FILAS })).sort(
     (a, b) => orden_de_cierre(b).localeCompare(orden_de_cierre(a)),
   );
@@ -234,7 +237,7 @@ export async function pagina_cierres(data: Datos, spec: TablaSpec): Promise<NoxP
   const hijos: NoxUiNode[] = [migas(["Mis tablas", HOJA], [spec.name, href_tabla(spec.id)])];
   hijos.push(
     nodo("nox.toolbar", {}, [
-      ...(spec.cerrable && sin_cerrar
+      ...(operar && spec.cerrable && sin_cerrar
         ? [boton("Hacer cierre", { href: href_tabla(spec.id, { modo: "cerrar" }), icon: "fa-box-archive", variant: "primary" })]
         : []),
       boton("Volver a la tabla", { href: href_tabla(spec.id), icon: "fa-arrow-left" }),
@@ -270,6 +273,7 @@ export async function pagina_cierres(data: Datos, spec: TablaSpec): Promise<NoxP
       text: "Sin cierres",
     }),
   );
+  if (!operar) return pagina(ID_TABLA, `Cierres · ${spec.name}`, hijos);
   const elegibles = lista.slice(0, MAX_ELEGIBLES);
   const preseleccion = new Set(sin_cerrar ? elegibles.slice(0, 1).map((c) => String(c.id)) : elegibles.slice(0, 2).map((c) => String(c.id)));
   hijos.push(
@@ -309,7 +313,12 @@ export async function pagina_cierres(data: Datos, spec: TablaSpec): Promise<NoxP
   return pagina(ID_TABLA, `Cierres · ${spec.name}`, hijos);
 }
 
-export async function pagina_cierre(data: Datos, spec: TablaSpec, params: URLSearchParams): Promise<NoxPageDescriptor> {
+export async function pagina_cierre(
+  data: Datos,
+  spec: TablaSpec,
+  params: URLSearchParams,
+  identity: KirletIdentity | null,
+): Promise<NoxPageDescriptor> {
   const cab = await encabezado(data, spec, texto(params.get("cierre")));
   const hijos: NoxUiNode[] = [migas(["Mis tablas", HOJA], [spec.name, href_tabla(spec.id)], ["Cierres", href_cierres(spec.id)])];
   if (!cab) {
@@ -350,6 +359,9 @@ export async function pagina_cierre(data: Datos, spec: TablaSpec, params: URLSea
       undefined,
       "Este cierre no tiene registros",
     ),
+  );
+  if (!puede(identity, "herr-tablas", "update")) return pagina(ID_TABLA, `${nombre} · ${spec.name}`, hijos);
+  hijos.push(
     nodo("nox.card", { title: "Cambiar nombre, fecha o datos" }, [
       nodo(
         "nox.form",

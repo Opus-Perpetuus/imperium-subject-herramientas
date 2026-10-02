@@ -3,7 +3,7 @@ import {
   type KirletPageDecl,
   type NoxUiNode,
 } from "@opus-perpetuus/imperium-core-kit";
-import { texto } from "../../lib/comun.ts";
+import { puede, texto } from "../../lib/comun.ts";
 import { valores_resumen } from "../../lib/formulas/calculadora.ts";
 import { spec_de_fila } from "../../lib/formulas/esquema.ts";
 import { ID_TABLA, href_registro, href_tabla, migas, pagina_campo, pagina_disenar, pagina_inicio } from "./herr-tablas.disenador.ts";
@@ -72,41 +72,49 @@ export const herr_tablas_pages: KirletPageDecl[] = [
     id: ID_TABLA,
     path: "herr-tabla",
     permission: "subject.herramientas.herr-tablas.read",
-    build: async ({ url, data }) => {
+    build: async ({ url, data, identity }) => {
       const params = url?.searchParams ?? new URLSearchParams();
       const id = texto(params.get("id"));
       const tabla = id ? await data.findOne("herr_tablas", { id }) : null;
-      if (!tabla || tabla.is_active === false) return pagina_inicio(data, id ? "La tabla no existe" : "");
+      if (!tabla || tabla.is_active === false) return pagina_inicio(data, id ? "La tabla no existe" : "", identity);
       const spec = spec_de_fila(tabla);
-      const modo = params.get("modo");
+      const anotar = puede(identity, "herr-registros", "create");
+      const disenar = puede(identity, "herr-tablas", "update");
+      const operar = puede(identity, "herr-tablas", "create");
+      const modo = modo_posible(params.get("modo"), { disenar, operar });
       if (modo === "disenar") return pagina_disenar(data, spec, params);
       if (modo === "campo") return pagina_campo(data, spec, texto(params.get("campo")));
       if (modo === "imprimir") return pagina_imprimir(data, spec, params);
       if (modo === "impreso") return pagina_impreso(data, spec, params);
       if (modo === "cerrar") return pagina_cerrar(data, spec);
-      if (modo === "cierres") return pagina_cierres(data, spec);
-      if (modo === "cierre") return pagina_cierre(data, spec, params);
+      if (modo === "cierres") return pagina_cierres(data, spec, identity);
+      if (modo === "cierre") return pagina_cierre(data, spec, params, identity);
       if (modo === "comparar") return pagina_comparar(data, spec, params);
       const { filas, etiquetas, columnas } = await vista_de_tabla(data, spec);
-      const hijos: NoxUiNode[] = [
-        migas(["Mis tablas", "/internal/herr-tabla"], [spec.name, href_tabla(spec.id)]),
-        nodo("nox.toolbar", {}, [
-          boton("Nuevo registro", { href: `/internal/herr-registro?tabla=${spec.id}`, icon: "fa-plus", variant: "primary" }),
-          boton("Diseñar", { href: href_tabla(spec.id, { modo: "disenar" }), icon: "fa-pen-ruler", variant: "secondary" }),
-          ...(spec.campos.length
-            ? [boton("Imprimir", { href: href_tabla(spec.id, { modo: "imprimir" }), icon: "fa-print", variant: "secondary" })]
-            : []),
-          ...(spec.cerrable
-            ? [boton("Cierres", { href: href_tabla(spec.id, { modo: "cierres" }), icon: "fa-box-archive", variant: "secondary" })]
-            : []),
-        ]),
+      const herramientas = [
+        ...(anotar
+          ? [boton("Nuevo registro", { href: `/internal/herr-registro?tabla=${spec.id}`, icon: "fa-plus", variant: "primary" })]
+          : []),
+        ...(disenar
+          ? [boton("Diseñar", { href: href_tabla(spec.id, { modo: "disenar" }), icon: "fa-pen-ruler", variant: "secondary" })]
+          : []),
+        ...(operar && spec.campos.length
+          ? [boton("Imprimir", { href: href_tabla(spec.id, { modo: "imprimir" }), icon: "fa-print", variant: "secondary" })]
+          : []),
+        ...(spec.cerrable
+          ? [boton("Cierres", { href: href_tabla(spec.id, { modo: "cierres" }), icon: "fa-box-archive", variant: "secondary" })]
+          : []),
       ];
+      const hijos: NoxUiNode[] = [migas(["Mis tablas", "/internal/herr-tabla"], [spec.name, href_tabla(spec.id)])];
+      if (herramientas.length) hijos.push(nodo("nox.toolbar", {}, herramientas));
       if (spec.description) hijos.push(nodo("nox.markdown-view", { content: spec.description }));
       if (!spec.campos.length) {
         hijos.push(
-          nodo("nox.empty", { text: "Esta tabla aún no tiene columnas", description: "Diséñala: dile qué quieres anotar." }, [
-            boton("Diseñar la tabla", { href: href_tabla(spec.id, { modo: "disenar" }), icon: "fa-pen-ruler" }),
-          ]),
+          nodo(
+            "nox.empty",
+            { text: "Esta tabla aún no tiene columnas", description: "Diséñala: dile qué quieres anotar." },
+            disenar ? [boton("Diseñar la tabla", { href: href_tabla(spec.id, { modo: "disenar" }), icon: "fa-pen-ruler" })] : [],
+          ),
         );
         return pagina(ID_TABLA, spec.name, hijos);
       }
@@ -121,11 +129,21 @@ export const herr_tablas_pages: KirletPageDecl[] = [
           }),
         );
       }
-      hijos.push(tabla_de_registros(columnas, filas, etiquetas, (f) => href_registro(spec.id, f.id)));
-      if (spec.cerrable && filas.length) {
+      hijos.push(tabla_de_registros(columnas, filas, etiquetas, anotar ? (f) => href_registro(spec.id, f.id) : undefined));
+      if (operar && spec.cerrable && filas.length) {
         hijos.push(boton("Hacer cierre", { href: href_tabla(spec.id, { modo: "cerrar" }), icon: "fa-box-archive", variant: "secondary" }));
       }
       return pagina(ID_TABLA, spec.name, hijos);
     },
   },
 ];
+
+const MODOS_DE_DISENO = new Set(["disenar", "campo"]);
+const MODOS_QUE_ESCRIBEN = new Set(["imprimir", "cerrar"]);
+
+/** A quien no puede escribir se le enseña la tabla, no un formulario que acabaría en 403. */
+function modo_posible(modo: string | null, puede_hacer: { disenar: boolean; operar: boolean }): string | null {
+  if (modo && MODOS_DE_DISENO.has(modo) && !puede_hacer.disenar) return null;
+  if (modo && MODOS_QUE_ESCRIBEN.has(modo) && !puede_hacer.operar) return null;
+  return modo;
+}
