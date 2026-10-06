@@ -445,6 +445,8 @@ export function tabla_de_registros(
           poner_fotos(fila, clave_foto_enlace(c.clave), fotos);
         }
       }
+      // Con su id, ocultar una fila en un enlace o una regla no depende de quién puede abrirla.
+      fila._id = f.id;
       if (destino) fila._href = destino(f);
       return fila;
     }),

@@ -114,6 +114,7 @@ describe("fotos de un registro", () => {
         foto: "Foto",
         foto__mini: MINI,
         foto__url: r.valores.foto,
+        _id: r.id,
         _href: `/internal/herr-registro?tabla=${tabla_id}&id=${r.id}`,
       },
     ]);
@@ -167,7 +168,7 @@ describe("fotos de un registro", () => {
 
     const doc = await pagina(`/pages/herramientas.herr-tabla?id=${tabla_id}`);
     expect(nodos(doc, "nox.table")[0]!.props!.rows).toEqual([
-      { nombre: "Mezcal", foto: "", _href: `/internal/herr-registro?tabla=${tabla_id}&id=${r.id}` },
+      { nombre: "Mezcal", foto: "", _id: r.id, _href: `/internal/herr-registro?tabla=${tabla_id}&id=${r.id}` },
     ]);
     const form = await pagina(`/pages/herramientas.herr-registro?tabla=${tabla_id}&id=${r.id}`);
     expect(nodos(form, "nox.input-image")[0]!.props!.value).toBe("");

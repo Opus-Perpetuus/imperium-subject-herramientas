@@ -71,10 +71,10 @@ function componentes(page: NoxPageDescriptor): string[] {
   return ids;
 }
 
-/** Las celdas de las filas de un nox.table, sin el destino de la fila ni las llaves de sus fotos. */
+/** Las celdas de las filas de un nox.table, sin el id ni el destino de la fila ni las llaves de sus fotos. */
 function celdas_de(rows: unknown): Record<string, unknown>[] {
   return (rows as Record<string, unknown>[]).map((r) =>
-    Object.fromEntries(Object.entries(r).filter(([k]) => k !== "_href" && !k.includes("__"))),
+    Object.fromEntries(Object.entries(r).filter(([k]) => k !== "_href" && k !== "_id" && !k.includes("__"))),
   );
 }
 
@@ -471,6 +471,7 @@ describe("páginas", () => {
         fecha: "2026-01-02",
         acreedor: "Banco",
         pagado: "3000.00 $",
+        _id: registro.id,
         _href: `/internal/herr-registro?tabla=${tabla.id}&id=${registro.id}`,
       },
     ]);
