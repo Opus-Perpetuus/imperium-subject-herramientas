@@ -7,7 +7,7 @@ import { puede, texto } from "../../lib/comun.ts";
 import { valores_resumen } from "../../lib/formulas/calculadora.ts";
 import { spec_de_fila } from "../../lib/formulas/esquema.ts";
 import { ID_TABLA, href_registro, href_tabla, migas, pagina_campo, pagina_disenar, pagina_inicio } from "./herr-tablas.disenador.ts";
-import { tabla_de_registros, vista_de_tabla } from "./herr-tablas.flow.ts";
+import { filtrar_filas, registros_paginados, tabla_de_registros, vista_de_tabla } from "./herr-tablas.flow.ts";
 import { pagina_cerrar, pagina_cierre, pagina_cierres, pagina_comparar } from "./herr-tablas.cierres.ts";
 import { pagina_impreso, pagina_imprimir } from "./herr-tablas.impresion.ts";
 import { API, OWNER, boton, con_unidad, nodo, pagina } from "./herr-tablas.nox.ts";
@@ -90,7 +90,7 @@ export const herr_tablas_pages: KirletPageDecl[] = [
       if (modo === "cierres") return pagina_cierres(data, spec, identity);
       if (modo === "cierre") return pagina_cierre(data, spec, params, identity);
       if (modo === "comparar") return pagina_comparar(data, spec, params);
-      const { filas, etiquetas, columnas } = await vista_de_tabla(data, spec);
+      const { filas, columnas, presentacion } = await vista_de_tabla(data, spec);
       const herramientas = [
         ...(anotar
           ? [boton("Nuevo registro", { href: `/internal/herr-registro?tabla=${spec.id}`, icon: "fa-plus", variant: "primary" })]
@@ -129,7 +129,11 @@ export const herr_tablas_pages: KirletPageDecl[] = [
           }),
         );
       }
-      hijos.push(tabla_de_registros(columnas, filas, etiquetas, anotar ? (f) => href_registro(spec.id, f.id) : undefined));
+      hijos.push(
+        ...registros_paginados(params, filas.length, filtrar_filas(spec, filas, presentacion, texto(params.get("q"))), (visibles, vacio) =>
+          tabla_de_registros(columnas, visibles, presentacion, anotar ? (f) => href_registro(spec.id, f.id) : undefined, vacio),
+        ),
+      );
       if (operar && spec.cerrable && filas.length) {
         hijos.push(boton("Hacer cierre", { href: href_tabla(spec.id, { modo: "cerrar" }), icon: "fa-box-archive", variant: "secondary" }));
       }

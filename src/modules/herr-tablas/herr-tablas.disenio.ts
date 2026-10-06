@@ -8,6 +8,7 @@ import {
 import { booleano, campo_busqueda, falla, numero, texto } from "../../lib/comun.ts";
 import {
   CON_PLANTILLA,
+  FOTO_AUTOMATICA,
   OPERACIONES,
   PARTES_UI,
   SIN_COLUMNA,
@@ -30,7 +31,10 @@ import {
 } from "../../lib/formulas/disenio.ts";
 import {
   PARTES_REF,
+  SIN_FOTO,
   TIPOS_CAMPO,
+  TIPOS_FOTO,
+  TIPOS_UNIDAD_POR_REGISTRO,
   spec_de_fila,
   validar_esquema,
   type CampoSpec,
@@ -114,10 +118,14 @@ function usa(formula: string | null | undefined, clave: string): boolean {
   return [...claves_referenciadas(formula ?? "")].some((ref) => ref === clave || parsear_agregado(ref)?.campo === clave);
 }
 
+/** ¿La unidad de esta columna sale del enlace `clave`? */
+const unidad_de_enlace = (campo: CampoSpec, clave: string) => campo.unidad_de?.split(":")[0] === clave;
+
 /** No se quita lo que otra fórmula necesita: quedaría rota sin que nadie lo note hasta el siguiente registro. */
 function exigir_sin_uso(spec: TablaSpec, clave: string, etiqueta: string): void {
   const usan = [
     ...spec.campos.filter((c) => c.clave !== clave && c.tipo === "calculado" && usa(c.formula, clave)),
+    ...spec.campos.filter((c) => unidad_de_enlace(c, clave)),
     ...spec.resumenes.filter((r) => usa(r.formula, clave)),
   ].map((x) => `«${x.etiqueta}»`);
   if (usan.length) falla(409, `«${etiqueta}» se usa en ${usan.join(", ")}: cambia o quita eso primero`, "conflict");
@@ -141,6 +149,19 @@ async function aplicar_cambios(ctx: KirletCtx, spec: TablaSpec, antes: CampoSpec
   if ("multiple" in body) campo.multiple = booleano(body.multiple);
   if ("valor_por_defecto" in body) campo.valor_por_defecto = texto(body.valor_por_defecto) || null;
   if ("unidad" in body) campo.unidad = texto(body.unidad) || null;
+  if ("unidad_fuente" in body) {
+    const fuente = texto(body.unidad_fuente);
+    campo.unidad_por_registro = fuente === "registro";
+    campo.unidad_de = fuente.startsWith("enlace:") ? fuente.slice("enlace:".length) : null;
+    if (campo.unidad_de) {
+      const [ref = "", origen = ""] = campo.unidad_de.split(":");
+      const enlace = spec.campos.find((c) => c.clave === ref && c.tipo === "referencia" && c.tabla_ref_id);
+      const destino = enlace ? await ctx.data.findOne("herr_tablas", { id: enlace.tabla_ref_id! }) : null;
+      if (!destino || !spec_de_fila(destino).campos.some((c) => c.clave === origen)) {
+        falla(400, "Elige de nuevo de dónde sale la unidad: ese enlace o esa columna ya no está", "validation_error");
+      }
+    }
+  }
   const decimales = numero(body.decimales);
   if (decimales !== null) campo.decimales = Math.min(6, Math.max(0, Math.round(decimales)));
   const pasos = numero(body.pasos);
@@ -152,8 +173,11 @@ async function aplicar_cambios(ctx: KirletCtx, spec: TablaSpec, antes: CampoSpec
     if (tabla_ref && !(await ctx.data.findOne("herr_tablas", { id: tabla_ref }))) {
       falla(400, "La tabla enlazada no existe", "validation_error");
     }
-    // Las plantillas nombran columnas de la tabla de antes.
-    if (tabla_ref !== campo.tabla_ref_id) for (const { campo: parte } of PARTES_REF) campo[parte] = null;
+    // Las plantillas y la foto nombran columnas de la tabla de antes.
+    if (tabla_ref !== campo.tabla_ref_id) {
+      for (const { campo: parte } of PARTES_REF) campo[parte] = null;
+      campo.ref_foto = null;
+    }
     campo.tabla_ref_id = tabla_ref;
   }
   const op = texto(body.operacion);
@@ -169,7 +193,15 @@ async function aplicar_cambios(ctx: KirletCtx, spec: TablaSpec, antes: CampoSpec
   if (campo.tipo === "calculado") campo.formula ||= "0";
   else campo.formula = null;
   if (campo.tipo === "entero") campo.decimales = 0;
+  if (!TIPOS_UNIDAD_POR_REGISTRO.has(campo.tipo)) campo.unidad_por_registro = false;
+  if (!["numero", "entero", "calculado"].includes(campo.tipo)) campo.unidad_de = null;
   return campo;
+}
+
+/** Las columnas cuya unidad salía de un enlace que cambió de tabla o dejó de serlo vuelven a su unidad fija. */
+function sin_unidad_de(campos: CampoSpec[], antes: CampoSpec, despues: CampoSpec): CampoSpec[] {
+  const sigue = despues.tipo === "referencia" && despues.tabla_ref_id === antes.tabla_ref_id;
+  return sigue ? campos : campos.map((c) => (unidad_de_enlace(c, antes.clave) ? { ...c, unidad_de: null } : c));
 }
 
 export const herr_tablas_disenio = define_routes({
@@ -234,10 +266,16 @@ export const herr_tablas_disenio = define_routes({
     const antes = spec.campos[i]!;
     const body = await ctx.body<Record<string, unknown>>();
     const campo = await aplicar_cambios(ctx, spec, antes, body);
-    const campos = spec.campos.toSpliced(i, 1);
+    const campos = sin_unidad_de(spec.campos.toSpliced(i, 1), antes, campo);
+    // Sumar kilos con litros no da kilos: los totales de una columna que pasa a unidad variable se quedan sin ella.
+    const variable = (c: CampoSpec) => c.unidad_por_registro || !!c.unidad_de;
+    const resumenes =
+      variable(campo) && !variable(antes)
+        ? spec.resumenes.map((r) => (usa(r.formula, campo.clave) ? { ...r, unidad: null } : r))
+        : spec.resumenes;
     const posicion = numero(body.posicion);
     campos.splice(posicion === null ? i : Math.min(campos.length, Math.max(0, Math.round(posicion))), 0, campo);
-    const guardada = await guardar(ctx, fila, { ...spec, campos });
+    const guardada = await guardar(ctx, fila, { ...spec, campos, resumenes });
     // Otro tipo u otra tabla traen otros ajustes (opciones, fórmula, qué se ve): se vuelve a abrir la columna para verlos.
     const modo =
       campo.tipo !== antes.tipo || campo.tabla_ref_id !== antes.tabla_ref_id || necesita_ajustes(campo) ? "campo" : "disenar";
@@ -258,6 +296,14 @@ export const herr_tablas_disenio = define_routes({
     }
     const destino = spec_de_fila(await tabla_activa(ctx, campo.tabla_ref_id));
     const body = await ctx.body<Record<string, unknown>>();
+    if ("ref_foto" in body) {
+      const foto = texto(body.ref_foto);
+      if (foto && foto !== FOTO_AUTOMATICA && foto !== SIN_FOTO && !destino.campos.some((c) => c.clave === foto && TIPOS_FOTO.has(c.tipo))) {
+        falla(400, `«${destino.name}» no tiene esa columna de fotos`, "validation_error");
+      }
+      campo.ref_foto = foto && foto !== FOTO_AUTOMATICA ? foto : null;
+    }
+    if ("ref_foto_en_tabla" in body) campo.ref_foto_en_tabla = booleano(body.ref_foto_en_tabla);
     for (const { campo: parte } of PARTES_REF) {
       const columna = texto(body[`columna_${parte}`]);
       if (columna === SIN_COLUMNA) campo[parte] = null;
@@ -352,7 +398,8 @@ export const herr_tablas_disenio = define_routes({
       formula = `{${tipo}:${campo.clave}}`;
       etiqueta ||= nombre_total(tipo, campo);
       const cuenta = tipo === "cuenta" || campo.tipo === "booleano";
-      unidad = cuenta ? null : (campo.unidad ?? null);
+      // Sumar kilos con litros no da kilos: con unidad distinta por registro el total va sin unidad.
+      unidad = cuenta || campo.unidad_por_registro || campo.unidad_de ? null : (campo.unidad ?? null);
       decimales = cuenta || campo.tipo === "entero" ? 0 : (campo.decimales ?? 2);
     } else {
       falla(400, "Elige qué calcular y de qué columna", "validation_error");

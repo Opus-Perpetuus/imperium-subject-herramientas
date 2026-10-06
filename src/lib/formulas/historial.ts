@@ -1,5 +1,6 @@
 import { es_foto_guardada } from "../comun.ts";
 import type { CampoSpec } from "./esquema.ts";
+import { cuantas, lista_de } from "./fotos.ts";
 
 /** Lo que cambió en un campo, ya en palabras de la lista (etiqueta y valores presentados). */
 export type Cambio = { etiqueta: string; antes: string; despues: string };
@@ -13,7 +14,7 @@ export function cambios_de(
   campos: CampoSpec[],
   antes: Record<string, string>,
   despues: Record<string, string>,
-  presentar: (campo: CampoSpec, raw: string) => string,
+  presentar: (campo: CampoSpec, raw: string, lado: "antes" | "despues") => string,
 ): Cambio[] {
   const out: Cambio[] = [];
   for (const campo of campos) {
@@ -33,8 +34,13 @@ export function cambios_de(
       }
       continue;
     }
-    const antes_txt = presentar(campo, a);
-    const despues_txt = presentar(campo, d);
+    if (campo.tipo === "fotos") {
+      const misma_cuenta = lista_de(a).length === lista_de(d).length;
+      out.push({ etiqueta: campo.etiqueta, antes: cuantas(a), despues: misma_cuenta ? `${cuantas(d)}, otras` : cuantas(d) });
+      continue;
+    }
+    const antes_txt = presentar(campo, a, "antes");
+    const despues_txt = presentar(campo, d, "despues");
     if (antes_txt !== despues_txt) out.push({ etiqueta: campo.etiqueta, antes: antes_txt, despues: despues_txt });
   }
   return out;

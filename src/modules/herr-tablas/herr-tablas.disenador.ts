@@ -3,6 +3,7 @@ import { filas_de, puede, texto } from "../../lib/comun.ts";
 import { valores_resumen } from "../../lib/formulas/calculadora.ts";
 import {
   CON_PLANTILLA,
+  FOTO_AUTOMATICA,
   OPERACIONES,
   ORDEN_TIPOS,
   PARTES_UI,
@@ -16,7 +17,10 @@ import {
 } from "../../lib/formulas/disenio.ts";
 import {
   PARTES_REF,
+  SIN_FOTO,
   TIPOS_CAMPO_CIERRE,
+  TIPOS_FOTO,
+  TIPOS_UNIDAD_POR_REGISTRO,
   spec_de_fila,
   type CampoSpec,
   type ResumenTabla,
@@ -180,14 +184,22 @@ const SECCIONES = [
 
 type Seccion = (typeof SECCIONES)[number]["id"];
 
-function describir_tipo(campo: CampoSpec): string {
+function describir_tipo(campo: CampoSpec, spec: TablaSpec): string {
   const nombre = TIPOS_UI[campo.tipo]?.nombre ?? campo.tipo;
   const extra = campo.multiple && ["opcion", "referencia"].includes(campo.tipo) ? " (varias)" : "";
-  return con_unidad(`${nombre}${extra}`, campo.unidad ? `· ${campo.unidad}` : null);
+  const ref = campo.unidad_de ? spec.campos.find((c) => c.clave === campo.unidad_de!.split(":")[0]) : undefined;
+  const unidad = ref
+    ? `· unidad de ${ref.etiqueta}`
+    : campo.unidad_por_registro
+      ? "· unidad de cada registro"
+      : campo.unidad
+        ? `· ${campo.unidad}`
+        : null;
+  return con_unidad(`${nombre}${extra}`, unidad);
 }
 
 function detalle_columna(spec: TablaSpec, campo: CampoSpec, tablas: Map<string, TablaSpec>): Array<{ label: string; value: string }> {
-  const items = [{ label: "Tipo", value: describir_tipo(campo) }];
+  const items = [{ label: "Tipo", value: describir_tipo(campo, spec) }];
   if (campo.tipo === "calculado") {
     items.push({ label: "Cálculo", value: campo.formula === "0" ? "Sin configurar: toca Editar" : formula_con_etiquetas(spec, campo.formula ?? "") });
   }
@@ -462,7 +474,7 @@ function seccion_ajustes(spec: TablaSpec): NoxUiNode[] {
         "Ordenar la lista por",
         [
           { value: "", label: "Lo último que se capturó" },
-          ...spec.campos.filter((c) => !["foto", "nota", "ruta", "geo"].includes(c.tipo)).map((c) => ({ value: c.clave, label: c.etiqueta })),
+          ...spec.campos.filter((c) => !["foto", "fotos", "nota", "ruta", "geo"].includes(c.tipo)).map((c) => ({ value: c.clave, label: c.etiqueta })),
         ],
         { value: spec.orden_campo ?? "" },
       ),
@@ -552,9 +564,54 @@ function numero_o_vacio(n: number | null | undefined): number | "" {
   return typeof n === "number" && Number.isFinite(n) ? n : "";
 }
 
+/** Valor del menú «¿De dónde sale la unidad?»: la misma para todos. */
+const UNIDAD_FIJA = "fija";
+const UNIDAD_REGISTRO = "registro";
+const UNIDAD_ENLACE = "enlace:";
+
+/** Columnas de la tabla enlazada que pueden dar una unidad: un número con unidad o un texto como «Unidad». */
+function fuentes_de_unidad(destino: TablaSpec): CampoSpec[] {
+  return destino.campos.filter(
+    (c) =>
+      ["texto", "opcion"].includes(c.tipo) ||
+      (["numero", "entero", "dinero", "calculado", "nivel"].includes(c.tipo) && (c.unidad || c.unidad_por_registro)),
+  );
+}
+
+/**
+ * El menú de dónde sale la unidad de un número. En una bitácora que enlaza
+ * productos, la cantidad se lee en la unidad de cada producto: «La del
+ * Producto elegido».
+ */
+function menu_fuente_unidad(spec: TablaSpec, campo: CampoSpec, tablas: Map<string, TablaSpec>): NoxUiNode | null {
+  const opciones = [{ value: UNIDAD_FIJA, label: "La misma para todos los registros (la de arriba)" }];
+  if (TIPOS_UNIDAD_POR_REGISTRO.has(campo.tipo)) {
+    opciones.push({ value: UNIDAD_REGISTRO, label: "Cada registro escribe la suya (kg, L, piezas…)" });
+  }
+  for (const ref of spec.campos) {
+    const destino = ref.tipo === "referencia" && ref.tabla_ref_id ? tablas.get(ref.tabla_ref_id) : undefined;
+    if (!destino) continue;
+    for (const fuente of fuentes_de_unidad(destino)) {
+      opciones.push({
+        value: `${UNIDAD_ENLACE}${ref.clave}:${fuente.clave}`,
+        label: `La del ${ref.etiqueta} elegido: su «${fuente.etiqueta}»`,
+      });
+    }
+  }
+  if (opciones.length === 1) return null;
+  const actual = campo.unidad_de ? `${UNIDAD_ENLACE}${campo.unidad_de}` : campo.unidad_por_registro ? UNIDAD_REGISTRO : UNIDAD_FIJA;
+  return menu("unidad_fuente", "¿De dónde sale la unidad?", opciones, {
+    value: opciones.some((o) => o.value === actual) ? actual : UNIDAD_FIJA,
+    help: "Si cambia de un registro a otro, la de arriba es la que se propone o la que queda cuando falta.",
+  });
+}
+
 function entradas_de_tipo(spec: TablaSpec, campo: CampoSpec, tablas: Map<string, TablaSpec>): NoxUiNode[] {
-  const unidad = (placeholder: string) =>
-    nodo("nox.input-text", { name: "unidad", label: "Unidad (opcional)", placeholder, value: campo.unidad ?? "" });
+  const fuente = menu_fuente_unidad(spec, campo, tablas);
+  const unidad = (placeholder: string) => [
+    nodo("nox.input-text", { name: "unidad", label: "Unidad (opcional)", placeholder, value: campo.unidad ?? "" }),
+    ...(fuente ? [fuente] : []),
+  ];
   const decimales = nodo("nox.input-number", {
     name: "decimales",
     label: "Decimales",
@@ -608,20 +665,21 @@ function entradas_de_tipo(spec: TablaSpec, campo: CampoSpec, tablas: Map<string,
           placeholder: "{Precio} × {Cantidad}",
           help: ayuda_formula(spec, "", campo.clave),
         }),
-        unidad("$, km, %…"),
+        ...unidad("$, km, %…"),
         decimales,
       ];
     }
     case "numero":
+      return [...unidad("km, L, kg…"), decimales];
     case "dinero":
-      return [unidad(campo.tipo === "dinero" ? "$" : "km, L, kg…"), decimales];
+      return [nodo("nox.input-text", { name: "unidad", label: "Unidad (opcional)", placeholder: "$", value: campo.unidad ?? "" }), decimales];
     case "entero":
-      return [unidad("piezas, personas…")];
+      return unidad("piezas, personas…");
     case "nivel":
       return [
         nodo("nox.input-number", { name: "pasos", label: "Rayas del medidor", min: 0, step: 1, value: numero_o_vacio(campo.pasos) }),
         nodo("nox.input-number", { name: "capacidad", label: "Capacidad total", value: numero_o_vacio(campo.capacidad) }),
-        unidad("L"),
+        nodo("nox.input-text", { name: "unidad", label: "Unidad (opcional)", placeholder: "L", value: campo.unidad ?? "" }),
         decimales,
       ];
     default:
@@ -676,7 +734,8 @@ async function vista_opcion(data: Datos, spec: TablaSpec, campo: CampoSpec, dest
  */
 async function seccion_opcion(data: Datos, spec: TablaSpec, campo: CampoSpec, destino: TablaSpec): Promise<NoxUiNode[]> {
   const action = `api://herr-tablas/${spec.id}/campos/${campo.clave}/opcion`;
-  const columnas = destino.campos.filter((c) => c.tipo !== "foto");
+  const columnas = destino.campos.filter((c) => !TIPOS_FOTO.has(c.tipo));
+  const fotos = destino.campos.filter((c) => TIPOS_FOTO.has(c.tipo));
   const nombres = columnas.map((c) => `{${c.etiqueta}}`);
   return [
     titulo("Cómo se ve cada opción"),
@@ -725,6 +784,35 @@ async function seccion_opcion(data: Datos, spec: TablaSpec, campo: CampoSpec, de
         boton("Guardar plantillas", { icon: "fa-floppy-disk" }),
       ]),
     ]),
+    ...(fotos.length
+      ? [
+          nodo("nox.card", { title: "Foto" }, [
+            nodo("nox.markdown-view", {
+              content:
+                `La foto de cada registro de «${destino.name}» acompaña la opción al elegirla. ` +
+                "Puedes enseñarla también en la lista de esta tabla y al imprimirla, por ejemplo la foto de cada producto en una bitácora.",
+            }),
+            nodo("nox.form", { method: "PATCH", action, then: THEN_DISENO }, [
+              menu(
+                "ref_foto",
+                "Qué foto",
+                [
+                  { value: FOTO_AUTOMATICA, label: "La primera que tenga" },
+                  ...fotos.map((c) => ({ value: c.clave, label: c.etiqueta })),
+                  { value: SIN_FOTO, label: "Ninguna" },
+                ],
+                { value: campo.ref_foto ?? FOTO_AUTOMATICA },
+              ),
+              nodo("nox.input-checkbox", {
+                name: "ref_foto_en_tabla",
+                label: "Enseñarla en la lista y al imprimir",
+                value: campo.ref_foto_en_tabla === true,
+              }),
+              boton("Guardar foto", { icon: "fa-floppy-disk" }),
+            ]),
+          ]),
+        ]
+      : []),
   ];
 }
 

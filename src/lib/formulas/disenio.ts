@@ -19,6 +19,7 @@ export const TIPOS_UI: Record<TipoCampo, TipoUi> = {
   booleano: { nombre: "Sí / No", icono: "fa-square-check", ayuda: "Casilla: pagado, entregado" },
   opcion: { nombre: "Lista de opciones", icono: "fa-list-ul", ayuda: "Elegir de una lista: categoría, estado" },
   foto: { nombre: "Foto", icono: "fa-image", ayuda: "Imagen de la cámara o la galería" },
+  fotos: { nombre: "Varias fotos", icono: "fa-images", ayuda: "Una galería: hasta 10 imágenes por registro" },
   nota: { nombre: "Nota larga", icono: "fa-align-left", ayuda: "Texto largo con formato" },
   calculado: { nombre: "Cálculo", icono: "fa-calculator", ayuda: "Se calcula solo con otras columnas" },
   entero: { nombre: "Número entero", icono: "fa-arrow-up-1-9", ayuda: "Piezas, conteos: 3" },
@@ -53,7 +54,8 @@ const PISTAS: Array<[RegExp, TipoCampo]> = [
   [/\bfecha y hora\b|\bcuando\b/, "fecha_hora"],
   [/\b(fecha|dia|cumpleanos|vence|vencimiento|nacimiento|caducidad)\b/, "fecha"],
   [/\b(hora|horario)\b/, "hora"],
-  [/\b(fotos?|imagen|imagenes|comprobante|ticket|recibo|evidencia|portada)\b/, "foto"],
+  [/\b(fotos|imagenes|galeria|evidencias)\b/, "fotos"],
+  [/\b(foto|imagen|comprobante|ticket|recibo|evidencia|portada)\b/, "foto"],
   [/\b(notas?|observaciones?|comentarios?|descripcion|detalles?|resena)\b/, "nota"],
   [/\b(ubicacion|coordenadas|gps)\b/, "geo"],
   [/\b(categoria|tipo|estado|estatus|prioridad|talla|genero|metodo|forma de pago|clasificacion|etapa)\b/, "opcion"],
@@ -199,6 +201,10 @@ export function campo_nuevo(
     ref_descripcion: null,
     ref_descripcion_secundaria: null,
     multiple: false,
+    unidad_por_registro: false,
+    unidad_de: null,
+    ref_foto: null,
+    ref_foto_en_tabla: false,
   };
 }
 
@@ -213,7 +219,7 @@ export function campos_desde_propuestas(spec: TablaSpec, propuestas: ColumnaProp
   return propuestas.map((p) => {
     const campo = campo_nuevo(spec, p, usadas);
     usadas.add(campo.clave);
-    if (libres > 0 && !["foto", "nota", "ruta", "geo"].includes(campo.tipo)) {
+    if (libres > 0 && !["foto", "fotos", "nota", "ruta", "geo"].includes(campo.tipo)) {
       campo.en_resumen = true;
       libres--;
     }
@@ -231,6 +237,8 @@ export const PARTES_UI: Record<ParteRef, string> = {
 /** Lo que el menú de una parte ofrece además de las columnas: una clave nunca lleva paréntesis, no chocan. */
 export const SIN_COLUMNA = "(ninguna)";
 export const CON_PLANTILLA = "(plantilla)";
+/** Valor del menú «Qué foto» de un enlace: la primera que tenga cada registro. */
+export const FOTO_AUTOMATICA = "(primera)";
 
 /** Si al elegir este tipo hace falta un segundo paso para que la columna sirva. */
 export function necesita_ajustes(campo: CampoSpec): boolean {

@@ -806,10 +806,12 @@ describe("diseñador", () => {
     const [form] = nodos(elegir, "nox.form");
     expect(form!.props).toMatchObject({ method: "POST", action: `api://herr-tablas/${t.id}/imprimir` });
     expect(nodos(elegir, "nox.input-text").find((n) => n.props!.name === "nombre")!.props!.value).toBe("Bitácora");
-    const casillas = nodos(elegir, "nox.input-checkbox");
-    expect(casillas.map((c) => c.props!.label).sort()).toEqual(["Mezcal · 12", "Vino blanco · 7", "Vino tinto · 35"]);
+    const casillas = (doc: NoxPageDescriptor) =>
+      nodos(doc, "nox.input-checkbox").filter((c) => String(c.props!.name).startsWith("r_"));
+    expect(casillas(elegir).map((c) => c.props!.label).sort()).toEqual(["Mezcal · 12", "Vino blanco · 7", "Vino tinto · 35"]);
+    expect(nodos(elegir, "nox.input-checkbox").find((c) => c.props!.name === "fotos")!.props!.value).toBe(true);
     const con_q = await pagina(`/pages/herramientas.herr-tabla?id=${t.id}&modo=imprimir&q=vino`);
-    expect(nodos(con_q, "nox.input-checkbox")).toHaveLength(2);
+    expect(casillas(con_q)).toHaveLength(2);
 
     const impreso = async (body: Record<string, unknown>) => {
       const r = await call("POST", `${url}/imprimir`, body);

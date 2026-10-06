@@ -36,6 +36,7 @@ export const herr_registros_module = define_module({
           valores: { type: "json" },
           calculados: { type: "json" },
           miniaturas: { type: "json" },
+          unidades: { type: "json" },
         },
         options_map: { value: "id", label: "name" },
         redact_history: sin_miniaturas,

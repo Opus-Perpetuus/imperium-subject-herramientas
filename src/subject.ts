@@ -9,7 +9,7 @@ export const SUBJECT = define_subject({
   version: pkg.version,
   image: `ghcr.io/opus-perpetuus/subject-herramientas:${pkg.version}`,
   compat: { nox: ">=0.5.0", kit: "^0.5.0" },
-  schema_version: 2,
+  schema_version: 3,
   storage_files: true,
   // El registro de vehículos es la app Vehículos; aquí solo van los ajustes de reparto.
   dependsOn: ["subject-vehiculos"],

@@ -20,7 +20,8 @@ import {
 } from "../../lib/comun.ts";
 import { texto_buscable } from "../../lib/formulas/busqueda.ts";
 import { calcular_valores, calculados_de } from "../../lib/formulas/calculadora.ts";
-import { spec_de_fila, type CampoSpec, type TablaSpec } from "../../lib/formulas/esquema.ts";
+import { TIPOS_UNIDAD_POR_REGISTRO, spec_de_fila, type CampoSpec, type TablaSpec } from "../../lib/formulas/esquema.ts";
+import { MAX_FOTOS, lista_de, partir, unir } from "../../lib/formulas/fotos.ts";
 import { formatear as unir_multivalor } from "../../lib/formulas/multivalor.ts";
 import { objeto, registro_como_fila, registros_de, tabla_activa } from "../herr-tablas/herr-tablas.flow.ts";
 
@@ -46,6 +47,11 @@ const id_de_opcion = (v: unknown) => (v && typeof v === "object" && "_id" in v ?
 /** Fecha como día `AAAA-MM-DD`; fecha y hora como hora de pared del negocio `AAAA-MM-DDTHH:mm`. */
 function valor_de_campo(campo: CampoSpec, v: unknown): string {
   if (campo.tipo === "fecha") return como_texto(solo_dia(v));
+  if (campo.tipo === "fotos") {
+    const fotos = Array.isArray(v) ? v.map((x) => texto(x)).filter(Boolean) : lista_de(texto(v));
+    if (fotos.length > MAX_FOTOS) falla(400, `«${campo.etiqueta}»: hasta ${MAX_FOTOS} fotos`, "validation_error");
+    return unir(fotos);
+  }
   if (campo.tipo === "referencia") return como_texto(Array.isArray(v) ? v.map(id_de_opcion) : id_de_opcion(v));
   if (campo.tipo === "fecha_hora" && typeof v === "string" && CON_ZONA.test(v.trim())) {
     const ms = Date.parse(v.trim());
@@ -70,6 +76,70 @@ export function valores_capturados(spec: TablaSpec, entrada: unknown): Record<st
     if (campo.requerido && !valores[campo.clave]?.trim()) falla(400, `Falta «${campo.etiqueta}»`);
   }
   return valores;
+}
+
+/** En el formulario, la unidad de un número va junto a él como `<clave>@unidad`. */
+export const SUFIJO_UNIDAD = "@unidad";
+
+const MAX_UNIDAD = 24;
+
+/**
+ * Las unidades del registro: las que llegan para los números que hoy piden
+ * unidad y, del resto, lo que ya tenía. Una columna que pasa un rato a unidad
+ * fija no borra la que escribió cada registro al editarlo.
+ */
+function unidades_capturadas(spec: TablaSpec, previas: Record<string, string>, entrada: Record<string, string>): Record<string, string> {
+  const out = { ...previas };
+  for (const campo of spec.campos) {
+    if (!campo.unidad_por_registro || !TIPOS_UNIDAD_POR_REGISTRO.has(campo.tipo) || !(campo.clave in entrada)) continue;
+    const unidad = texto(entrada[campo.clave]).slice(0, MAX_UNIDAD);
+    if (unidad) out[campo.clave] = unidad;
+    else delete out[campo.clave];
+  }
+  return out;
+}
+
+const ID_ADJUNTO = /^[a-f0-9]{16,}$/i;
+
+/**
+ * Las fotos de una columna «Varias fotos». Cada una que vuelve como estaba
+ * (su URL, su miniatura o el id del adjunto) se conserva con su miniatura; las
+ * nuevas se suben. Así editar el registro no vuelve a subir lo que ya había.
+ */
+async function guardar_fotos(
+  ctx: KirletCtx,
+  id: string,
+  pedidas: string[],
+  antes: string,
+  miniaturas_antes: string,
+): Promise<{ urls: string[]; minis: string[] }> {
+  const previas = lista_de(antes);
+  const minis_previas = partir(miniaturas_antes);
+  const usadas = new Set<number>();
+  const urls: string[] = [];
+  const minis: string[] = [];
+  for (const pedida of pedidas) {
+    const j = previas.findIndex(
+      (url, i) =>
+        !usadas.has(i) &&
+        (pedida === url || (minis_previas[i] && pedida === minis_previas[i]) || (ID_ADJUNTO.test(pedida) && url.endsWith(`/${pedida}`))),
+    );
+    if (j >= 0) {
+      usadas.add(j);
+      urls.push(previas[j]!);
+      minis.push(minis_previas[j] ?? "");
+      continue;
+    }
+    const subida = await subir_foto(ctx, "herr-registros", id, pedida);
+    if (subida) {
+      urls.push(subida.url);
+      minis.push(subida.miniatura);
+    } else if (es_foto_guardada(pedida) && !pedida.startsWith("data:")) {
+      urls.push(pedida);
+      minis.push("");
+    }
+  }
+  return { urls, minis };
 }
 
 /** Texto de presentación: el primer campo `en_resumen` con valor. */
@@ -98,16 +168,30 @@ export async function preparar_registro(
   const miniaturas_previas = objeto(existing?.miniaturas);
   const miniaturas: Record<string, string> = {};
   for (const campo of spec.campos) {
+    if (campo.tipo === "fotos") {
+      const { urls, minis } = await guardar_fotos(
+        ctx,
+        id,
+        lista_de(valores[campo.clave]),
+        antes[campo.clave] ?? "",
+        miniaturas_previas[campo.clave] ?? "",
+      );
+      if (campo.clave in valores) valores[campo.clave] = unir(urls);
+      if (minis.some(Boolean)) miniaturas[campo.clave] = unir(minis);
+      continue;
+    }
     if (campo.tipo !== "foto") continue;
     const raw = valores[campo.clave] ?? "";
-    const previa = antes[campo.clave] ?? "";
+    // Si la columna fue «Varias fotos», una «Foto» se queda con la primera.
+    const previa = lista_de(antes[campo.clave])[0] ?? "";
+    const mini_previa = partir(miniaturas_previas[campo.clave])[0] ?? "";
     // El formulario enseña la miniatura (o el id del adjunto): si vuelve igual, la foto no cambió.
     const sin_tocar =
       es_foto_guardada(previa) &&
-      ((raw !== "" && raw === miniaturas_previas[campo.clave]) || (/^[a-f0-9]{16,}$/i.test(raw) && previa.endsWith(`/${raw}`)));
+      ((raw !== "" && raw === mini_previa) || (ID_ADJUNTO.test(raw) && previa.endsWith(`/${raw}`)));
     if (sin_tocar) {
       valores[campo.clave] = previa;
-      if (miniaturas_previas[campo.clave]) miniaturas[campo.clave] = miniaturas_previas[campo.clave]!;
+      if (mini_previa) miniaturas[campo.clave] = mini_previa;
       continue;
     }
     const subida = await subir_foto(ctx, "herr-registros", id, raw);
@@ -116,8 +200,8 @@ export async function preparar_registro(
       if (subida.miniatura) miniaturas[campo.clave] = subida.miniatura;
     } else if (!es_foto_guardada(raw)) {
       if (campo.clave in valores) valores[campo.clave] = "";
-    } else if (raw === antes[campo.clave] && miniaturas_previas[campo.clave]) {
-      miniaturas[campo.clave] = miniaturas_previas[campo.clave]!;
+    } else if (raw === previa && mini_previa) {
+      miniaturas[campo.clave] = mini_previa;
     }
   }
   const filas = (await registros_de(ctx, tabla_id))
@@ -126,14 +210,16 @@ export async function preparar_registro(
   filas.push({ id, valores });
   const todos = calcular_valores(spec, valores, filas);
   const calculados = calculados_de(spec, todos);
+  const unidades = unidades_capturadas(spec, objeto(existing?.unidades), objeto(patch.unidades));
   return {
     ...patch,
     tabla_id,
     valores,
     calculados,
     miniaturas,
+    unidades,
     name: nombre_de(spec, todos) || id,
-    search_field: campo_busqueda(texto_buscable(valores, calculados, spec)),
+    search_field: campo_busqueda(texto_buscable(valores, { ...calculados, ...unidades }, spec)),
   };
 }
 
@@ -145,7 +231,9 @@ export function sin_miniaturas(row: DomainRow): DomainRow {
 
 /** La miniatura de la primera foto como `foto`: así la lista de Registros la pinta como imagen. */
 export function con_foto(row: DomainRow): DomainRow {
-  const primera = Object.values(objeto(row.miniaturas)).find(Boolean);
+  const primera = Object.values(objeto(row.miniaturas))
+    .map((v) => partir(v)[0])
+    .find(Boolean);
   return primera ? { ...row, foto: primera } : row;
 }
 
@@ -209,12 +297,18 @@ export const herr_registros_flow = define_routes({
    * en `valores`. Con `id` edita ese registro.
    */
   "POST /herr-registros/captura": async (ctx) => {
-    const { tabla_id, id, ...campos } = await ctx.body<Record<string, unknown>>();
+    const { tabla_id, id, ...resto } = await ctx.body<Record<string, unknown>>();
+    const campos: Record<string, unknown> = {};
+    const unidades: Record<string, string> = {};
+    for (const [clave, v] of Object.entries(resto)) {
+      if (clave.endsWith(SUFIJO_UNIDAD)) unidades[clave.slice(0, -SUFIJO_UNIDAD.length)] = texto(v);
+      else campos[clave] = v;
+    }
     if (texto(id)) {
       const existing = await fila_o_404(ctx, "herr_registros", texto(id), "El registro");
       const patch = await preparar_registro(
         ctx,
-        { tabla_id: texto(tabla_id) || existing.tabla_id, valores: campos },
+        { tabla_id: texto(tabla_id) || existing.tabla_id, valores: campos, unidades },
         existing,
       );
       const updated = await ctx.data.update(
@@ -232,6 +326,7 @@ export const herr_registros_flow = define_routes({
         id: new_id("registro"),
         tabla_id: texto(tabla_id),
         valores: campos,
+        unidades,
         description: "",
         is_active: true,
         created_at: ts,

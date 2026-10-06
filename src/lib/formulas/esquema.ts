@@ -20,6 +20,8 @@ export const TIPOS_CAMPO = [
   /** Una opción de `opciones`. */
   "opcion",
   "foto",
+  /** Varias fotos: sus URLs unidas con `|`, y sus miniaturas igual y en el mismo orden. */
+  "fotos",
   /** Texto largo en Markdown. */
   "nota",
   /** Referencia a una ruta GPS registrada. */
@@ -60,6 +62,14 @@ export type CampoSpec = {
   opciones?: string[];
   formula?: string | null;
   unidad?: string | null;
+  /** Solo número y entero: cada registro escribe su unidad; `unidad` es la que se propone. */
+  unidad_por_registro?: boolean;
+  /**
+   * `<referencia>:<campo>`: la unidad es la del registro que elige la columna
+   * `referencia` de esta tabla, tomada de su `campo` (la unidad de un número o
+   * el texto de una columna como «Unidad»). Gana a `unidad_por_registro`.
+   */
+  unidad_de?: string | null;
   decimales?: number;
   /** Si aparece en la fila resumida de la lista. */
   en_resumen?: boolean;
@@ -75,7 +85,18 @@ export type CampoSpec = {
   ref_descripcion_secundaria?: string | null;
   /** Solo referencia y opción: varios valores en una cadena (ver multivalor). */
   multiple?: boolean;
+  /** Solo referencia: la columna de fotos de la tabla enlazada que se enseña; `SIN_FOTO` ninguna; sin valor, la primera. */
+  ref_foto?: string | null;
+  /** Solo referencia: esa foto se ve también en la lista y en lo impreso, no solo al elegir. */
+  ref_foto_en_tabla?: boolean;
 };
+
+export const SIN_FOTO = "-";
+
+export const TIPOS_FOTO: ReadonlySet<TipoCampo> = new Set(["foto", "fotos"]);
+
+/** Los tipos que pueden llevar una unidad distinta en cada registro. */
+export const TIPOS_UNIDAD_POR_REGISTRO: ReadonlySet<TipoCampo> = new Set(["numero", "entero"]);
 
 /**
  * Las cuatro partes con que se ve un registro enlazado al elegirlo: las del
@@ -135,6 +156,8 @@ export type Registro = {
   updated_at?: string;
   /** Clave de cada foto → su miniatura en data URL; el motor no la lee. */
   miniaturas?: Record<string, string>;
+  /** Clave de cada número con `unidad_por_registro` → la unidad que se le escribió. */
+  unidades?: Record<string, string>;
 };
 
 export const DECIMALES = 2;
@@ -225,6 +248,10 @@ function normalizar_campo(x: Record<string, unknown>): CampoSpec {
     ref_descripcion: texto_o_null(x.ref_descripcion),
     ref_descripcion_secundaria: texto_o_null(x.ref_descripcion_secundaria),
     multiple: x.multiple === true,
+    unidad_por_registro: x.unidad_por_registro === true,
+    unidad_de: texto_o_null(x.unidad_de),
+    ref_foto: texto_o_null(x.ref_foto),
+    ref_foto_en_tabla: x.ref_foto_en_tabla === true,
   };
 }
 
@@ -305,6 +332,10 @@ export function validar_esquema(spec: TablaSpec): string[] {
     if (campo.tipo === "calculado") {
       if (!campo.formula) errores.push(`«${campo.clave}»: falta la fórmula`);
       else errores.push(...errores_formula(spec, campo.formula, campo.clave));
+    }
+    if (campo.unidad_de) {
+      const ref = campo_de(spec, campo.unidad_de.split(":")[0] ?? "");
+      if (ref?.tipo !== "referencia") errores.push(`«${campo.clave}»: su unidad sale de un enlace que ya no existe`);
     }
   }
   for (const c of spec.constantes) revisar_clave(c.clave, "Valor fijo", vistas);

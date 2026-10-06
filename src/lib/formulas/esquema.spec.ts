@@ -100,6 +100,10 @@ describe("lectura desde una fila", () => {
         ref_descripcion: null,
         ref_descripcion_secundaria: null,
         multiple: false,
+        unidad_por_registro: false,
+        unidad_de: null,
+        ref_foto: null,
+        ref_foto_en_tabla: false,
       },
     ]);
     expect(s.constantes[0]).toMatchObject({ clave: "k", etiqueta: "k", valor: "5", decimales: 2 });

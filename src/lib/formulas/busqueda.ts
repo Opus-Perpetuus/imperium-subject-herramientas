@@ -79,7 +79,7 @@ export function buscar(
 }
 
 /** Tipos que no son texto buscable: geo envenenaría el índice con dígitos; foto y ruta guardan ids/URLs. */
-const NO_INDEXABLES = new Set(["geo", "foto", "ruta"]);
+export const NO_INDEXABLES: ReadonlySet<string> = new Set(["geo", "foto", "fotos", "ruta"]);
 
 /**
  * El texto por el que un registro se encuentra. Los campos geo se excluyen:

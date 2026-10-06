@@ -8,19 +8,24 @@ import {
   type NoxUiNode,
 } from "@opus-perpetuus/imperium-core-kit";
 import { es_foto_guardada, filas_de, momento_legible, texto } from "../../lib/comun.ts";
-import { spec_de_fila, type CampoSpec, type TablaSpec } from "../../lib/formulas/esquema.ts";
-import { cambios_de, describir_cambios, titulo_de_cambios } from "../../lib/formulas/historial.ts";
+import { TIPOS_UNIDAD_POR_REGISTRO, spec_de_fila, type CampoSpec, type TablaSpec } from "../../lib/formulas/esquema.ts";
+import { MAX_FOTOS, lista_de, partir } from "../../lib/formulas/fotos.ts";
+import { cambios_de, describir_cambios, titulo_de_cambios, type Cambio } from "../../lib/formulas/historial.ts";
 import { texto_a_numero } from "../../lib/formulas/motor.ts";
 import { parsear } from "../../lib/formulas/multivalor.ts";
 import { href_registro, href_tabla, migas } from "../herr-tablas/herr-tablas.disenador.ts";
 import {
-  etiquetas_referencia,
+  enlaces_de,
+  etiquetas_de,
   ids_referencia,
   objeto,
   opciones_referencia,
+  registros_de,
+  unidad_en_fila,
   valor_presentado,
   type OpcionRef,
 } from "../herr-tablas/herr-tablas.flow.ts";
+import { SUFIJO_UNIDAD } from "./herr-registros.flow.ts";
 import { API, OWNER, boton, nodo, pagina } from "../herr-tablas/herr-tablas.nox.ts";
 
 const ID_REGISTRO = "herramientas.herr-registro";
@@ -31,11 +36,18 @@ function coordenadas(raw: string): { latitude: number; longitude: number } | "" 
   return lat != null && lon != null ? { latitude: lat, longitude: lon } : "";
 }
 
+/** Cada foto como la enseña el formulario: su miniatura en línea o, sin ella, el id del adjunto. */
+function foto_en_formulario(url: string, miniatura?: string): string {
+  return miniatura || (/\/media\/([^/?#]+)$/.exec(url)?.[1] ?? url);
+}
+
 /** Un `nox.input-*` por tipo de campo, con el valor ya capturado si se edita. */
 export function nodo_entrada(campo: CampoSpec, raw: string, opciones?: Map<string, OpcionRef>, miniatura?: string): NoxUiNode {
+  // Con unidad por registro o tomada de un enlace, la de la columna no es la de todos.
+  const unidad_fija = campo.unidad && !campo.unidad_por_registro && !campo.unidad_de ? campo.unidad : null;
   const base = {
     name: campo.clave,
-    label: campo.unidad ? `${campo.etiqueta} (${campo.unidad})` : campo.etiqueta,
+    label: unidad_fija ? `${campo.etiqueta} (${unidad_fija})` : campo.etiqueta,
     required: campo.requerido === true,
   };
   const numero = () => texto_a_numero(raw) ?? "";
@@ -60,11 +72,22 @@ export function nodo_entrada(campo: CampoSpec, raw: string, opciones?: Map<strin
         ? nodo("nox.input-checkbox-group", { ...base, options, value: parsear(raw) })
         : nodo("nox.input-menu", { ...base, options, value: raw });
     }
-    case "foto": {
+    case "foto":
       // La miniatura se pinta en línea (desde la APK un `<img>` a `/api/media` sale sin la
       // sesión) y, si vuelve igual, la captura sabe que la foto no cambió. Sin ella, el id del adjunto.
-      const adjunto = /\/media\/([^/?#]+)$/.exec(raw)?.[1] ?? raw;
-      return nodo("nox.input-image", { ...base, value: es_foto_guardada(raw) ? miniatura || adjunto : "" });
+      return nodo("nox.input-image", {
+        ...base,
+        value: es_foto_guardada(raw) ? foto_en_formulario(lista_de(raw)[0]!, partir(miniatura)[0]) : "",
+      });
+    case "fotos": {
+      const minis = partir(miniatura);
+      return nodo("nox.input-image", {
+        ...base,
+        multiple: true,
+        image_selection_limit: MAX_FOTOS,
+        help: `Hasta ${MAX_FOTOS} fotos.`,
+        value: lista_de(raw).map((url, i) => foto_en_formulario(url, minis[i])),
+      });
     }
     case "nota":
       return nodo("nox.input-markdown", { ...base, value: raw });
@@ -90,6 +113,41 @@ export function nodo_entrada(campo: CampoSpec, raw: string, opciones?: Map<strin
   }
 }
 
+/**
+ * La unidad que escribe cada registro va junto a su número. Se sugieren las
+ * que ya se usaron en esa columna para que «kg» no acabe también como «Kg».
+ */
+function nodo_unidad(campo: CampoSpec, unidad: string, usadas: string[]): NoxUiNode {
+  return nodo("nox.input-text", {
+    name: `${campo.clave}${SUFIJO_UNIDAD}`,
+    label: `Unidad de ${campo.etiqueta}`,
+    value: unidad,
+    placeholder: "kg, L, piezas, cajas…",
+    help: usadas.length ? `Ya usadas: ${usadas.slice(0, 8).join(", ")}.` : "",
+  });
+}
+
+/** Unidades distintas que ya escribieron los registros de la tabla, por columna. */
+function unidades_usadas(registros: DomainRow[]): Map<string, string[]> {
+  const out = new Map<string, Set<string>>();
+  for (const r of registros) {
+    for (const [clave, unidad] of Object.entries(objeto(r.unidades))) {
+      if (!unidad) continue;
+      const de = out.get(clave) ?? new Set<string>();
+      de.add(unidad);
+      out.set(clave, de);
+    }
+  }
+  return new Map([...out].map(([clave, de]) => [clave, [...de].sort((a, b) => a.localeCompare(b, "es"))]));
+}
+
+/** Cambios de la unidad escrita en cada número cuyo valor no cambió: si cambió, su renglón ya la enseña. */
+function cambios_de_unidad(campos: CampoSpec[], antes: Record<string, string>, despues: Record<string, string>): Cambio[] {
+  return campos
+    .filter((c) => c.unidad_por_registro && (antes[c.clave] ?? "") !== (despues[c.clave] ?? ""))
+    .map((c) => ({ etiqueta: `Unidad de ${c.etiqueta}`, antes: antes[c.clave] ?? "", despues: despues[c.clave] ?? "" }));
+}
+
 async function pagina_historial(
   data: KirletDataClient,
   nox: NoxServices,
@@ -100,8 +158,8 @@ async function pagina_historial(
   const entradas = (await nox.history.list({ resource: "herr-registros", entity_id: id, limit: 200 })).sort((a, b) =>
     b.created_at.localeCompare(a.created_at),
   );
-  const etiquetas = await etiquetas_referencia(data, spec);
-  const presentar = (c: CampoSpec, raw: string) => valor_presentado(c, raw, etiquetas);
+  const enlaces = await enlaces_de(data, spec);
+  const etiquetas = etiquetas_de(enlaces);
   const nombre = texto(registro.name) || "Registro";
   const hijos: NoxUiNode[] = [
     migas(["Mis tablas", "/internal/herr-tabla"], [spec.name, href_tabla(spec.id)], [nombre, href_registro(spec.id, id)]),
@@ -112,7 +170,16 @@ async function pagina_historial(
           text: "Cambios, del más reciente al primero",
           items: entradas.map((e, i) => {
             const payload = (e.payload ?? {}) as { before?: DomainRow | null; after?: DomainRow | null };
+            const antes = objeto(payload.before?.valores);
             const despues = objeto(payload.after?.valores);
+            const unidades_despues = objeto(payload.after?.unidades);
+            // Cada lado con su unidad: la que tenía el registro antes y la que tiene después.
+            const lados = {
+              antes: { id, valores: antes, unidades: objeto(payload.before?.unidades) },
+              despues: { id, valores: despues, unidades: unidades_despues },
+            };
+            const presentar = (c: CampoSpec, raw: string, lado: "antes" | "despues") =>
+              valor_presentado(c, raw, etiquetas, unidad_en_fila(c, lados[lado], enlaces));
             const base = {
               id: e.id,
               state: i ? "done" : "current",
@@ -123,7 +190,11 @@ async function pagina_historial(
               return { ...base, title: "Se capturó", description: capturado.map((c) => `${c.etiqueta}: ${c.despues}`).join(" · ") };
             }
             if (e.action === "delete") return { ...base, title: "Se eliminó", description: "" };
-            const cambios = cambios_de(spec.campos, objeto(payload.before?.valores), despues, presentar);
+            const mismo_valor = spec.campos.filter((c) => (antes[c.clave] ?? "") === (despues[c.clave] ?? ""));
+            const cambios = [
+              ...cambios_de(spec.campos, antes, despues, presentar),
+              ...cambios_de_unidad(mismo_valor, lados.antes.unidades, unidades_despues),
+            ];
             return { ...base, title: titulo_de_cambios(cambios), description: describir_cambios(cambios) };
           }),
         })
@@ -227,10 +298,18 @@ export const herr_registros_pages: KirletPageDecl[] = [
       if (registro && url?.searchParams.get("modo") === "historial") return pagina_historial(data, nox, spec, registro);
       const valores = objeto(registro?.valores);
       const miniaturas = objeto(registro?.miniaturas);
+      const unidades = objeto(registro?.unidades);
       const opciones = await opciones_referencia(data, spec);
+      const con_unidad = spec.campos.filter((c) => c.unidad_por_registro && TIPOS_UNIDAD_POR_REGISTRO.has(c.tipo));
+      const usadas = con_unidad.length ? unidades_usadas(await registros_de({ data }, spec.id)) : new Map<string, string[]>();
       const entradas = spec.campos
         .filter((c) => c.tipo !== "calculado")
-        .map((c) => nodo_entrada(c, valores[c.clave] ?? c.valor_por_defecto ?? "", opciones.get(c.clave), miniaturas[c.clave]));
+        .flatMap((c) => {
+          const entrada = nodo_entrada(c, valores[c.clave] ?? c.valor_por_defecto ?? "", opciones.get(c.clave), miniaturas[c.clave]);
+          if (!con_unidad.includes(c)) return [entrada];
+          // Sin unidad propia se propone la de la columna: es la que la lista ya le enseña.
+          return [entrada, nodo_unidad(c, unidades[c.clave] || c.unidad || "", usadas.get(c.clave) ?? [])];
+        });
       const form = nodo(
         "nox.form",
         {

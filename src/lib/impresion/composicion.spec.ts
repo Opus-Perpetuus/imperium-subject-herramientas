@@ -153,4 +153,34 @@ describe("fotos en el impreso", () => {
     expect(imagen!.y).toBeGreaterThan(rayas[0]!);
     expect(imagen!.y + imagen!.alto).toBeLessThanOrEqual(rayas[1]!);
   });
+
+  test("varias fotos en una celda van en cuadros iguales sin encimarse; si no caben a lo ancho bajan de renglón", () => {
+    const fotos = Array.from({ length: 5 }, (_, i) => `data:image/jpeg;base64,F${i}`);
+    const galeria = (columnas_de_texto: number): Pagina =>
+      componer(
+        {
+          titulo: "Galería",
+          subtitulo: "",
+          columnas: [
+            ...Array.from({ length: columnas_de_texto }, (_, i) => ({ titulo: `Dato largo ${i + 1}` })),
+            { titulo: "Fotos", imagen: true },
+          ],
+          filas: [[...Array.from({ length: columnas_de_texto }, () => "un texto que ocupa su lugar"), fotos.join("|")]],
+          total: "Total: 1 registro",
+        },
+        medir,
+      )[0]!;
+    for (const hoja of [galeria(1), galeria(9)]) {
+      expect(hoja.imagenes.map((i) => i.href)).toEqual(fotos);
+      expect(hoja.imagenes.every((i) => i.ancho === 40 && i.alto === 40)).toBe(true);
+      const encimadas = hoja.imagenes.some((a, i) =>
+        hoja.imagenes.some((b, j) => i !== j && a.x < b.x + b.ancho && b.x < a.x + a.ancho && a.y < b.y + b.alto && b.y < a.y + a.alto),
+      );
+      expect(encimadas).toBe(false);
+      const rayas = hoja.rayas.map((r) => r.y1).sort((a, b) => a - b);
+      expect(Math.max(...hoja.imagenes.map((i) => i.y + i.alto))).toBeLessThanOrEqual(rayas[1]!);
+    }
+    expect(new Set(galeria(1).imagenes.map((i) => i.y)).size).toBe(1);
+    expect(new Set(galeria(9).imagenes.map((i) => i.y)).size).toBeGreaterThan(1);
+  });
 });

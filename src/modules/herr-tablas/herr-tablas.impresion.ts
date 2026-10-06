@@ -1,11 +1,12 @@
 import { define_routes, type KirletCtx, type NoxPageDescriptor, type NoxUiNode } from "@opus-perpetuus/imperium-core-kit";
 import { booleano, dia_legible, falla, fecha_hoy, hora_ahora, texto, zona_valida } from "../../lib/comun.ts";
-import { spec_de_fila, type Registro, type TablaSpec } from "../../lib/formulas/esquema.ts";
+import { TIPOS_FOTO, spec_de_fila, type Registro, type TablaSpec } from "../../lib/formulas/esquema.ts";
+import { lista_de, partir } from "../../lib/formulas/fotos.ts";
 import { pdf_de, png_de, medida } from "../../lib/impresion/archivos.ts";
-import { componer, type Impreso } from "../../lib/impresion/composicion.ts";
+import { componer, type ColumnaImpresa, type Impreso } from "../../lib/impresion/composicion.ts";
 import { escapar } from "../../lib/markdown/html.ts";
 import { ID_TABLA, href_tabla, migas } from "./herr-tablas.disenador.ts";
-import { coincidencias, tabla_activa, valor_presentado, vista_de_tabla } from "./herr-tablas.flow.ts";
+import { con_foto_de_enlace, filtrar_filas, presentar, tabla_activa, vista_de_tabla } from "./herr-tablas.flow.ts";
 import { boton, nodo, pagina } from "./herr-tablas.nox.ts";
 
 /**
@@ -36,7 +37,16 @@ const NUMERICOS = new Set(["numero", "dinero", "entero", "calculado"]);
 // #region Pedidos
 
 /** Lo que se pidió, entre el formulario y la hoja que entrega el archivo. `ids` nulo es «todos». */
-type Pedido = { tabla_id: string; formato: Formato; ids: string[] | null; q: string; nombre: string; vence: number };
+type Pedido = {
+  tabla_id: string;
+  formato: Formato;
+  ids: string[] | null;
+  q: string;
+  nombre: string;
+  /** Sin fotos el PDF pesa poco y cabe más por hoja. */
+  fotos: boolean;
+  vence: number;
+};
 
 /**
  * En memoria: el pedido vive lo que tarda el lanzador en abrir la hoja
@@ -68,13 +78,11 @@ function pedido_de(t: string, tabla_id: string): Pedido | null {
 type Vista = Awaited<ReturnType<typeof vista_de_tabla>>;
 
 function filtrar(spec: TablaSpec, vista: Vista, q: string): Registro[] {
-  if (!q) return vista.filas;
-  const si = new Set(coincidencias(spec, vista.filas, vista.etiquetas, q));
-  return vista.filas.filter((f) => si.has(f.id));
+  return filtrar_filas(spec, vista.filas, vista.presentacion, q);
 }
 
 function celdas(vista: Vista, fila: Registro): string[] {
-  return vista.columnas.map((c) => valor_presentado(c, fila.valores[c.clave] ?? "", vista.etiquetas));
+  return vista.columnas.map((c) => presentar(c, fila, vista.presentacion));
 }
 
 /** Cómo se nombra un registro en la casilla para elegirlo: sus primeras columnas con dato. */
@@ -87,19 +95,42 @@ function cuantos(n: number, de: number): string {
   return `${n}${de > n ? ` de ${de}` : ""} ${de === 1 ? "registro" : "registros"}`;
 }
 
-function impreso_de(titulo: string, vista: Vista, filas: Registro[], de: number, detalle: string): Impreso {
+/** Las miniaturas de las fotos de una celda, unidas como las dibuja la composición. */
+function miniaturas_de(fila: Registro, clave: string): string {
+  const minis = partir(fila.miniaturas?.[clave]);
+  return lista_de(fila.valores[clave])
+    .map((_, i) => minis[i] ?? "")
+    .filter(Boolean)
+    .join("|");
+}
+
+/**
+ * Columnas y celdas del impreso. Una foto va como su miniatura (en el impreso
+ * se dibuja) y la de lo enlazado, en su columna junto al enlace. Sin `fotos`
+ * no sale ninguna columna de imagen.
+ */
+function impreso_de(titulo: string, vista: Vista, filas: Registro[], de: number, detalle: string, fotos: boolean): Impreso {
   const zona = zona_valida();
   const dia = dia_legible(fecha_hoy(zona));
+  const partes: Array<{ columna: ColumnaImpresa; celda: (f: Registro) => string }> = [];
+  for (const c of vista.columnas) {
+    if (TIPOS_FOTO.has(c.tipo)) {
+      if (fotos) partes.push({ columna: { titulo: c.etiqueta, imagen: true }, celda: (f) => miniaturas_de(f, c.clave) });
+      continue;
+    }
+    partes.push({ columna: { titulo: c.etiqueta, derecha: NUMERICOS.has(c.tipo) }, celda: (f) => presentar(c, f, vista.presentacion) });
+    if (fotos && con_foto_de_enlace(c)) {
+      partes.push({
+        columna: { titulo: `Foto · ${c.etiqueta}`, imagen: true },
+        celda: (f) => vista.presentacion.fotos_enlace(c, f).minis.filter((m) => m.startsWith("data:")).join("|"),
+      });
+    }
+  }
   return {
     titulo,
     subtitulo: [`Impreso el ${dia} a las ${hora_ahora(zona)}`, detalle].filter(Boolean).join(" · "),
-    columnas: vista.columnas.map((c) => ({ titulo: c.etiqueta, derecha: NUMERICOS.has(c.tipo), imagen: c.tipo === "foto" })),
-    // Una foto va como su miniatura: en el impreso se dibuja.
-    filas: filas.map((f) =>
-      vista.columnas.map((c) =>
-        c.tipo === "foto" ? (f.miniaturas?.[c.clave] ?? "") : valor_presentado(c, f.valores[c.clave] ?? "", vista.etiquetas),
-      ),
-    ),
+    columnas: partes.map((p) => p.columna),
+    filas: filas.map((f) => partes.map((p) => p.celda(f))),
     total: `Total: ${cuantos(filas.length, de)}`,
   };
 }
@@ -138,7 +169,7 @@ export async function pagina_imprimir(data: Datos, spec: TablaSpec, params: URLS
     migas(["Mis tablas", "/internal/herr-tabla"], [spec.name, href_tabla(spec.id)]),
     nodo("nox.markdown-view", {
       content:
-        "Sale con el nombre que le pongas, los títulos de las columnas, las fotos y el total de registros. " +
+        "Sale con el nombre que le pongas, los títulos de las columnas, las fotos (si las quieres) y el total de registros. " +
         "**Si no marcas ninguno, se imprimen todos los de abajo.**",
     }),
     nodo("nox.search", { label: "Buscar registros", value: q }),
@@ -175,6 +206,12 @@ export async function pagina_imprimir(data: Datos, spec: TablaSpec, params: URLS
             label: "Formato",
             options: Object.entries(FORMATOS).map(([value, label]) => ({ value, label })),
             value: "pdf",
+          }),
+          nodo("nox.input-checkbox", {
+            name: "fotos",
+            label: "Con fotos",
+            help: "Las de la tabla y las de lo enlazado que se ven en la lista. Sin ellas el archivo pesa menos.",
+            value: true,
           }),
           nodo("nox.input-hidden", { name: "q", value: q }),
           ...elegibles.map((f) => nodo("nox.input-checkbox", { name: `r_${f.id}`, label: nombre_de_fila(vista, f), value: false })),
@@ -213,7 +250,7 @@ export async function pagina_impreso(data: Datos, spec: TablaSpec, params: URLSe
   const filas = elegidas.slice(0, MAX_FILAS);
   const detalle = ids ? "Registros elegidos" : pedido.q ? `Búsqueda: «${pedido.q}»` : "";
   const nombre = pedido.nombre || spec.name;
-  const hojas = componer(impreso_de(nombre, vista, filas, elegidas.length, detalle), await medida());
+  const hojas = componer(impreso_de(nombre, vista, filas, elegidas.length, detalle, pedido.fotos), await medida());
   const resumen = `**${cuantos(filas.length, elegidas.length)}** · ${hojas.length} ${hojas.length === 1 ? "hoja" : "hojas"}`;
   if (elegidas.length > filas.length) {
     hijos.push(
@@ -290,6 +327,8 @@ export const herr_tablas_impresion = define_routes({
       ids: marcados.length ? marcados : null,
       q: texto(body.q),
       nombre: texto(body.nombre).slice(0, 120),
+      // Un formulario anterior no manda la casilla: salía con fotos.
+      fotos: !("fotos" in body) || booleano(body.fotos),
     });
     return { data: { id: spec.id, t } };
   },

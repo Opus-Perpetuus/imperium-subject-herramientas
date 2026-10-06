@@ -38,14 +38,25 @@ import { valores_capturados } from "../herr-registros/herr-registros.flow.ts";
 import { nodo_entrada } from "../herr-registros/herr-registros.pages.ts";
 import { ID_TABLA, href_tabla, migas } from "./herr-tablas.disenador.ts";
 import {
+  columnas_de_lista,
+  enlaces_de,
+  etiquetas_de,
   etiquetas_referencia,
   filas_recalculadas,
+  filtrar_filas,
   ids_referencia,
   objeto,
+  presentacion_de,
+  registro_como_fila,
   registros_de,
+  registros_paginados,
   tabla_activa,
   tabla_de_registros,
+  unidad_en_fila,
   valor_presentado,
+  type Enlaces,
+  type Etiquetas,
+  type Presentacion,
 } from "./herr-tablas.flow.ts";
 import { boton, con_unidad, nodo, pagina } from "./herr-tablas.nox.ts";
 
@@ -58,7 +69,6 @@ import { boton, con_unidad, nodo, pagina } from "./herr-tablas.nox.ts";
  */
 
 type Datos = KirletCtx["data"];
-type Etiquetas = Map<string, Map<string, string>>;
 
 const ENCABEZADOS = "herr_cierres_encabezados";
 /** Claves del formulario de cierre que no son datos de la tabla. */
@@ -127,10 +137,34 @@ async function archivo_de(data: Datos, spec: TablaSpec, cab: DomainRow): Promise
     id: String(f.id),
     valores: objeto(f.valores),
     miniaturas: objeto(f.miniaturas),
+    unidades: objeto(json_de(f.custom_data).unidades),
     created_at: texto(f.created_at),
     updated_at: texto(f.updated_at),
   }));
   return { filas: ordenar(spec, registros), etiquetas };
+}
+
+/**
+ * Un archivo se lee como se cerró: títulos de enlaces y unidades de entonces.
+ * Las fotos de lo enlazado sí son las de hoy: congelarlas engordaría cada fila.
+ */
+function presentacion_archivo(etiquetas: Etiquetas, vivos: Enlaces): Presentacion {
+  return {
+    ...presentacion_de(vivos),
+    etiquetas,
+    unidad: (campo, fila) => fila.unidades?.[campo.clave] || campo.unidad || null,
+  };
+}
+
+/** La unidad que tenía cada número de unidad variable al cerrar, para no depender de cómo siga el enlace. */
+function unidades_de_fila(spec: TablaSpec, fila: Registro, enlaces: Enlaces): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const campo of spec.campos) {
+    if (!campo.unidad_de && !campo.unidad_por_registro) continue;
+    const unidad = unidad_en_fila(campo, fila, enlaces);
+    if (unidad) out[campo.clave] = unidad;
+  }
+  return out;
 }
 
 /** Los títulos de los enlaces que usa una fila, para que el archivo no dependa de cómo sigan las otras tablas. */
@@ -333,6 +367,7 @@ export async function pagina_cierre(
   const campos = objeto(cab.campos);
   const resumenes = objeto(cab.resumenes);
   const { filas, etiquetas } = await archivo_de(data, spec, cab);
+  const presentacion = presentacion_archivo(etiquetas, await enlaces_de(data, spec));
   hijos.push(
     nodo("nox.detail", {
       text: nombre,
@@ -352,11 +387,11 @@ export async function pagina_cierre(
       }),
       boton("Todos los cierres", { href: href_cierres(spec.id), icon: "fa-box-archive" }),
     ]),
-    tabla_de_registros(
-      spec.campos.some((c) => c.en_resumen) ? spec.campos.filter((c) => c.en_resumen) : spec.campos,
-      filas,
-      etiquetas,
-      undefined,
+    ...registros_paginados(
+      params,
+      filas.length,
+      filtrar_filas(spec, filas, presentacion, texto(params.get("q"))),
+      (visibles, vacio) => tabla_de_registros(columnas_de_lista(spec), visibles, presentacion, undefined, vacio),
       "Este cierre no tiene registros",
     ),
   );
@@ -536,7 +571,8 @@ export const herr_tablas_cierres = define_routes({
     // Con solo el milisegundo, dos cierres a la vez compartirían id y mezclarían sus filas.
     const cierre_id = `cierre-${Date.parse(cerrado_at)}-${id.slice(-8)}`;
     const plan = planear_cierre(spec, filas, cerrado_at, calculados_por_fila, cierre_id)!;
-    const etiquetas = await etiquetas_referencia(ctx.data, spec);
+    const enlaces = await enlaces_de(ctx.data, spec);
+    const etiquetas = etiquetas_de(enlaces);
     const por_id = new Map(registros.map((r) => [String(r.id), r]));
     await ctx.data.batch([
       {
@@ -577,7 +613,11 @@ export const herr_tablas_cierres = define_routes({
             cerrado_at,
             valores: f.valores,
             miniaturas: objeto(r.miniaturas),
-            custom_data: { registro_id: f.id, etiquetas: etiquetas_de_fila(etiquetas, objeto(r.valores)) },
+            custom_data: {
+              registro_id: f.id,
+              etiquetas: etiquetas_de_fila(etiquetas, objeto(r.valores)),
+              unidades: unidades_de_fila(spec, registro_como_fila(r), enlaces),
+            },
             created_at: cerrado_at,
             updated_at: cerrado_at,
           },

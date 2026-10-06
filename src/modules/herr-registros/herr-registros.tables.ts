@@ -20,8 +20,10 @@ export const herr_registros_tables: KirletTableDecl[] = [
       { name: "valores", type: "json" },
       /** clave → valor de los campos calculados; los fallos como `⚠ mensaje`. */
       { name: "calculados", type: "json" },
-      /** clave de cada foto → miniatura JPEG en data URL (la da el núcleo al guardarla). */
+      /** clave de cada foto → miniatura JPEG en data URL (la da el núcleo al guardarla); varias, unidas con `|`. */
       { name: "miniaturas", type: "json" },
+      /** clave de cada número con unidad por registro → la unidad que se le escribió. */
+      { name: "unidades", type: "json" },
     ],
     indexes: [
       { name: "idx_herr_registros_tabla", columns: ["tabla_id"] },

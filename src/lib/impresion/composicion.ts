@@ -5,7 +5,7 @@
  * estas páginas, así que los dos salen iguales.
  */
 
-/** Con `imagen`, la celda trae la foto en data URL (o vacío) en vez de texto. */
+/** Con `imagen`, la celda trae sus fotos en data URL unidas con `|` (o vacío) en vez de texto. */
 export type ColumnaImpresa = { titulo: string; derecha?: boolean; imagen?: boolean };
 
 export type Impreso = {
@@ -40,6 +40,13 @@ const PIE = 7.5;
 const RESERVA_PIE = 16;
 /** Lado de la caja de una foto: se reconoce lo que es sin agrandar mucho la fila. */
 const LADO_IMAGEN = 40;
+const ENTRE_IMAGENES = 3;
+/** Fotos que se dibujan por celda y cuántas caben a lo ancho antes de bajar de renglón. */
+const MAX_IMAGENES_CELDA = 6;
+const IMAGENES_POR_RENGLON = 3;
+
+const imagenes_de = (celda: string) => celda.split("|").filter(Boolean).slice(0, MAX_IMAGENES_CELDA);
+const ancho_imagenes = (n: number) => n * LADO_IMAGEN + (n - 1) * ENTRE_IMAGENES;
 
 export const COLORES = {
   texto: "#1f2430",
@@ -123,10 +130,12 @@ export function componer(original: Impreso, medir: Medida): Pagina[] {
   };
   const { columnas, filas } = impreso;
   const es_imagen = (i: number) => columnas[i]?.imagen === true;
+  const a_lo_ancho = (i: number) =>
+    Math.min(IMAGENES_POR_RENGLON, Math.max(1, ...filas.map((f) => imagenes_de(f[i] ?? "").length)));
   const naturales = (tamano: number) =>
     columnas.map((c, i) =>
       es_imagen(i)
-        ? Math.max(LADO_IMAGEN, medir(c.titulo, tamano, true)) + 2 * RELLENO_X
+        ? Math.max(ancho_imagenes(a_lo_ancho(i)), medir(c.titulo, tamano, true)) + 2 * RELLENO_X
         : Math.max(medir(c.titulo, tamano, true), ...filas.map((f) => medir(f[i] ?? "", tamano, false))) + 2 * RELLENO_X,
     );
   const minimos = (tamano: number) =>
@@ -154,15 +163,35 @@ export function componer(original: Impreso, medir: Medida): Pagina[] {
         ? []
         : recortar(partir(c, anchos[i]! - 2 * RELLENO_X, tamano, negrita, medir), MAX_LINEAS, anchos[i]! - 2 * RELLENO_X, tamano, negrita, medir),
     );
-    const con_foto = celdas.some((c, i) => imagen(i) && c);
-    const alto_fila = Math.max(Math.max(1, ...lineas.map((l) => l.length)) * linea, con_foto ? LADO_IMAGEN : 0) + 2 * RELLENO_Y;
+    const fotos = celdas.map((c, i) => (imagen(i) ? imagenes_de(c) : []));
+    const por_renglon = (i: number) =>
+      Math.max(1, Math.floor((anchos[i]! - 2 * RELLENO_X + ENTRE_IMAGENES) / (LADO_IMAGEN + ENTRE_IMAGENES)));
+    const alto_fotos = fotos.map((f, i) => {
+      const renglones = Math.ceil(f.length / por_renglon(i));
+      return renglones ? renglones * LADO_IMAGEN + (renglones - 1) * ENTRE_IMAGENES : 0;
+    });
+    const alto_fila = Math.max(Math.max(1, ...lineas.map((l) => l.length)) * linea, ...alto_fotos) + 2 * RELLENO_Y;
     return {
       alto: alto_fila,
       dibujar: () => {
         if (fondo) pagina.rellenos.push({ x: MARGEN, y, ancho: util, alto: alto_fila, color: fondo });
-        celdas.forEach((href, i) => {
-          if (!imagen(i) || !href) return;
-          pagina.imagenes.push({ x: xs[i]! + RELLENO_X, y: y + RELLENO_Y, ancho: anchos[i]! - 2 * RELLENO_X, alto: LADO_IMAGEN, href });
+        fotos.forEach((hrefs, i) => {
+          // Una sola foto usa todo el ancho de la celda; varias van en cuadros iguales.
+          if (hrefs.length === 1) {
+            pagina.imagenes.push({ x: xs[i]! + RELLENO_X, y: y + RELLENO_Y, ancho: anchos[i]! - 2 * RELLENO_X, alto: LADO_IMAGEN, href: hrefs[0]! });
+            return;
+          }
+          hrefs.forEach((href, k) => {
+            const col = k % por_renglon(i);
+            const ren = Math.floor(k / por_renglon(i));
+            pagina.imagenes.push({
+              x: xs[i]! + RELLENO_X + col * (LADO_IMAGEN + ENTRE_IMAGENES),
+              y: y + RELLENO_Y + ren * (LADO_IMAGEN + ENTRE_IMAGENES),
+              ancho: LADO_IMAGEN,
+              alto: LADO_IMAGEN,
+              href,
+            });
+          });
         });
         lineas.forEach((ls, i) =>
           ls.forEach((texto, k) => {
