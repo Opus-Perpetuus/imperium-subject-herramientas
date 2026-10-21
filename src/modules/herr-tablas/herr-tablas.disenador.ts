@@ -26,6 +26,7 @@ import {
   type ResumenTabla,
   type TablaSpec,
 } from "../../lib/formulas/esquema.ts";
+import { ESCANER_VACIO, FORMATOS_ESCANER, TIPOS_DESTINO_ESCANER } from "../../lib/formulas/escaner.ts";
 import { parsear_agregado } from "../../lib/formulas/motor.ts";
 import { columna_unica, plantilla_con_etiquetas } from "../../lib/formulas/plantilla.ts";
 import { plantillas } from "../../lib/formulas/plantillas.ts";
@@ -675,6 +676,38 @@ function entradas_de_tipo(spec: TablaSpec, campo: CampoSpec, tablas: Map<string,
       return [nodo("nox.input-text", { name: "unidad", label: "Unidad (opcional)", placeholder: "$", value: campo.unidad ?? "" }), decimales];
     case "entero":
       return unidad("piezas, personas…");
+    case "codigo": {
+      const e = campo.escaner ?? ESCANER_VACIO;
+      const destinos = spec.campos.filter((c) => c.clave !== campo.clave && TIPOS_DESTINO_ESCANER.has(c.tipo));
+      return [
+        menu(
+          "escaner_formatos",
+          "Qué lee",
+          Object.entries(FORMATOS_ESCANER).map(([value, label]) => ({ value, label })),
+          { value: e.formatos },
+        ),
+        nodo("nox.input-checkbox", { name: "multiple", label: "Varios códigos en el mismo registro", value: campo.multiple === true }),
+        nodo("nox.input-checkbox", { name: "escaner_continuo", label: "La cámara sigue abierta para leer uno tras otro", value: e.continuo }),
+        titulo("Después de leer"),
+        menu("escaner_destino", "Copiar el código también a", [{ value: "", label: "A ninguna otra columna" }, ...destinos.map((c) => ({ value: c.clave, label: c.etiqueta }))], {
+          value: e.destino ?? "",
+        }),
+        nodo("nox.input-text", {
+          name: "escaner_plantilla",
+          label: "Abrir esta dirección",
+          placeholder: "https://ejemplo.mx/consulta?codigo={valor}",
+          help: "Pon {valor} donde va el código. Solo http://, https:// o una ruta del sistema que empiece con «/». Vacío: no abre nada.",
+          value: e.plantilla ?? "",
+        }),
+        nodo("nox.input-checkbox", {
+          name: "escaner_abrir_url",
+          label: "Si el código es una dirección web, ofrecer abrirla",
+          help: "Pregunta antes de abrir y enseña a qué sitio lleva.",
+          value: e.abrir_url,
+        }),
+        nodo("nox.input-checkbox", { name: "escaner_buscar", label: "Buscar el código en los registros de esta tabla", value: e.buscar }),
+      ];
+    }
     case "nivel":
       return [
         nodo("nox.input-number", { name: "pasos", label: "Rayas del medidor", min: 0, step: 1, value: numero_o_vacio(campo.pasos) }),

@@ -1,4 +1,5 @@
 import { texto } from "../comun.ts";
+import { normalizar_escaner, type EscanerCampo } from "./escaner.ts";
 import { ambito_sonda, claves_referenciadas, evaluar, parsear_agregado } from "./motor.ts";
 
 /**
@@ -30,6 +31,8 @@ export const TIPOS_CAMPO = [
   "nivel",
   /** `"lat,lon"` con seis decimales; no es número para el motor y la búsqueda lo excluye. */
   "geo",
+  /** Texto leído de un QR o código de barras (cámara, foto, lector USB o a mano); `escaner` dice qué hacer después. */
+  "codigo",
   /** No se captura: se calcula con `formula`. */
   "calculado",
   /** Id de un registro de `tabla_ref_id`; las `PARTES_REF` dicen qué se enseña de él. */
@@ -89,6 +92,8 @@ export type CampoSpec = {
   ref_foto?: string | null;
   /** Solo referencia: esa foto se ve también en la lista y en lo impreso, no solo al elegir. */
   ref_foto_en_tabla?: boolean;
+  /** Solo código: qué formatos lee y qué hace la captura con lo leído. */
+  escaner?: EscanerCampo | null;
 };
 
 export const SIN_FOTO = "-";
@@ -252,6 +257,7 @@ function normalizar_campo(x: Record<string, unknown>): CampoSpec {
     unidad_de: texto_o_null(x.unidad_de),
     ref_foto: texto_o_null(x.ref_foto),
     ref_foto_en_tabla: x.ref_foto_en_tabla === true,
+    ...(x.escaner ? { escaner: normalizar_escaner(x.escaner) } : {}),
   };
 }
 

@@ -29,6 +29,7 @@ export const TIPOS_UI: Record<TipoCampo, TipoUi> = {
   geo: { nombre: "Ubicación", icono: "fa-location-dot", ayuda: "Un punto en el mapa" },
   nivel: { nombre: "Medidor", icono: "fa-gauge", ayuda: "Nivel de un tanque: 3 de 6 rayas" },
   ruta: { nombre: "Ruta GPS", icono: "fa-route", ayuda: "Una ruta registrada con el teléfono" },
+  codigo: { nombre: "Código (escáner)", icono: "fa-barcode", ayuda: "QR o código de barras con la cámara o un lector" },
 };
 
 /** Valor del selector de tipo que deja que el nombre decida. */
@@ -58,6 +59,7 @@ const PISTAS: Array<[RegExp, TipoCampo]> = [
   [/\b(foto|imagen|comprobante|ticket|recibo|evidencia|portada)\b/, "foto"],
   [/\b(notas?|observaciones?|comentarios?|descripcion|detalles?|resena)\b/, "nota"],
   [/\b(ubicacion|coordenadas|gps)\b/, "geo"],
+  [/\b(codigo de barras|qr|ean|upc|gtin)\b/, "codigo"],
   [/\b(categoria|tipo|estado|estatus|prioridad|talla|genero|metodo|forma de pago|clasificacion|etapa)\b/, "opcion"],
   [/^(es|esta|tiene|pagado|pagada|entregado|entregada|hecho|hecha|listo|lista|activo|activa|completado|completada|vendido|vendida|urgente|devuelto|devuelta|leido|leida)\b/, "booleano"],
   [/\b(precio|costo|monto|importe|total|saldo|sueldo|salario|abono|gasto|ingreso|cobro|venta|deuda|pago|dinero|propina|ganancia|presupuesto|prestamo|interes)\b/, "dinero"],

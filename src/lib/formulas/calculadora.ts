@@ -150,6 +150,7 @@ export function valor_de(
     case "nivel":
       return parsear_nivel(raw, campo.capacidad ?? null) ?? raw;
     case "texto":
+    case "codigo":
     case "nota":
     case "opcion":
     case "geo":

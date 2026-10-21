@@ -9,6 +9,7 @@ import {
 } from "@opus-perpetuus/imperium-core-kit";
 import { es_foto_guardada, filas_de, momento_legible, texto } from "../../lib/comun.ts";
 import { TIPOS_UNIDAD_POR_REGISTRO, spec_de_fila, type CampoSpec, type TablaSpec } from "../../lib/formulas/esquema.ts";
+import { config_escaner } from "../../lib/formulas/escaner.ts";
 import { MAX_FOTOS, lista_de, partir } from "../../lib/formulas/fotos.ts";
 import { cambios_de, describir_cambios, titulo_de_cambios, type Cambio } from "../../lib/formulas/historial.ts";
 import { texto_a_numero } from "../../lib/formulas/motor.ts";
@@ -42,7 +43,13 @@ function foto_en_formulario(url: string, miniatura?: string): string {
 }
 
 /** Un `nox.input-*` por tipo de campo, con el valor ya capturado si se edita. */
-export function nodo_entrada(campo: CampoSpec, raw: string, opciones?: Map<string, OpcionRef>, miniatura?: string): NoxUiNode {
+export function nodo_entrada(
+  campo: CampoSpec,
+  raw: string,
+  opciones?: Map<string, OpcionRef>,
+  miniatura?: string,
+  spec?: Pick<TablaSpec, "id" | "campos">,
+): NoxUiNode {
   // Con unidad por registro o tomada de un enlace, la de la columna no es la de todos.
   const unidad_fija = campo.unidad && !campo.unidad_por_registro && !campo.unidad_de ? campo.unidad : null;
   const base = {
@@ -108,6 +115,8 @@ export function nodo_entrada(campo: CampoSpec, raw: string, opciones?: Map<strin
     }
     case "ruta":
       return nodo("nox.input-text", { ...base, value: raw, help: "Id de la ruta registrada" });
+    case "codigo":
+      return nodo("nox.input-scanner", { ...base, value: raw, scanner: config_escaner(campo, spec?.campos ?? [], spec?.id) });
     default:
       return nodo("nox.input-text", { ...base, value: raw });
   }
@@ -305,7 +314,7 @@ export const herr_registros_pages: KirletPageDecl[] = [
       const entradas = spec.campos
         .filter((c) => c.tipo !== "calculado")
         .flatMap((c) => {
-          const entrada = nodo_entrada(c, valores[c.clave] ?? c.valor_por_defecto ?? "", opciones.get(c.clave), miniaturas[c.clave]);
+          const entrada = nodo_entrada(c, valores[c.clave] ?? c.valor_por_defecto ?? "", opciones.get(c.clave), miniaturas[c.clave], spec);
           if (!con_unidad.includes(c)) return [entrada];
           // Sin unidad propia se propone la de la columna: es la que la lista ya le enseña.
           return [entrada, nodo_unidad(c, unidades[c.clave] || c.unidad || "", usadas.get(c.clave) ?? [])];

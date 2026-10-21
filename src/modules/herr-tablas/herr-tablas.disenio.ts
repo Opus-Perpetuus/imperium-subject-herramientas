@@ -41,6 +41,7 @@ import {
   type TablaSpec,
   type TipoCampo,
 } from "../../lib/formulas/esquema.ts";
+import { escaner_desde_formulario } from "../../lib/formulas/escaner.ts";
 import { claves_referenciadas, parsear_agregado } from "../../lib/formulas/motor.ts";
 import { plantilla_con_claves } from "../../lib/formulas/plantilla.ts";
 import { tabla_activa } from "./herr-tablas.flow.ts";
@@ -193,6 +194,11 @@ async function aplicar_cambios(ctx: KirletCtx, spec: TablaSpec, antes: CampoSpec
   if (campo.tipo === "calculado") campo.formula ||= "0";
   else campo.formula = null;
   if (campo.tipo === "entero") campo.decimales = 0;
+  if (campo.tipo === "codigo") {
+    const r = escaner_desde_formulario(spec.campos, campo, body);
+    if ("error" in r) falla(400, r.error, "validation_error");
+    campo.escaner = r.escaner;
+  } else campo.escaner = null;
   if (!TIPOS_UNIDAD_POR_REGISTRO.has(campo.tipo)) campo.unidad_por_registro = false;
   if (!["numero", "entero", "calculado"].includes(campo.tipo)) campo.unidad_de = null;
   return campo;

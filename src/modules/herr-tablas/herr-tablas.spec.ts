@@ -897,6 +897,49 @@ describe("diseñador", () => {
     expect(completo.length).toBeGreaterThan(sencillo.length);
   });
 
+  test("columna «Código (escáner)»: se configura en el diseñador y la captura pinta nox.input-scanner con sus acciones", async () => {
+    const t = await nueva("Inventario", "Producto\nSKU");
+    const url = `/herr-tablas/${t.id}/campos`;
+    expect((await call("POST", url, { etiqueta: "Código de barras", tipo: "auto" })).status).toBe(200);
+    expect((await call("GET", `/herr-tablas/${t.id}`)).data.campos.at(-1).tipo).toBe("codigo");
+    const clave = "codigo_de_barras";
+    const editor = await pagina(`/pages/herramientas.herr-tabla?id=${t.id}&modo=campo&campo=${clave}`);
+    const destino = nodos(editor, "nox.input-menu").find((n) => n.props!.name === "escaner_destino")!;
+    expect((destino.props!.options as { value: string }[]).map((o) => o.value)).toEqual(["", "producto", "sku"]);
+
+    expect((await call("PATCH", `${url}/${clave}`, { escaner_plantilla: "javascript:alert({valor})" })).status).toBe(400);
+    expect((await call("PATCH", `${url}/${clave}`, { escaner_destino: clave })).status).toBe(400);
+    const guardado = await call("PATCH", `${url}/${clave}`, {
+      escaner_formatos: "barras",
+      escaner_destino: "sku",
+      escaner_plantilla: "https://proveedor.mx/p?ean={valor}",
+      escaner_abrir_url: false,
+      escaner_buscar: true,
+      escaner_continuo: false,
+    });
+    expect(guardado.status).toBe(200);
+
+    const captura = await pagina(`/pages/herramientas.herr-registro?tabla=${t.id}`);
+    const [scanner] = nodos(captura, "nox.input-scanner");
+    expect(scanner!.props).toMatchObject({ name: clave, label: "Código de barras" });
+    const config = scanner!.props!.scanner as Record<string, unknown>;
+    expect(config.formats).toContain("ean_13");
+    expect(config.actions).toEqual([
+      { kind: "guardar_en", target: "sku" },
+      { kind: "abrir_plantilla", template: "https://proveedor.mx/p?ean={valor}", new_tab: true },
+      { kind: "abrir_plantilla", template: `/internal/herr-tabla?id=${t.id}&q={valor}`, new_tab: false },
+    ]);
+
+    const r = await call("POST", "/herr-registros/captura", { tabla_id: t.id, producto: "Agua", sku: "0075010", [clave]: "0075010" });
+    expect(r.status).toBe(201);
+    expect(r.data.valores[clave]).toBe("0075010");
+    const encontrado = await pagina(`/pages/herramientas.herr-tabla?id=${t.id}&q=0075010`);
+    expect(String(nodos(encontrado, "nox.markdown-view").map((n) => n.props!.content).join(" "))).toContain("coincide");
+
+    await call("PATCH", `${url}/${clave}`, { tipo: "texto" });
+    expect((await call("GET", `/herr-tablas/${t.id}`)).data.campos.at(-1).escaner ?? null).toBeNull();
+  });
+
   test("un enlace de la tabla enlazada se lee por su título, y dos tablas que se enlazan entre sí no se persiguen", async () => {
     const personas = await nueva("Personas", "Nombre");
     const motos = await nueva("Motos", "Nombre");
@@ -962,7 +1005,7 @@ describe("páginas del diseñador", () => {
     const otra = await tabla_de_plantilla("clientes");
     const t = (await call("POST", "/herr-tablas/nueva", { name: "Todo", columnas: "Fecha\nMonto" })).data;
     const url = `/herr-tablas/${t.id}/campos`;
-    for (const tipo of ["texto", "numero", "entero", "booleano", "hora", "fecha_hora", "opcion", "foto", "nota", "ruta", "nivel", "geo", "calculado", "referencia"]) {
+    for (const tipo of ["texto", "numero", "entero", "booleano", "hora", "fecha_hora", "opcion", "foto", "nota", "ruta", "nivel", "geo", "calculado", "referencia", "codigo"]) {
       expect((await call("POST", url, { etiqueta: `Col ${tipo}`, tipo })).status).toBe(200);
     }
     await call("PATCH", `${url}/col_referencia`, { enlace: otra.id });
