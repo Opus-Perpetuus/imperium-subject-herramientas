@@ -1,13 +1,14 @@
 import { define_routes, type KirletCtx, type NoxPageDescriptor, type NoxUiNode } from "@opus-perpetuus/imperium-core-kit";
 import { booleano, dia_legible, falla, fecha_hoy, hora_ahora, texto, zona_valida } from "../../lib/comun.ts";
-import { TIPOS_FOTO, spec_de_fila, type Registro, type TablaSpec } from "../../lib/formulas/esquema.ts";
+import { valores_resumen } from "../../lib/formulas/calculadora.ts";
+import { TIPOS_FOTO, spec_de_fila, type CampoSpec, type Registro, type TablaSpec } from "../../lib/formulas/esquema.ts";
 import { lista_de, partir } from "../../lib/formulas/fotos.ts";
 import { pdf_de, png_de, medida } from "../../lib/impresion/archivos.ts";
-import { componer, type ColumnaImpresa, type Impreso } from "../../lib/impresion/composicion.ts";
+import { componer, type AnexoImpreso, type ColumnaImpresa, type Impreso } from "../../lib/impresion/composicion.ts";
 import { escapar } from "../../lib/markdown/html.ts";
 import { ID_TABLA, href_tabla, migas } from "./herr-tablas.disenador.ts";
 import { con_foto_de_enlace, filtrar_filas, presentar, tabla_activa, vista_de_tabla } from "./herr-tablas.flow.ts";
-import { boton, nodo, pagina } from "./herr-tablas.nox.ts";
+import { boton, con_unidad, nodo, pagina } from "./herr-tablas.nox.ts";
 
 /**
  * Imprimir una tabla en PDF o PNG: todos los registros, los que encuentra una
@@ -45,6 +46,8 @@ type Pedido = {
   nombre: string;
   /** Sin fotos el PDF pesa poco y cabe más por hoja. */
   fotos: boolean;
+  /** Además de las columnas de la lista: todos los calculados, los valores fijos y los totales. */
+  completo: boolean;
   vence: number;
 };
 
@@ -104,16 +107,46 @@ function miniaturas_de(fila: Registro, clave: string): string {
     .join("|");
 }
 
+/** Las columnas de la lista y, con `completo`, también los calculados que la lista no enseña, en el orden del diseño. */
+export function columnas_impresas(spec: TablaSpec, vista: Vista, completo: boolean): CampoSpec[] {
+  if (!completo) return vista.columnas;
+  const en_lista = new Set(vista.columnas.map((c) => c.clave));
+  return spec.campos.filter((c) => en_lista.has(c.clave) || c.tipo === "calculado");
+}
+
+/** Valores fijos y totales (los resúmenes de la tabla calculados sobre los registros impresos). */
+export function anexos_de(spec: TablaSpec, filas: Registro[]): AnexoImpreso[] {
+  return [
+    {
+      titulo: "Valores fijos",
+      renglones: spec.constantes.map((c) => ({ etiqueta: c.etiqueta, valor: con_unidad(c.valor ?? "", c.unidad) })),
+    },
+    {
+      titulo: "Totales",
+      renglones: valores_resumen(spec, filas).map(({ resumen, texto: t }) => ({ etiqueta: resumen.etiqueta, valor: con_unidad(t, resumen.unidad) })),
+    },
+  ];
+}
+
 /**
  * Columnas y celdas del impreso. Una foto va como su miniatura (en el impreso
  * se dibuja) y la de lo enlazado, en su columna junto al enlace. Sin `fotos`
  * no sale ninguna columna de imagen.
  */
-function impreso_de(titulo: string, vista: Vista, filas: Registro[], de: number, detalle: string, fotos: boolean): Impreso {
+function impreso_de(
+  spec: TablaSpec,
+  titulo: string,
+  vista: Vista,
+  filas: Registro[],
+  de: number,
+  detalle: string,
+  pedido: { fotos: boolean; completo: boolean },
+): Impreso {
+  const { fotos, completo } = pedido;
   const zona = zona_valida();
   const dia = dia_legible(fecha_hoy(zona));
   const partes: Array<{ columna: ColumnaImpresa; celda: (f: Registro) => string }> = [];
-  for (const c of vista.columnas) {
+  for (const c of columnas_impresas(spec, vista, completo)) {
     if (TIPOS_FOTO.has(c.tipo)) {
       if (fotos) partes.push({ columna: { titulo: c.etiqueta, imagen: true }, celda: (f) => miniaturas_de(f, c.clave) });
       continue;
@@ -132,6 +165,7 @@ function impreso_de(titulo: string, vista: Vista, filas: Registro[], de: number,
     columnas: partes.map((p) => p.columna),
     filas: filas.map((f) => partes.map((p) => p.celda(f))),
     total: `Total: ${cuantos(filas.length, de)}`,
+    ...(completo ? { anexos: anexos_de(spec, filas) } : {}),
   };
 }
 
@@ -169,7 +203,7 @@ export async function pagina_imprimir(data: Datos, spec: TablaSpec, params: URLS
     migas(["Mis tablas", "/internal/herr-tabla"], [spec.name, href_tabla(spec.id)]),
     nodo("nox.markdown-view", {
       content:
-        "Sale con el nombre que le pongas, los títulos de las columnas, las fotos (si las quieres) y el total de registros. " +
+        "Sale con el nombre que le pongas, los títulos de las columnas, las fotos (si las quieres) y el total de registros; si lo pides, también los valores fijos, los calculados y los totales. " +
         "**Si no marcas ninguno, se imprimen todos los de abajo.**",
     }),
     nodo("nox.search", { label: "Buscar registros", value: q }),
@@ -213,6 +247,12 @@ export async function pagina_imprimir(data: Datos, spec: TablaSpec, params: URLS
             help: "Las de la tabla y las de lo enlazado que se ven en la lista. Sin ellas el archivo pesa menos.",
             value: true,
           }),
+          nodo("nox.input-checkbox", {
+            name: "completo",
+            label: "Con valores fijos, calculados y totales",
+            help: "Agrega las columnas calculadas que la lista no enseña y, al final, los valores fijos y los totales de lo impreso.",
+            value: false,
+          }),
           nodo("nox.input-hidden", { name: "q", value: q }),
           ...elegibles.map((f) => nodo("nox.input-checkbox", { name: `r_${f.id}`, label: nombre_de_fila(vista, f), value: false })),
           boton("Generar", { icon: "fa-print" }),
@@ -250,7 +290,7 @@ export async function pagina_impreso(data: Datos, spec: TablaSpec, params: URLSe
   const filas = elegidas.slice(0, MAX_FILAS);
   const detalle = ids ? "Registros elegidos" : pedido.q ? `Búsqueda: «${pedido.q}»` : "";
   const nombre = pedido.nombre || spec.name;
-  const hojas = componer(impreso_de(nombre, vista, filas, elegidas.length, detalle, pedido.fotos), await medida());
+  const hojas = componer(impreso_de(spec, nombre, vista, filas, elegidas.length, detalle, pedido), await medida());
   const resumen = `**${cuantos(filas.length, elegidas.length)}** · ${hojas.length} ${hojas.length === 1 ? "hoja" : "hojas"}`;
   if (elegidas.length > filas.length) {
     hijos.push(
@@ -310,7 +350,8 @@ export async function pagina_impreso(data: Datos, spec: TablaSpec, params: URLSe
 export const herr_tablas_impresion = define_routes({
   /**
    * Guarda qué imprimir: `nombre` del reporte, `formato` (pdf | png), `q` (la
-   * búsqueda con que se eligió) y una casilla `r_<id>` por registro. Sin
+   * búsqueda con que se eligió), `fotos`, `completo` (fijos, calculados y
+   * totales; apagado si no viene) y una casilla `r_<id>` por registro. Sin
    * casillas marcadas son todos los que encuentra la búsqueda.
    */
   "POST /herr-tablas/:id/imprimir": async (ctx) => {
@@ -329,6 +370,7 @@ export const herr_tablas_impresion = define_routes({
       nombre: texto(body.nombre).slice(0, 120),
       // Un formulario anterior no manda la casilla: salía con fotos.
       fotos: !("fotos" in body) || booleano(body.fotos),
+      completo: booleano(body.completo),
     });
     return { data: { id: spec.id, t } };
   },

@@ -8,12 +8,16 @@
 /** Con `imagen`, la celda trae sus fotos en data URL unidas con `|` (o vacío) en vez de texto. */
 export type ColumnaImpresa = { titulo: string; derecha?: boolean; imagen?: boolean };
 
+/** Un bloque de «etiqueta: valor» que va después del total (valores fijos, totales de la tabla). */
+export type AnexoImpreso = { titulo: string; renglones: Array<{ etiqueta: string; valor: string }> };
+
 export type Impreso = {
   titulo: string;
   subtitulo: string;
   columnas: ColumnaImpresa[];
   filas: string[][];
   total: string;
+  anexos?: AnexoImpreso[];
 };
 
 /** Ancho en puntos de un texto con la fuente del impreso. */
@@ -127,6 +131,12 @@ export function componer(original: Impreso, medir: Medida): Pagina[] {
     columnas: original.columnas.map((c) => ({ ...c, titulo: limpio(c.titulo) })),
     filas: original.filas.map((f) => f.map((celda, i) => (original.columnas[i]?.imagen ? celda : limpio(celda)))),
     total: limpio(original.total),
+    anexos: (original.anexos ?? [])
+      .filter((a) => a.renglones.length)
+      .map((a) => ({
+        titulo: limpio(a.titulo),
+        renglones: a.renglones.map((r) => ({ etiqueta: limpio(r.etiqueta), valor: limpio(r.valor) })),
+      })),
   };
   const { columnas, filas } = impreso;
   const es_imagen = (i: number) => columnas[i]?.imagen === true;
@@ -238,6 +248,28 @@ export function componer(original: Impreso, medir: Medida): Pagina[] {
     y = MARGEN;
   }
   pagina.textos.push({ texto: impreso.total, x: MARGEN, y: y + linea + tamano * 0.85, tamano, negrita: true, color: COLORES.texto });
+  y += linea * 2;
+  const renglon = (texto: string, negrita: boolean, sangria = 0) => {
+    for (const parte of partir(texto, util - sangria, tamano, negrita, medir)) {
+      if (y + linea > limite) {
+        paginas.push(pagina);
+        pagina = hoja_nueva();
+        y = MARGEN;
+      }
+      pagina.textos.push({ texto: parte, x: MARGEN + sangria, y: y + tamano * 0.85, tamano, negrita, color: COLORES.texto });
+      y += linea;
+    }
+  };
+  for (const anexo of impreso.anexos ?? []) {
+    if (y + linea * 3 > limite) {
+      paginas.push(pagina);
+      pagina = hoja_nueva();
+      y = MARGEN;
+    }
+    y += linea * 0.6;
+    renglon(anexo.titulo, true);
+    for (const r of anexo.renglones) renglon(`${r.etiqueta}: ${r.valor || "—"}`, false, RELLENO_X * 2);
+  }
   paginas.push(pagina);
 
   paginas.forEach((p, i) => {

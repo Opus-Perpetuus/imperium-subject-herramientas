@@ -10,11 +10,11 @@ import {
   type NoxUiNode,
 } from "@opus-perpetuus/imperium-core-kit";
 import { LIMITE_FILAS } from "../../lib/comun.ts";
-import { validar_esquema } from "../../lib/formulas/esquema.ts";
+import { spec_de_fila, validar_esquema } from "../../lib/formulas/esquema.ts";
 import { plantillas } from "../../lib/formulas/plantillas.ts";
 import { herr_cierres_module } from "../herr-cierres/herr-cierres.routes.ts";
 import { herr_registros_module } from "../herr-registros/herr-registros.routes.ts";
-import { nombre_archivo } from "./herr-tablas.impresion.ts";
+import { anexos_de, columnas_impresas, nombre_archivo } from "./herr-tablas.impresion.ts";
 import { herr_tablas_module } from "./herr-tablas.routes.ts";
 
 const SUBJECT = define_subject({
@@ -848,6 +848,53 @@ describe("diseñador", () => {
     const vencido = await pagina(`/pages/herramientas.herr-tabla?id=${t.id}&modo=impreso&t=no-existe`);
     expect(nodos(vencido, "nox.empty")[0]!.props!.text).toBe("Esta impresión ya no está");
     expect((await call("POST", `${url}/imprimir`, { formato: "docx" })).status).toBe(400);
+  });
+
+  test("imprimir con valores fijos, calculados y totales: apagado por defecto; prendido agrega los calculados ocultos y los anexos", async () => {
+    const t = await nueva("Compras", "Producto");
+    const url = `/herr-tablas/${t.id}`;
+    const diseno = await call("PATCH", url, {
+      campos: [
+        { clave: "producto", etiqueta: "Producto", tipo: "texto", en_resumen: true },
+        { clave: "cantidad", etiqueta: "Cantidad", tipo: "numero", en_resumen: true, decimales: 0 },
+        { clave: "importe", etiqueta: "Importe", tipo: "calculado", formula: "{cantidad} * {precio}", decimales: 2 },
+      ],
+      constantes: [{ clave: "precio", etiqueta: "Precio", valor: "2.5", unidad: "MXN" }],
+      resumenes: [{ clave: "gasto", etiqueta: "Gasto", formula: "{suma:importe}", unidad: "MXN", decimales: 2 }],
+    });
+    expect(diseno.status).toBe(200);
+    for (const [producto, cantidad] of [["Agua", "4"], ["Pan", "2"]]) {
+      await call("POST", "/herr-registros/captura", { tabla_id: t.id, producto, cantidad });
+    }
+
+    const elegir = await pagina(`/pages/herramientas.herr-tabla?id=${t.id}&modo=imprimir`);
+    expect(nodos(elegir, "nox.input-checkbox").find((c) => c.props!.name === "completo")!.props!.value).toBe(false);
+
+    const spec = spec_de_fila((await call("GET", url)).data);
+    const vista = { columnas: spec.campos.filter((c) => c.en_resumen) } as Parameters<typeof columnas_impresas>[1];
+    expect(columnas_impresas(spec, vista, false).map((c) => c.clave)).toEqual(["producto", "cantidad"]);
+    expect(columnas_impresas(spec, vista, true).map((c) => c.clave)).toEqual(["producto", "cantidad", "importe"]);
+    const filas = [
+      { id: "a", valores: { producto: "Agua", cantidad: "4", importe: "10.00" } },
+      { id: "b", valores: { producto: "Pan", cantidad: "2", importe: "5.00" } },
+    ];
+    expect(anexos_de(spec, filas)).toEqual([
+      { titulo: "Valores fijos", renglones: [{ etiqueta: "Precio", valor: "2.5 MXN" }] },
+      { titulo: "Totales", renglones: [{ etiqueta: "Gasto", valor: "15.00 MXN" }] },
+    ]);
+    expect(anexos_de(spec, filas.slice(0, 1))[1]!.renglones[0]!.valor).toBe("10.00 MXN");
+
+    const pedir = async (body: Record<string, unknown>) => {
+      const r = await call("POST", `${url}/imprimir`, { formato: "pdf", q: "", ...body });
+      expect(r.status).toBe(200);
+      const doc = await pagina(`/pages/herramientas.herr-tabla?id=${t.id}&modo=impreso&t=${r.data.t}`);
+      const html = String(nodos(doc, "nox.html")[0]!.props!.html);
+      return Buffer.from(/data:application\/pdf;base64,([^"]+)"/.exec(html)![1]!, "base64");
+    };
+    const sencillo = await pedir({});
+    const completo = await pedir({ completo: true });
+    expect(completo.subarray(0, 5).toString()).toBe("%PDF-");
+    expect(completo.length).toBeGreaterThan(sencillo.length);
   });
 
   test("un enlace de la tabla enlazada se lee por su título, y dos tablas que se enlazan entre sí no se persiguen", async () => {

@@ -124,6 +124,37 @@ describe("componer", () => {
   });
 });
 
+describe("anexos después del total", () => {
+  test("valores fijos y totales salen después del total, con su título en negritas; uno vacío no sale", () => {
+    const impreso: Impreso = {
+      ...tabla(2),
+      anexos: [
+        { titulo: "Valores fijos", renglones: [{ etiqueta: "Meta", valor: "1000 L" }] },
+        { titulo: "Nada", renglones: [] },
+        { titulo: "Totales", renglones: [{ etiqueta: "Suma", valor: "" }] },
+      ],
+    };
+    const [hoja, ...resto] = componer(impreso, medir);
+    expect(resto).toEqual([]);
+    const t = textos(hoja!);
+    const total = t.indexOf("Total: 2 registros");
+    expect(t.slice(total, total + 5)).toEqual(["Total: 2 registros", "Valores fijos", "Meta: 1000 L", "Totales", "Suma: —"]);
+    expect(t).not.toContain("Nada");
+    expect(hoja!.textos.find((x) => x.texto === "Totales")!.negrita).toBe(true);
+  });
+
+  test("si no caben bajan a otra hoja, y el pie numera todas", () => {
+    const renglones = Array.from({ length: 80 }, (_, i) => ({ etiqueta: `Fijo ${i + 1}`, valor: String(i) }));
+    const hojas = componer({ ...tabla(40), anexos: [{ titulo: "Valores fijos", renglones }] }, medir);
+    expect(hojas.length).toBeGreaterThan(1);
+    expect(textos(hojas.at(-1)!)).toContain("Fijo 80: 79");
+    for (const [i, hoja] of hojas.entries()) {
+      expect(textos(hoja).at(-1)).toBe(`Página ${i + 1} de ${hojas.length}`);
+      for (const x of hoja.textos) expect(x.y).toBeLessThan(hoja.alto);
+    }
+  });
+});
+
 describe("fotos en el impreso", () => {
   const con_fotos: Impreso = {
     titulo: "Productos",
