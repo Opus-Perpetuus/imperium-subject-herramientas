@@ -1,4 +1,5 @@
 import { build_feature_shell_page, type KirletPageDecl } from "@opus-perpetuus/imperium-core-kit";
+import { general_option_list_options_source } from "../../general-option-seeds.ts";
 import { TANQUES, nombre_tanque } from "../../lib/combustible/tanques.ts";
 
 const API = "api://m/subject-herramientas";
@@ -78,11 +79,11 @@ export const herr_vehiculos_pages: KirletPageDecl[] = [
                 name: "medidor",
                 component: "input-menu",
                 label: "Medidor de gasolina",
-                options: [
-                  { value: "ninguno", label: "Sin medidor" },
-                  { value: "barras", label: "Barritas" },
-                  { value: "aguja", label: "Aguja" },
-                ],
+                // Opciones: general-option-list-control (seed en general-option-seeds.ts).
+                optionsSource: general_option_list_options_source(
+                  "subject-herramientas/herr-vehiculos",
+                  "medidor",
+                ),
               },
               { name: "marcas", component: "input-number", label: "Marcas del tablero", min: 0, step: 1 },
               {

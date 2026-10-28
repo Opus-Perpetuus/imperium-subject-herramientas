@@ -1,4 +1,5 @@
 import { build_feature_shell_page, type KirletPageDecl } from "@opus-perpetuus/imperium-core-kit";
+import { general_option_list_options_source } from "../../general-option-seeds.ts";
 
 const API = "api://m/subject-herramientas";
 
@@ -51,10 +52,11 @@ export const herr_gastos_pages: KirletPageDecl[] = [
                 name: "fuente",
                 component: "input-menu",
                 label: "De dónde salió",
-                options: [
-                  { value: "cobros", label: "De los cobros", description: "Se descuenta de lo que se entrega a caja" },
-                  { value: "caja", label: "Me lo dio caja", description: "Nace descontado; ninguna liquidación lo toca" },
-                ],
+                // Opciones: general-option-list-control (seed en general-option-seeds.ts).
+                optionsSource: general_option_list_options_source(
+                  "subject-herramientas/herr-gastos",
+                  "fuente",
+                ),
               },
               { name: "fecha", component: "input-date", label: "Fecha" },
               { name: "hora", component: "input-time", label: "Hora" },

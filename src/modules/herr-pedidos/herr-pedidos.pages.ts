@@ -1,6 +1,4 @@
 import { build_feature_shell_page, type KirletPageDecl } from "@opus-perpetuus/imperium-core-kit";
-import { ESTADOS, ETIQUETA_ESTADO } from "../../lib/pedidos/estado.ts";
-
 const API = "api://m/subject-herramientas";
 
 export const herr_pedidos_pages: KirletPageDecl[] = [
@@ -60,9 +58,9 @@ export const herr_pedidos_pages: KirletPageDecl[] = [
               { name: "propina", component: "input-money", label: "Propina", read_only: true },
               {
                 name: "estado",
-                component: "input-menu",
+                component: "input-status",
                 label: "Estado",
-                options: ESTADOS.map((e) => ({ value: e, label: ETIQUETA_ESTADO[e] })),
+                // Opciones: status-option-control (seed en status-seeds.ts).
               },
               { name: "productos", component: "input-textarea", label: "Productos", column_span: "full" },
               {

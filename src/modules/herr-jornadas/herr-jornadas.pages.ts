@@ -215,12 +215,9 @@ export const herr_jornadas_pages: KirletPageDecl[] = [
               { name: "fecha", component: "input-date", label: "Fecha", required: true },
               {
                 name: "estado",
-                component: "input-menu",
+                component: "input-status",
                 label: "Estado",
-                options: [
-                  { value: "abierta", label: "Abierta" },
-                  { value: "cerrada", label: "Cerrada" },
-                ],
+                // Opciones: status-option-control (seed en status-seeds.ts).
               },
               { name: "vehiculo_id", component: "input-datalist", label: "Vehículo", optionsSource: "api://m/subject-vehiculos/vehicle?as=options&limite=1000", help: "Si la lista sale vacía, pide acceso a la app Vehículos" },
               { name: "vehiculo_nombre", component: "input-text", label: "Nombre del vehículo" },

@@ -1,4 +1,5 @@
 import { build_feature_shell_page, type KirletPageDecl } from "@opus-perpetuus/imperium-core-kit";
+import { general_option_list_options_source } from "../../general-option-seeds.ts";
 
 const API = "api://m/subject-herramientas";
 
@@ -50,10 +51,11 @@ export const herr_caja_pages: KirletPageDecl[] = [
                 component: "input-menu",
                 label: "Tipo",
                 required: true,
-                options: [
-                  { value: "retiro_cambio", label: "Retiro para cambio", description: "La caja me presta efectivo" },
-                  { value: "aporte_propio", label: "Aporte propio", description: "Puse dinero mío y me lo devuelven" },
-                ],
+                // Opciones: general-option-list-control (seed en general-option-seeds.ts).
+                optionsSource: general_option_list_options_source(
+                  "subject-herramientas/herr-caja",
+                  "tipo",
+                ),
               },
               { name: "cantidad", component: "input-money", label: "Cantidad", required: true, min: 0 },
               { name: "fecha", component: "input-date", label: "Fecha" },
