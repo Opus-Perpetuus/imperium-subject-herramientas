@@ -1,5 +1,6 @@
 import { texto } from "../comun.ts";
 import { normalizar_escaner, type EscanerCampo } from "./escaner.ts";
+import { normalizar_escaneo, type EscaneoTabla } from "./escaneo.ts";
 import { ambito_sonda, claves_referenciadas, evaluar, parsear_agregado } from "./motor.ts";
 
 /**
@@ -153,6 +154,8 @@ export type TablaSpec = {
   cerrable?: boolean;
   /** Lo que se pide al hacer un cierre, además de su nombre y su fecha. */
   campos_cierre?: CampoSpec[];
+  /** Qué pasa al escanear un código en «Ver tabla» (ver escaneo.ts). */
+  escaneo?: EscaneoTabla | null;
 };
 
 /** Una fila como la ve el motor: clave → valor en texto (capturados y calculados juntos). */
@@ -303,6 +306,7 @@ export function spec_de_fila(fila: Record<string, unknown>): TablaSpec {
     orden_desc: fila.orden_desc !== false,
     cerrable: fila.cerrable !== false,
     campos_cierre: lista(fila.campos_cierre).map(normalizar_campo),
+    escaneo: normalizar_escaneo(fila.escaneo),
   };
 }
 

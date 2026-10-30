@@ -27,6 +27,7 @@ import {
   type TablaSpec,
 } from "../../lib/formulas/esquema.ts";
 import { ESCANER_VACIO, FORMATOS_ESCANER, MOSTRAR_ESCANER, TIPOS_DESTINO_ESCANER } from "../../lib/formulas/escaner.ts";
+import { ACCIONES_ESCANEO, TIPOS_COLUMNA_ESCANEO, columna_de_escaneo } from "../../lib/formulas/escaneo.ts";
 import { parsear_agregado } from "../../lib/formulas/motor.ts";
 import { columna_unica, plantilla_con_etiquetas } from "../../lib/formulas/plantilla.ts";
 import { plantillas } from "../../lib/formulas/plantillas.ts";
@@ -464,6 +465,48 @@ function seccion_cierre(spec: TablaSpec): NoxUiNode[] {
   return out;
 }
 
+/** «Al escanear»: la acción (extensible en ACCIONES_ESCANEO) y la columna que recibe el código. */
+function tarjeta_al_escanear(spec: TablaSpec): NoxUiNode {
+  const columnas = spec.campos.filter((c) => TIPOS_COLUMNA_ESCANEO.has(c.tipo) && (c.tipo !== "referencia" || c.tabla_ref_id));
+  const descripcion =
+    "Pon un escáner en «Ver tabla»: al leer un QR o código de barras se abre la captura con el código ya puesto en la columna que elijas. " +
+    "Si la columna es un enlace a otra tabla, se busca el registro de esa tabla que tenga el código en su columna «Código» (o de texto) y queda elegido.";
+  if (!columnas.length) {
+    return nodo("nox.card", { title: "Al escanear un código" }, [
+      nodo("nox.markdown-view", { content: `${descripcion}\n\nPrimero agrega una columna «Código», de texto o un enlace a otra tabla.` }),
+    ]);
+  }
+  const actual = columna_de_escaneo(spec);
+  return nodo("nox.card", { title: "Al escanear un código" }, [
+    nodo("nox.markdown-view", { content: descripcion }),
+    nodo(
+      "nox.form",
+      { method: "PATCH", action: `api://herr-tablas/${spec.id}/escaneo`, then: `${ID_TABLA}?id={id}&modo=disenar&seccion=ajustes` },
+      [
+        menu(
+          "escaneo_accion",
+          "Qué hacer",
+          [
+            { value: "ninguna", label: "Nada (sin escáner en «Ver tabla»)" },
+            ...Object.entries(ACCIONES_ESCANEO).map(([value, a]) => ({ value, label: a.label })),
+          ],
+          { value: actual ? spec.escaneo!.accion : "ninguna" },
+        ),
+        menu(
+          "escaneo_columna",
+          "Columna que recibe el código",
+          columnas.map((c) => ({
+            value: c.clave,
+            label: c.tipo === "referencia" ? `${c.etiqueta} (busca el registro con ese código)` : c.etiqueta,
+          })),
+          { value: actual?.clave ?? columnas.find((c) => c.tipo === "codigo")?.clave ?? columnas[0]!.clave },
+        ),
+        boton("Guardar", { icon: "fa-floppy-disk" }),
+      ],
+    ),
+  ]);
+}
+
 function seccion_ajustes(spec: TablaSpec): NoxUiNode[] {
   return [
     nodo("nox.form", { method: "PATCH", action: `api://herr-tablas/${spec.id}` }, [
@@ -492,6 +535,7 @@ function seccion_ajustes(spec: TablaSpec): NoxUiNode[] {
       }),
       boton("Guardar ajustes", { icon: "fa-floppy-disk" }),
     ]),
+    tarjeta_al_escanear(spec),
     nodo("nox.card", { title: "Eliminar la tabla" }, [
       nodo("nox.markdown-view", { content: "La tabla y sus registros dejan de verse." }),
       boton("Eliminar tabla", {

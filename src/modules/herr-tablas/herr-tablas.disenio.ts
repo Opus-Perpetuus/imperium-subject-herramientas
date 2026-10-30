@@ -42,6 +42,7 @@ import {
   type TipoCampo,
 } from "../../lib/formulas/esquema.ts";
 import { escaner_desde_formulario } from "../../lib/formulas/escaner.ts";
+import { escaneo_desde_formulario } from "../../lib/formulas/escaneo.ts";
 import { claves_referenciadas, parsear_agregado } from "../../lib/formulas/motor.ts";
 import { plantilla_con_claves } from "../../lib/formulas/plantilla.ts";
 import { tabla_activa } from "./herr-tablas.flow.ts";
@@ -342,9 +343,25 @@ export const herr_tablas_disenio = define_routes({
     const campo = spec.campos[indice_de(spec.campos, ctx.params.clave, "La columna")]!;
     exigir_sin_uso(spec, campo.clave, campo.etiqueta);
     const campos = spec.campos.filter((c) => c.clave !== campo.clave);
-    const extra = spec.orden_campo === campo.clave ? { orden_campo: null } : {};
+    const extra = {
+      ...(spec.orden_campo === campo.clave ? { orden_campo: null } : {}),
+      // Sin su columna, «Al escanear» ya no tiene a dónde poner lo leído.
+      ...(spec.escaneo?.columna === campo.clave ? { escaneo: null } : {}),
+    };
     const guardada = await guardar(ctx, fila, { ...spec, campos }, extra);
     return { data: siguiente(guardada, "disenar"), message: `Columna «${campo.etiqueta}» quitada` };
+  },
+
+  /** «Al escanear»: qué hace «Ver tabla» al leer un código y a qué columna lo manda. */
+  "PATCH /herr-tablas/:id/escaneo": async (ctx) => {
+    const { fila, spec } = await esquema(ctx);
+    const r = escaneo_desde_formulario(spec, await ctx.body<Record<string, unknown>>());
+    if ("error" in r) falla(400, r.error, "validation_error");
+    const guardada = await guardar(ctx, fila, { ...spec, escaneo: r.escaneo }, { escaneo: r.escaneo });
+    return {
+      data: { id: String(guardada.id) },
+      message: r.escaneo ? "Listo: «Ver tabla» tendrá el escáner" : "Escanear en «Ver tabla» quedó apagado",
+    };
   },
 
   /** Valor fijo: se escribe una vez y vale para todos los registros (una meta, una deuda, el precio del litro). */

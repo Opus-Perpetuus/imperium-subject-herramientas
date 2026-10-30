@@ -27,6 +27,7 @@ import {
   type OpcionRef,
 } from "../herr-tablas/herr-tablas.flow.ts";
 import { SUFIJO_UNIDAD } from "./herr-registros.flow.ts";
+import { resolver_escaneo } from "./herr-registros.escaneo.ts";
 import { API, OWNER, boton, nodo, pagina } from "../herr-tablas/herr-tablas.nox.ts";
 
 const ID_REGISTRO = "herramientas.herr-registro";
@@ -304,9 +305,12 @@ export const herr_registros_pages: KirletPageDecl[] = [
         ]);
       }
       const spec = spec_de_fila(tabla);
-      const registro = id ? await data.findOne("herr_registros", { id }) : null;
+      // Un código leído en «Ver tabla» llega como `escaneo=`: abre el registro que ya lo tiene o prellena uno nuevo.
+      const leido = id ? "" : texto(url?.searchParams.get("escaneo"));
+      const escaneado = leido ? await resolver_escaneo(data, spec, leido) : null;
+      const registro = id ? await data.findOne("herr_registros", { id }) : (escaneado?.registro ?? null);
       if (registro && url?.searchParams.get("modo") === "historial") return pagina_historial(data, nox, spec, registro);
-      const valores = objeto(registro?.valores);
+      const valores = { ...objeto(registro?.valores), ...(registro ? {} : escaneado?.prellenar) };
       const miniaturas = objeto(registro?.miniaturas);
       const unidades = objeto(registro?.unidades);
       const codigos = objeto(registro?.codigos);
@@ -356,6 +360,7 @@ export const herr_registros_pages: KirletPageDecl[] = [
         : [];
       return pagina(ID_REGISTRO, `${registro ? "Editar" : "Nuevo"} · ${spec.name}`, [
         migas(["Mis tablas", "/internal/herr-tabla"], [spec.name, href_tabla(spec.id)]),
+        ...(escaneado?.aviso ? [nodo("nox.markdown-view", { content: `> ${escaneado.aviso}` })] : []),
         form,
         nodo("nox.toolbar", {}, [...acciones, boton("Volver a la tabla", { href: href_tabla(spec.id), icon: "fa-arrow-left" })]),
       ]);

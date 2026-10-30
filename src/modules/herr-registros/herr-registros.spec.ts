@@ -365,3 +365,109 @@ describe("códigos leídos (QR o barras)", () => {
     expect((await call("GET", `/herr-tablas/${prestamos}`)).data.campos[1].ref_escaner).toBeUndefined();
   });
 });
+
+describe("al escanear un código en «Ver tabla»", () => {
+  async function tabla(name: string, campos: unknown[]): Promise<string> {
+    const r = await call("POST", "/herr-tablas", { name, cerrable: false, campos });
+    expect(r.status).toBe(201);
+    return r.data.id;
+  }
+  const valor_de = (doc: NoxPageDescriptor, name: string) =>
+    [...nodos(doc, "nox.input-scanner"), ...nodos(doc, "nox.input-datalist"), ...nodos(doc, "nox.input-text")].find(
+      (n) => n.props!.name === name,
+    )?.props!.value;
+  const avisos = (doc: NoxPageDescriptor) => nodos(doc, "nox.markdown-view").map((n) => String(n.props!.content));
+
+  test("sin configurar no hay escáner y la captura ignora `escaneo`", async () => {
+    const id = await tabla("Herramientas", [{ clave: "codigo", etiqueta: "Código", tipo: "codigo" }]);
+    const ver = await pagina(`/pages/herramientas.herr-tabla?id=${id}`);
+    expect(nodos(ver, "nox.input-scanner")).toEqual([]);
+    const nueva = await pagina(`/pages/herramientas.herr-registro?tabla=${id}&escaneo=HERR-1`);
+    expect(valor_de(nueva, "codigo")).toBe("");
+  });
+
+  test("se configura en Ajustes y «Ver tabla» abre la captura con el código puesto", async () => {
+    const id = await tabla("Herramientas", [
+      { clave: "nombre", etiqueta: "Nombre", tipo: "texto" },
+      { clave: "codigo", etiqueta: "Código", tipo: "codigo" },
+      { clave: "foto", etiqueta: "Foto", tipo: "foto" },
+    ]);
+    const ajustes = await pagina(`/pages/herramientas.herr-tabla?id=${id}&modo=disenar&seccion=ajustes`);
+    const columna = nodos(ajustes, "nox.input-menu").find((n) => n.props!.name === "escaneo_columna")!;
+    expect((columna.props!.options as { value: string }[]).map((o) => o.value)).toEqual(["nombre", "codigo"]);
+    expect(columna.props!.value).toBe("codigo");
+    const accion = nodos(ajustes, "nox.input-menu").find((n) => n.props!.name === "escaneo_accion")!;
+    expect((accion.props!.options as { value: string }[]).map((o) => o.value)).toEqual(["ninguna", "nuevo", "abrir_o_nuevo"]);
+
+    expect((await call("PATCH", `/herr-tablas/${id}/escaneo`, { escaneo_accion: "nuevo", escaneo_columna: "foto" })).status).toBe(400);
+    expect((await call("PATCH", `/herr-tablas/${id}/escaneo`, { escaneo_accion: "borrar", escaneo_columna: "codigo" })).status).toBe(400);
+    const ok = await call("PATCH", `/herr-tablas/${id}/escaneo`, { escaneo_accion: "nuevo", escaneo_columna: "codigo" });
+    expect(ok.status).toBe(200);
+    expect((await call("GET", `/herr-tablas/${id}`)).data.escaneo).toEqual({ accion: "nuevo", columna: "codigo" });
+
+    const ver = await pagina(`/pages/herramientas.herr-tabla?id=${id}`);
+    const [escaner] = nodos(ver, "nox.input-scanner");
+    expect(escaner!.props!.scanner).toEqual({
+      actions: [{ kind: "abrir_plantilla", template: `/internal/herr-registro?tabla=${id}&escaneo={valor}`, new_tab: false }],
+      history: false,
+    });
+
+    const nueva = await pagina(`/pages/herramientas.herr-registro?tabla=${id}&escaneo=${encodeURIComponent("HERR 7")}`);
+    expect(valor_de(nueva, "codigo")).toBe("HERR 7");
+    expect(nodos(nueva, "nox.input-hidden").some((n) => n.props!.name === "id")).toBe(false);
+
+    // «Nada» lo apaga y quitar la columna también.
+    await call("PATCH", `/herr-tablas/${id}/escaneo`, { escaneo_accion: "ninguna" });
+    expect((await call("GET", `/herr-tablas/${id}`)).data.escaneo).toBeNull();
+    await call("PATCH", `/herr-tablas/${id}/escaneo`, { escaneo_accion: "nuevo", escaneo_columna: "codigo" });
+    expect((await call("DELETE", `/herr-tablas/${id}/campos/codigo`)).status).toBe(200);
+    expect((await call("GET", `/herr-tablas/${id}`)).data.escaneo).toBeNull();
+  });
+
+  test("«abrir o anotar» abre el registro que ya tiene el código", async () => {
+    const id = await tabla("Herramientas", [
+      { clave: "nombre", etiqueta: "Nombre", tipo: "texto" },
+      { clave: "codigo", etiqueta: "Código", tipo: "codigo" },
+    ]);
+    await call("PATCH", `/herr-tablas/${id}/escaneo`, { escaneo_accion: "abrir_o_nuevo", escaneo_columna: "codigo" });
+    const r = await capturar({ tabla_id: id, nombre: "Taladro", codigo: "HERR-0001" });
+
+    const abierta = await pagina(`/pages/herramientas.herr-registro?tabla=${id}&escaneo=herr-0001`);
+    expect(nodos(abierta, "nox.input-hidden").find((n) => n.props!.name === "id")?.props!.value).toBe(r.id);
+    expect(valor_de(abierta, "nombre")).toBe("Taladro");
+    expect(avisos(abierta).some((a) => a.includes("Ya había un registro"))).toBe(true);
+
+    const nueva = await pagina(`/pages/herramientas.herr-registro?tabla=${id}&escaneo=HERR-0002`);
+    expect(nodos(nueva, "nox.input-hidden").some((n) => n.props!.name === "id")).toBe(false);
+    expect(valor_de(nueva, "codigo")).toBe("HERR-0002");
+  });
+
+  test("en un enlace busca y elige el registro de la otra tabla con ese código", async () => {
+    const herr = await tabla("Herramientas", [
+      { clave: "nombre", etiqueta: "Nombre", tipo: "texto" },
+      { clave: "codigo", etiqueta: "Código", tipo: "codigo" },
+    ]);
+    const taladro = await capturar({ tabla_id: herr, nombre: "Taladro", codigo: "HERR-0001" });
+    const sierra = await capturar({ tabla_id: herr, nombre: "Sierra" });
+    const prestamos = await tabla("Préstamos", [
+      { clave: "quien", etiqueta: "Quién", tipo: "texto" },
+      { clave: "herramienta", etiqueta: "Herramienta", tipo: "referencia", tabla_ref_id: herr, ref_leyenda: "{nombre}" },
+    ]);
+    await call("PATCH", `/herr-tablas/${prestamos}/escaneo`, { escaneo_accion: "abrir_o_nuevo", escaneo_columna: "herramienta" });
+
+    const por_codigo = await pagina(`/pages/herramientas.herr-registro?tabla=${prestamos}&escaneo=HERR-0001`);
+    expect(valor_de(por_codigo, "herramienta")).toBe(taladro.id);
+    // Sin columna «Código» que coincida, vale el texto del registro.
+    const por_nombre = await pagina(`/pages/herramientas.herr-registro?tabla=${prestamos}&escaneo=sierra`);
+    expect(valor_de(por_nombre, "herramienta")).toBe(sierra.id);
+
+    const nada = await pagina(`/pages/herramientas.herr-registro?tabla=${prestamos}&escaneo=NO-EXISTE`);
+    expect(valor_de(nada, "herramienta")).toBe("");
+    expect(avisos(nada).some((a) => a.includes("Ningún registro de «Herramientas»"))).toBe(true);
+
+    // Con un préstamo ya anotado de esa herramienta, se abre ese.
+    const prestamo = await capturar({ tabla_id: prestamos, quien: "Ana", herramienta: taladro.id });
+    const abierta = await pagina(`/pages/herramientas.herr-registro?tabla=${prestamos}&escaneo=HERR-0001`);
+    expect(nodos(abierta, "nox.input-hidden").find((n) => n.props!.name === "id")?.props!.value).toBe(prestamo.id);
+  });
+});

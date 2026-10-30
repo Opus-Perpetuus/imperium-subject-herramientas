@@ -5,7 +5,8 @@ import {
 } from "@opus-perpetuus/imperium-core-kit";
 import { puede, texto } from "../../lib/comun.ts";
 import { valores_resumen } from "../../lib/formulas/calculadora.ts";
-import { spec_de_fila } from "../../lib/formulas/esquema.ts";
+import { spec_de_fila, type TablaSpec } from "../../lib/formulas/esquema.ts";
+import { ACCIONES_ESCANEO, columna_de_escaneo, config_escaneo_tabla } from "../../lib/formulas/escaneo.ts";
 import { ID_TABLA, href_registro, href_tabla, migas, pagina_campo, pagina_disenar, pagina_inicio } from "./herr-tablas.disenador.ts";
 import { filtrar_filas, registros_paginados, tabla_de_registros, vista_de_tabla } from "./herr-tablas.flow.ts";
 import { pagina_cerrar, pagina_cierre, pagina_cierres, pagina_comparar } from "./herr-tablas.cierres.ts";
@@ -107,6 +108,8 @@ export const herr_tablas_pages: KirletPageDecl[] = [
       ];
       const hijos: NoxUiNode[] = [migas(["Mis tablas", "/internal/herr-tabla"], [spec.name, href_tabla(spec.id)])];
       if (herramientas.length) hijos.push(nodo("nox.toolbar", {}, herramientas));
+      const escanear = anotar ? escaner_de_tabla(spec) : null;
+      if (escanear) hijos.push(escanear);
       if (spec.description) hijos.push(nodo("nox.markdown-view", { content: spec.description }));
       if (!spec.campos.length) {
         hijos.push(
@@ -141,6 +144,26 @@ export const herr_tablas_pages: KirletPageDecl[] = [
     },
   },
 ];
+
+/**
+ * El escáner de «Ver tabla» cuando la tabla tiene «Al escanear»: lo leído abre
+ * la captura (`escaneo=`) en la misma pestaña. Va en su propio formulario sin
+ * botón: no se envía, solo navega.
+ */
+export function escaner_de_tabla(spec: TablaSpec): NoxUiNode | null {
+  const campo = spec.escaneo ? columna_de_escaneo(spec) : null;
+  if (!spec.escaneo || !campo) return null;
+  const destino = campo.tipo === "referencia" ? `busca en «${campo.etiqueta}» el registro con ese código` : `lo pone en «${campo.etiqueta}»`;
+  return nodo("nox.form", {}, [
+    nodo("nox.input-scanner", {
+      name: "escanear",
+      label: ACCIONES_ESCANEO[spec.escaneo.accion].boton,
+      help: `${ACCIONES_ESCANEO[spec.escaneo.accion].label}: ${destino}.`,
+      value: "",
+      scanner: config_escaneo_tabla(spec.id),
+    }),
+  ]);
+}
 
 const MODOS_DE_DISENO = new Set(["disenar", "campo"]);
 const MODOS_QUE_ESCRIBEN = new Set(["imprimir", "cerrar"]);
