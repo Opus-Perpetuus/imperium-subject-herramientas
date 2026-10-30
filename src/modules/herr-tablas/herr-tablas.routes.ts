@@ -1,6 +1,6 @@
 import { define_crud, define_module } from "@opus-perpetuus/imperium-core-kit";
 import { herr_tablas_cierres } from "./herr-tablas.cierres.ts";
-import { herr_tablas_disenio, preparar_tabla } from "./herr-tablas.disenio.ts";
+import { herr_tablas_disenio, preparar_tabla, quitar_reglas_que_usan } from "./herr-tablas.disenio.ts";
 import { herr_tablas_flow } from "./herr-tablas.flow.ts";
 import { herr_tablas_impresion } from "./herr-tablas.impresion.ts";
 import { herr_tablas_pages } from "./herr-tablas.pages.ts";
@@ -51,6 +51,10 @@ export const herr_tablas_module = define_module({
       hooks: {
         before_create: (ctx, row) => preparar_tabla(ctx, row, null),
         before_update: (ctx, _id, patch, existing) => preparar_tabla(ctx, patch, existing),
+        // Las reglas de otras tablas que leían o escribían en la tabla borrada se quitan con ella.
+        after_delete: async (ctx, row) => {
+          await quitar_reglas_que_usan(ctx, String(row.id));
+        },
       },
     }),
   ],

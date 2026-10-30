@@ -20,7 +20,7 @@ import {
   type TablaSpec,
 } from "../../lib/formulas/esquema.ts";
 import { MAX_FOTOS, cuantas, cuantas_son, lista_de, partir } from "../../lib/formulas/fotos.ts";
-import { codigos_de } from "../../lib/formulas/escaner.ts";
+import { codigos_con_notas, codigos_de } from "../../lib/formulas/escaner.ts";
 import { parsear } from "../../lib/formulas/multivalor.ts";
 import {
   TIPOS_AGREGADO,
@@ -468,6 +468,8 @@ export function tabla_de_registros(
       for (const c of columnas) {
         const raw = f.valores[c.clave] ?? "";
         fila[c.clave] = presentar(c, f, p);
+        // Las notas por código van en el texto; dibujado, el lanzador las lee de la metadata.
+        if (c.tipo === "codigo" && c.escaner?.notas && !dibuja_codigo(c)) fila[c.clave] = codigos_con_notas(c, raw, f.codigos?.[c.clave]);
         if (c.tipo === "foto" && es_foto_guardada(raw)) {
           // Una columna que fue «Varias fotos» trae varias: «Foto» enseña la primera.
           const url = lista_de(raw)[0]!;

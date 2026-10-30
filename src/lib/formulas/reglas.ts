@@ -67,6 +67,9 @@ const o_null = (v: unknown) => texto(v) || null;
 
 export const MAX_REGLAS = 30;
 
+/** Nombre del input del escáner de reglas dentro del formulario de captura (no es una columna). */
+export const CAMPO_REGLAS = "__reglas";
+
 export function normalizar_regla(x: unknown): ReglaEscaneo | null {
   if (!x || typeof x !== "object" || Array.isArray(x)) return null;
   const o = x as Record<string, unknown>;
@@ -224,4 +227,26 @@ export function regla_desde_formulario(
       enlace_actual,
     },
   };
+}
+
+/** La tabla donde escribe una regla, por id (sin cargarla). */
+export function id_destino_de(regla: Pick<ReglaEscaneo, "destino" | "enlace" | "tabla_destino">, dueno: { id: string; campos: CampoSpec[] }): string | null {
+  if (regla.destino === "actual") return dueno.id;
+  if (DESTINOS_POR_ENLACE.has(regla.destino)) {
+    return dueno.campos.find((c) => c.clave === regla.enlace && c.tipo === "referencia")?.tabla_ref_id ?? null;
+  }
+  return regla.tabla_destino;
+}
+
+/**
+ * ¿La regla (de la tabla `dueno`) usa la tabla `tabla_id` o, con `clave`,
+ * esa columna de esa tabla? Para quitar las reglas que se quedarían sin
+ * columna o tabla cuando se borra una.
+ */
+export function regla_usa(regla: ReglaEscaneo, dueno: { id: string; campos: CampoSpec[] }, tabla_id: string, clave?: string): boolean {
+  const destino = id_destino_de(regla, dueno);
+  if (clave === undefined) return regla.tabla_origen === tabla_id || destino === tabla_id;
+  if (dueno.id === tabla_id && regla.enlace === clave) return true;
+  if (regla.tabla_origen === tabla_id && regla.cantidad_de === clave) return true;
+  return destino === tabla_id && [regla.columna, regla.columna_codigo, regla.enlace_actual].includes(clave);
 }

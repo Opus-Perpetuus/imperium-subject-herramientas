@@ -43,7 +43,7 @@ import {
 } from "../../lib/formulas/esquema.ts";
 import { escaner_desde_formulario } from "../../lib/formulas/escaner.ts";
 import { escaneo_desde_formulario } from "../../lib/formulas/escaneo.ts";
-import { MAX_REGLAS, regla_desde_formulario } from "../../lib/formulas/reglas.ts";
+import { MAX_REGLAS, regla_desde_formulario, regla_usa } from "../../lib/formulas/reglas.ts";
 import { claves_referenciadas, parsear_agregado } from "../../lib/formulas/motor.ts";
 import { plantilla_con_claves } from "../../lib/formulas/plantilla.ts";
 import { tabla_activa } from "./herr-tablas.flow.ts";
@@ -125,6 +125,24 @@ function usa(formula: string | null | undefined, clave: string): boolean {
 const unidad_de_enlace = (campo: CampoSpec, clave: string) => campo.unidad_de?.split(":")[0] === clave;
 
 /** No se quita lo que otra fórmula necesita: quedaría rota sin que nadie lo note hasta el siguiente registro. */
+/**
+ * Quita de las demás tablas activas las reglas al escanear que usan la tabla
+ * `tabla_id` (o, con `clave`, esa columna suya). Devuelve cuántas quitó.
+ */
+export async function quitar_reglas_que_usan(ctx: KirletCtx, tabla_id: string, clave?: string): Promise<number> {
+  let quitadas = 0;
+  for (const fila of await filas_de(ctx, "herr_tablas", { is_active: true })) {
+    if (String(fila.id) === tabla_id) continue;
+    const otra = spec_de_fila(fila);
+    const reglas = otra.reglas ?? [];
+    const quedan = reglas.filter((r) => !regla_usa(r, otra, tabla_id, clave));
+    if (quedan.length === reglas.length) continue;
+    quitadas += reglas.length - quedan.length;
+    await ctx.data.update("herr_tablas", { id: String(fila.id) }, { reglas: quedan, updated_at: now_iso() });
+  }
+  return quitadas;
+}
+
 function exigir_sin_uso(spec: TablaSpec, clave: string, etiqueta: string): void {
   const usan = [
     ...spec.campos.filter((c) => c.clave !== clave && c.tipo === "calculado" && usa(c.formula, clave)),
@@ -349,8 +367,15 @@ export const herr_tablas_disenio = define_routes({
       // Sin su columna, «Al escanear» ya no tiene a dónde poner lo leído.
       ...(spec.escaneo?.columna === campo.clave ? { escaneo: null } : {}),
     };
-    const guardada = await guardar(ctx, fila, { ...spec, campos }, extra);
-    return { data: siguiente(guardada, "disenar"), message: `Columna «${campo.etiqueta}» quitada` };
+    // Las reglas (de esta y de otras tablas) que usaban la columna se quitan con ella.
+    const propias = (spec.reglas ?? []).filter((r) => !regla_usa(r, spec, spec.id, campo.clave));
+    const quitadas_aqui = (spec.reglas ?? []).length - propias.length;
+    const guardada = await guardar(ctx, fila, { ...spec, campos, reglas: propias }, quitadas_aqui ? { ...extra, reglas: propias } : extra);
+    const quitadas = quitadas_aqui + (await quitar_reglas_que_usan(ctx, spec.id, campo.clave));
+    return {
+      data: siguiente(guardada, "disenar"),
+      message: `Columna «${campo.etiqueta}» quitada` + (quitadas ? ` · ${quitadas === 1 ? "se quitó 1 regla" : `se quitaron ${quitadas} reglas`} que la usaba${quitadas === 1 ? "" : "n"}` : ""),
+    };
   },
 
   /** «Al escanear»: qué hace «Ver tabla» al leer un código y a qué columna lo manda. */

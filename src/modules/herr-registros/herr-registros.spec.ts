@@ -11,6 +11,8 @@ import {
 } from "@opus-perpetuus/imperium-core-kit";
 import { herr_cierres_module } from "../herr-cierres/herr-cierres.routes.ts";
 import { herr_tablas_module } from "../herr-tablas/herr-tablas.routes.ts";
+import { MAX_CODIGOS_IMPRESOS, codigos_impresos } from "../herr-tablas/herr-tablas.impresion.ts";
+import type { CampoSpec, Registro } from "../../lib/formulas/esquema.ts";
 import { herr_registros_module } from "./herr-registros.routes.ts";
 
 const SUBJECT = define_subject({
@@ -277,13 +279,13 @@ describe("historial de un registro", () => {
 describe("códigos leídos (QR o barras)", () => {
   const QR = { value: "HERR-0001", format: "qr_code", version: "2", ec_level: "M", source: "camara", engine: "nativo" };
 
-  async function herramientas(mostrar = "ambos"): Promise<string> {
+  async function herramientas(mostrar = "ambos", notas = false): Promise<string> {
     const r = await call("POST", "/herr-tablas", {
       name: "Herramientas",
       cerrable: false,
       campos: [
         { clave: "nombre", etiqueta: "Nombre", tipo: "texto", en_resumen: true },
-        { clave: "codigo", etiqueta: "Código", tipo: "codigo", en_resumen: true, escaner: { formatos: "todos", mostrar } },
+        { clave: "codigo", etiqueta: "Código", tipo: "codigo", en_resumen: true, escaner: { formatos: "todos", mostrar, notas } },
       ],
     });
     expect(r.status).toBe(201);
@@ -334,6 +336,45 @@ describe("códigos leídos (QR o barras)", () => {
     ]);
   });
 
+  test("con notas por código, «Ver tabla» enseña la nota junto a cada código", async () => {
+    const tabla_id = await herramientas("valor", true);
+    await capturar({ tabla_id, nombre: "Taladro", codigo: "HERR-0001", "codigo@codigo": JSON.stringify({ ...QR, note: "frágil" }) });
+    await capturar({ tabla_id, nombre: "Pinzas", codigo: "HERR-0002" });
+    const [tabla] = nodos(await pagina(`/pages/herramientas.herr-tabla?id=${tabla_id}`), "nox.table");
+    const filas = tabla!.props!.rows as Record<string, unknown>[];
+    expect(filas.map((f) => f.codigo).sort()).toEqual(["HERR-0001 (frágil)", "HERR-0002"]);
+  });
+
+  test("el impreso dibuja el código en su formato (y su texto con «ambos»); con «valor» solo el texto con su nota", async () => {
+    const pdf_de_tabla = async (tabla_id: string) => {
+      const r = await call("POST", `/herr-tablas/${tabla_id}/imprimir`, { formato: "pdf", q: "" });
+      expect(r.status).toBe(200);
+      const doc = await pagina(`/pages/herramientas.herr-tabla?id=${tabla_id}&modo=impreso&t=${r.data.t}`);
+      const html = String(nodos(doc, "nox.html")[0]!.props!.html);
+      return Buffer.from(/data:application\/pdf;base64,([^"]+)"/.exec(html)![1]!, "base64").toString("latin1");
+    };
+    // Cada PNG va con su máscara de transparencia: dos imágenes por código dibujado.
+    const imagenes = (pdf: string) => (pdf.match(/\/Subtype \/Image/g)?.length ?? 0) / 2;
+    for (const [mostrar, dibujos] of [["ambos", 2], ["codigo", 2], ["valor", 0]] as const) {
+      const tabla_id = await herramientas(mostrar, true);
+      await capturar({ tabla_id, nombre: "Taladro", codigo: "HERR-0001", "codigo@codigo": JSON.stringify({ ...QR, note: "frágil" }) });
+      await capturar({ tabla_id, nombre: "Pinzas", codigo: "7501031311309", "codigo@codigo": JSON.stringify({ value: "7501031311309", format: "ean_13" }) });
+      expect([mostrar, imagenes(await pdf_de_tabla(tabla_id))]).toEqual([mostrar, dibujos]);
+    }
+  });
+
+  test("codigos_impresos: QR y EAN en su formato, lo que su formato no acepta va en QR, y hay un tope", async () => {
+    const campo = { clave: "codigo", etiqueta: "Código", tipo: "codigo", escaner: { formatos: "todos", mostrar: "codigo" } } as unknown as CampoSpec;
+    const fila = (id: string, codigo: string, format: string) =>
+      ({ id, valores: { codigo }, codigos: { codigo: JSON.stringify({ value: codigo, format }) } }) as unknown as Registro;
+    const { dibujos, faltan } = await codigos_impresos([campo], [fila("a", "HERR-1", "qr_code"), fila("b", "no-es-ean", "ean_13")]);
+    expect(faltan).toBe(0);
+    expect(dibujos.get("a|codigo")).toStartWith("data:image/png;base64,");
+    expect(dibujos.get("b|codigo")).toStartWith("data:image/png;base64,");
+    const muchas = Array.from({ length: MAX_CODIGOS_IMPRESOS + 3 }, (_, i) => fila(`f${i}`, `C-${i}`, "code_128"));
+    expect((await codigos_impresos([campo], muchas)).faltan).toBe(3);
+  });
+
   test("un enlace con «elegir escaneando» manda los códigos de cada registro al datalist", async () => {
     const herr_id = await herramientas();
     const taladro = await capturar({ tabla_id: herr_id, nombre: "Taladro", codigo: "HERR-0001" });
@@ -363,6 +404,61 @@ describe("códigos leídos (QR o barras)", () => {
 
     await call("PATCH", `/herr-tablas/${prestamos}/campos/herramienta/opcion`, { ref_escaner: false });
     expect((await call("GET", `/herr-tablas/${prestamos}`)).data.campos[1].ref_escaner).toBeUndefined();
+  });
+});
+
+describe("un enlace de varios registros, llenado escaneando", () => {
+  test("cada código agrega su registro a la lista del formulario abierto, sin guardar ni repetir", async () => {
+    const herr = await call("POST", "/herr-tablas", {
+      name: "Herramientas",
+      cerrable: false,
+      campos: [
+        { clave: "nombre", etiqueta: "Nombre", tipo: "texto" },
+        { clave: "codigo", etiqueta: "Código", tipo: "codigo", escaner: { formatos: "todos", mostrar: "valor" } },
+      ],
+    });
+    const taladro = await capturar({ tabla_id: herr.data.id, nombre: "Taladro", codigo: "HERR-0001" });
+    const pinzas = await capturar({ tabla_id: herr.data.id, nombre: "Pinzas", codigo: "HERR-0002" });
+    const r = await call("POST", "/herr-tablas", {
+      name: "Préstamos",
+      cerrable: false,
+      campos: [
+        { clave: "quien", etiqueta: "Quién", tipo: "texto" },
+        { clave: "herramientas", etiqueta: "Herramientas", tipo: "referencia", multiple: true, tabla_ref_id: herr.data.id, ref_leyenda: "{nombre}" },
+      ],
+    });
+    const prestamos = r.data.id as string;
+    const sin = await pagina(`/pages/herramientas.herr-registro?tabla=${prestamos}`);
+    expect(nodos(sin, "nox.input-scanner")).toHaveLength(0);
+    await call("PATCH", `/herr-tablas/${prestamos}/campos/herramientas/opcion`, { ref_escaner: true });
+
+    const con = await pagina(`/pages/herramientas.herr-registro?tabla=${prestamos}`);
+    const [escaner] = nodos(con, "nox.input-scanner");
+    expect(escaner!.props).toMatchObject({
+      name: "__enlace_herramientas",
+      on_scan: { method: "POST", action: "api://herr-registros/escanear-enlace" },
+      scanner: { history: false },
+    });
+    const escanear = (formulario: Record<string, unknown>, codigo: string) =>
+      call("POST", "/herr-registros/escanear-enlace", { campo: "__enlace_herramientas", codigo, formulario: { tabla_id: prestamos, ...formulario } });
+    const uno = await escanear({ quien: "Ana", herramientas: [] }, "HERR-0001");
+    expect(uno.status).toBe(200);
+    expect(uno.data.set).toEqual({ herramientas: [taladro.id] });
+    const dos = await escanear({ herramientas: [taladro.id] }, "HERR-0002");
+    expect(dos.data.set).toEqual({ herramientas: [taladro.id, pinzas.id] });
+    const repetido = await escanear({ herramientas: [taladro.id, pinzas.id] }, "HERR-0001");
+    expect(repetido.data.set).toEqual({ herramientas: [taladro.id, pinzas.id] });
+    expect(String(repetido.json.message)).toContain("ya estaba");
+    expect((await escanear({}, "NO-EXISTE")).status).toBe(404);
+    // La captura ignora el escáner del enlace.
+    const guardado = await call("POST", "/herr-registros/captura", {
+      tabla_id: prestamos,
+      quien: "Ana",
+      herramientas: [taladro.id, pinzas.id],
+      __enlace_herramientas: "HERR-0002",
+    });
+    expect(guardado.status).toBe(201);
+    expect(guardado.data.valores.herramientas).toBe(`${taladro.id}|${pinzas.id}`);
   });
 });
 
@@ -485,6 +581,40 @@ describe("reglas al escanear", () => {
   const escanear = (tabla_id: string, codigo: string, id?: string) => call("POST", "/herr-registros/escanear", { tabla_id, codigo, id });
   const valores = async (id: string) => (await call("GET", `/herr-registros/${id}`)).data.valores as Record<string, string>;
 
+  test("borrar una columna o una tabla quita las reglas que la usaban (de esa tabla y de las demás)", async () => {
+    const prod = await tabla("Productos", [
+      { clave: "codigo", etiqueta: "Código", tipo: "codigo" },
+      { clave: "piezas", etiqueta: "Piezas por caja", tipo: "entero" },
+    ]);
+    const inv = await tabla("Inventario", [
+      { clave: "nota", etiqueta: "Nota", tipo: "texto" },
+      { clave: "botellas", etiqueta: "Botellas", tipo: "entero" },
+    ]);
+    const mov = await tabla("Movimientos", [
+      { clave: "quien", etiqueta: "Quién", tipo: "texto" },
+      { clave: "cuenta", etiqueta: "Cuenta", tipo: "entero" },
+      { clave: "inventario", etiqueta: "Inventario", tipo: "referencia", tabla_ref_id: inv, ref_leyenda: "{nota}" },
+    ]);
+    const base = { accion: "sumar", cantidad: "1" };
+    await regla(mov, { ...base, nombre: "Cajas", tabla_origen: prod, destino: "padre", enlace: "inventario", cantidad_de: `${prod}.piezas`, columna: `${inv}.botellas` });
+    await regla(mov, { ...base, nombre: "Contar", destino: "actual", columna: `${mov}.cuenta` });
+    await regla(mov, { ...base, nombre: "Nuevo", destino: "nuevo", tabla_destino: inv, columna: `${inv}.botellas` });
+    const nombres = async () => ((await call("GET", `/herr-tablas/${mov}`)).data.reglas ?? []).map((r: { nombre: string }) => r.nombre);
+    expect(await nombres()).toEqual(["Cajas", "Contar", "Nuevo"]);
+
+    const piezas = await call("DELETE", `/herr-tablas/${prod}/campos/piezas`);
+    expect(piezas.status).toBe(200);
+    expect(String(piezas.json.message)).toContain("se quitó 1 regla");
+    expect(await nombres()).toEqual(["Contar", "Nuevo"]);
+
+    const cuenta = await call("DELETE", `/herr-tablas/${mov}/campos/cuenta`);
+    expect(String(cuenta.json.message)).toContain("se quitó 1 regla");
+    expect(await nombres()).toEqual(["Nuevo"]);
+
+    expect((await call("DELETE", `/herr-tablas/${inv}`)).status).toBeLessThan(300);
+    expect(await nombres()).toEqual([]);
+  });
+
   test("12 botellas por caja en un registro nuevo de la tabla padre, enlazado al abierto", async () => {
     const prod = await tabla("Productos", [
       { clave: "nombre", etiqueta: "Nombre", tipo: "texto" },
@@ -512,12 +642,15 @@ describe("reglas al escanear", () => {
     });
     const abierto = await capturar({ tabla_id: mov, quien: "Ana" });
 
-    // La página del registro trae el escáner de reglas, que se envía solo.
+    // El escáner de reglas va dentro del formulario de captura y no lo envía: `on_scan` consulta sin recargar.
     const doc = await pagina(`/pages/herramientas.herr-registro?tabla=${mov}&id=${abierto.id}`);
-    const form = nodos(doc, "nox.form").find((f) => f.props!.action === "api://herr-registros/escanear")!;
-    expect(form).toBeDefined();
-    const escaner = nodos(doc, "nox.input-scanner").find((n) => n.props!.name === "codigo")!;
-    expect(escaner.props!.scanner).toMatchObject({ submit_on_scan: true, history_scope: `herr-registro:${abierto.id}:reglas` });
+    const captura = nodos(doc, "nox.form").find((f) => f.props!.action === "api://herr-registros/captura")!;
+    const escaner = (captura.children ?? []).find((n) => n.props?.name === "__reglas")!;
+    expect(escaner.component).toBe("nox.input-scanner");
+    expect(escaner.props!.on_scan).toEqual({ method: "POST", action: "api://herr-registros/escanear" });
+    expect(escaner.props!.scanner).toEqual({ history: true, history_scope: `herr-registro:${abierto.id}:reglas` });
+    // Guardar con el escáner en el formulario no se queja de «__reglas».
+    expect((await call("POST", "/herr-registros/captura", { tabla_id: mov, id: abierto.id, quien: "Ana", __reglas: "X" })).status).toBe(200);
 
     const r = await escanear(mov, "caja-agua", abierto.id);
     expect(r.status).toBe(200);
@@ -529,6 +662,38 @@ describe("reglas al escanear", () => {
 
     // Un código que no es de Productos no aplica la regla.
     expect((await escanear(mov, "OTRA-COSA", abierto.id)).status).toBe(404);
+  });
+
+  test("con el formulario: lo del registro abierto vuelve en `set` sin guardarse y no pisa lo no guardado", async () => {
+    const ped = await tabla("Pedidos", [
+      { clave: "folio", etiqueta: "Folio", tipo: "texto" },
+      { clave: "total", etiqueta: "Total", tipo: "entero" },
+    ]);
+    const lin = await tabla("Líneas", [
+      { clave: "nota", etiqueta: "Nota", tipo: "texto" },
+      { clave: "pedido", etiqueta: "Pedido", tipo: "referencia", tabla_ref_id: ped, ref_leyenda: "{folio}" },
+      { clave: "cajas", etiqueta: "Cajas", tipo: "entero" },
+    ]);
+    await regla(lin, { nombre: "Caja", destino: "actual", accion: "sumar", cantidad: "1", columna: `${lin}.cajas` });
+    await regla(lin, { nombre: "Total", destino: "padre", enlace: "pedido", accion: "sumar", cantidad: "12", columna: `${ped}.total` });
+    await regla(lin, { nombre: "Nuevo pedido", codigo: "NUEVO", destino: "nuevo_padre", enlace: "pedido", accion: "poner", cantidad: "1", columna: `${ped}.total` });
+    const pedido = await capturar({ tabla_id: ped, folio: "P-1" });
+    const linea = await capturar({ tabla_id: lin, nota: "guardada", cajas: "3" });
+
+    // En pantalla: nota cambiada, pedido elegido y 5 cajas, nada guardado aún.
+    const formulario = { tabla_id: lin, id: linea.id, nota: "sin guardar", pedido: pedido.id, cajas: 5, __reglas: "CAJA" };
+    const r = await call("POST", "/herr-registros/escanear", { formulario, codigo: "CAJA" });
+    expect(r.status).toBe(200);
+    expect(r.data.set).toEqual({ cajas: 6 });
+    expect(await valores(linea.id)).toMatchObject({ nota: "guardada", cajas: "3" });
+    expect((await valores(pedido.id)).total).toBe("12");
+
+    // Un registro nuevo (sin id) también: el padre nuevo vuelve como enlace en `set`.
+    const nuevo = await call("POST", "/herr-registros/escanear", { formulario: { tabla_id: lin, nota: "a medias" }, codigo: "NUEVO" });
+    expect(nuevo.status).toBe(200);
+    expect(nuevo.data.set.cajas).toBe(1);
+    expect(await valores(String(nuevo.data.set.pedido))).toMatchObject({ total: "1" });
+    expect(String(nuevo.json.message)).toContain("No se aplicó Total");
   });
 
   test("el registro abierto y su padre; el patrón; sin registro abierto no se aplican", async () => {

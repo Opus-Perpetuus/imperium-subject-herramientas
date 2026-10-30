@@ -15,7 +15,8 @@ import { cambios_de, describir_cambios, titulo_de_cambios, type Cambio } from ".
 import { texto_a_numero } from "../../lib/formulas/motor.ts";
 import { parsear } from "../../lib/formulas/multivalor.ts";
 import { href_registro, href_tabla, migas } from "../herr-tablas/herr-tablas.disenador.ts";
-import { escaner_de_reglas } from "../herr-tablas/herr-tablas.pages.ts";
+import { escaner_de_reglas_en_formulario } from "../herr-tablas/herr-tablas.pages.ts";
+import { PREFIJO_ESCANER_ENLACE } from "./herr-registros.reglas.ts";
 import {
   enlaces_de,
   etiquetas_de,
@@ -124,6 +125,18 @@ export function nodo_entrada(
     default:
       return nodo("nox.input-text", { ...base, value: raw });
   }
+}
+
+/** El escáner que agrega registros a un enlace de varios, sin recargar ni perder lo escrito. */
+export function escaner_de_enlace(campo: CampoSpec, registro_id?: string): NoxUiNode {
+  return nodo("nox.input-scanner", {
+    name: `${PREFIJO_ESCANER_ENLACE}${campo.clave}`,
+    label: `Escanear para agregar a «${campo.etiqueta}»`,
+    help: "Cada código leído marca su registro en la lista de arriba; se guarda con «Guardar».",
+    value: "",
+    scanner: registro_id ? { history: true, history_scope: `herr-registro:${registro_id}:${campo.clave}` } : { history: false },
+    on_scan: { method: "POST", action: "api://herr-registros/escanear-enlace" },
+  });
 }
 
 /**
@@ -332,6 +345,8 @@ export const herr_registros_pages: KirletPageDecl[] = [
           );
           // La metadata de lo leído viaja junto al código; el input del escáner la llena.
           if (c.tipo === "codigo") return [entrada, nodo("nox.input-hidden", { name: `${c.clave}${SUFIJO_CODIGO}`, value: codigos[c.clave] ?? "" })];
+          // Un enlace de varios con «elegir escaneando»: cada lectura agrega (marca) el registro con ese código.
+          if (c.tipo === "referencia" && c.multiple && c.ref_escaner) return [entrada, escaner_de_enlace(c, registro ? String(registro.id) : undefined)];
           if (!con_unidad.includes(c)) return [entrada];
           // Sin unidad propia se propone la de la columna: es la que la lista ya le enseña.
           return [entrada, nodo_unidad(c, unidades[c.clave] || c.unidad || "", usadas.get(c.clave) ?? [])];
@@ -347,6 +362,7 @@ export const herr_registros_pages: KirletPageDecl[] = [
           nodo("nox.input-hidden", { name: "tabla_id", value: spec.id }),
           ...(registro ? [nodo("nox.input-hidden", { name: "id", value: String(registro.id) })] : []),
           ...entradas,
+          ...(spec.reglas?.length ? [escaner_de_reglas_en_formulario(registro ? String(registro.id) : undefined)] : []),
           boton(registro ? "Guardar cambios" : "Guardar", { icon: "fa-floppy-disk" }),
         ],
       );
@@ -371,7 +387,6 @@ export const herr_registros_pages: KirletPageDecl[] = [
         migas(["Mis tablas", "/internal/herr-tabla"], [spec.name, href_tabla(spec.id)]),
         ...(escaneado?.aviso ? [nodo("nox.markdown-view", { content: `> ${escaneado.aviso}` })] : []),
         form,
-        ...(spec.reglas?.length ? [escaner_de_reglas(spec, registro ? String(registro.id) : undefined)] : []),
         nodo("nox.toolbar", {}, [...acciones, boton("Volver a la tabla", { href: href_tabla(spec.id), icon: "fa-arrow-left" })]),
       ]);
     },

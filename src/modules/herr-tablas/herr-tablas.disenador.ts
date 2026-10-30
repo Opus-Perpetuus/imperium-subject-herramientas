@@ -1032,7 +1032,7 @@ function tarjeta_escanear(action: string, campo: CampoSpec, destino: TablaSpec):
         (codigos.length
           ? `Al capturar, un botón abre la cámara: lee el QR o código de barras guardado en ${cuales} y elige ese registro de «${destino.name}». `
           : `«${destino.name}» aún no tiene una columna «Código»: sin ella solo se elige leyendo el título de la opción. `) +
-        (campo.multiple ? "Solo funciona cuando se elige un solo registro." : ""),
+        (campo.multiple ? "Como el enlace es de varios registros, cada código leído agrega (marca) su registro a la lista." : ""),
     }),
     nodo("nox.form", { method: "PATCH", action, then: THEN_DISENO }, [
       nodo("nox.input-checkbox", {

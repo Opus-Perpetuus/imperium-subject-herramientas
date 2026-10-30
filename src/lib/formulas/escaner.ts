@@ -229,3 +229,35 @@ export function metadata_de_codigo(campo: Pick<CampoSpec, "multiple">, valor: st
   if (!quedan.length) return "";
   return JSON.stringify(campo.multiple ? quedan : quedan[quedan.length - 1]);
 }
+
+/** La metadata guardada de cada código (código → metadata limpia). */
+export function metadatas_de_codigos(raw: unknown): Map<string, Record<string, unknown>> {
+  let datos = raw;
+  if (typeof raw === "string") {
+    try {
+      datos = raw.trim() ? JSON.parse(raw) : [];
+    } catch {
+      return new Map();
+    }
+  }
+  const out = new Map<string, Record<string, unknown>>();
+  for (const m of (Array.isArray(datos) ? datos : [datos]).map(metadata_limpia)) if (m) out.set(String(m.value), m);
+  return out;
+}
+
+/** La nota de cada código (código → nota), de la metadata guardada. Vacío si no hay notas. */
+export function notas_de_codigos(raw: unknown): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [codigo, m] of metadatas_de_codigos(raw)) {
+    if (typeof m.note === "string" && m.note.trim()) out.set(codigo, m.note.trim());
+  }
+  return out;
+}
+
+/** «A1 (frágil), B2»: los códigos con su nota, para el texto de una celda o del impreso. */
+export function codigos_con_notas(campo: Pick<CampoSpec, "multiple">, valor: string, raw_metadata: unknown): string {
+  const notas = notas_de_codigos(raw_metadata);
+  return codigos_de(campo, valor)
+    .map((c) => (notas.get(c) ? `${c} (${notas.get(c)})` : c))
+    .join(", ");
+}

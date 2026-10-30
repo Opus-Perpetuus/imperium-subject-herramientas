@@ -109,9 +109,9 @@ export function registro_por_codigo(spec: Pick<TablaSpec, "campos">, filas: Regi
  * El escáner que aplica las reglas: envía el código al leerlo
  * (`submit_on_scan`); con `registro_id` el historial es solo de ese registro.
  */
-export function config_escaneo_reglas(registro_id?: string): Record<string, unknown> {
+export function config_escaneo_reglas(registro_id?: string, enviar = true): Record<string, unknown> {
   return {
-    submit_on_scan: true,
+    ...(enviar ? { submit_on_scan: true } : {}),
     ...(registro_id ? { history: true, history_scope: `herr-registro:${registro_id}:reglas` } : { history: false }),
   };
 }

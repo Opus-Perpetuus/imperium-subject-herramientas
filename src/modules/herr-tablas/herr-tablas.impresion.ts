@@ -7,7 +7,9 @@ import { pdf_de, png_de, medida } from "../../lib/impresion/archivos.ts";
 import { componer, type AnexoImpreso, type ColumnaImpresa, type Impreso } from "../../lib/impresion/composicion.ts";
 import { escapar } from "../../lib/markdown/html.ts";
 import { ID_TABLA, href_tabla, migas } from "./herr-tablas.disenador.ts";
-import { con_foto_de_enlace, filtrar_filas, presentar, tabla_activa, vista_de_tabla } from "./herr-tablas.flow.ts";
+import { con_foto_de_enlace, dibuja_codigo, filtrar_filas, presentar, tabla_activa, vista_de_tabla } from "./herr-tablas.flow.ts";
+import { codigos_con_notas, codigos_de, metadatas_de_codigos } from "../../lib/formulas/escaner.ts";
+import { png_de_codigo } from "../../lib/impresion/codigos.ts";
 import { boton, con_unidad, nodo, pagina } from "./herr-tablas.nox.ts";
 
 /**
@@ -128,6 +130,48 @@ export function anexos_de(spec: TablaSpec, filas: Registro[]): AnexoImpreso[] {
   ];
 }
 
+/** Códigos que se dibujan por impreso: cada uno es una imagen y el núcleo da 4 s a la hoja. */
+export const MAX_CODIGOS_IMPRESOS = 300;
+
+/** `<fila>|<columna>` → los códigos dibujados de la celda (data URLs unidas por `|`). */
+type Dibujos = Map<string, string>;
+const llave_dibujo = (f: Registro, clave: string) => `${f.id}|${clave}`;
+
+/**
+ * Dibuja los códigos de las columnas «Código» que piden enseñarlo (solo o con
+ * su texto), en su formato leído. Con más de `MAX_CODIGOS_IMPRESOS`, los demás
+ * quedan solo como texto y `faltan` lo dice.
+ */
+export async function codigos_impresos(columnas: CampoSpec[], filas: Registro[]): Promise<{ dibujos: Dibujos; faltan: number }> {
+  const dibujos: Dibujos = new Map();
+  let hechos = 0;
+  let faltan = 0;
+  for (const c of columnas.filter(dibuja_codigo)) {
+    const solo_barras = c.escaner?.formatos === "barras";
+    for (const f of filas) {
+      const metas = metadatas_de_codigos(f.codigos?.[c.clave]);
+      const urls: string[] = [];
+      for (const codigo of codigos_de(c, f.valores[c.clave] ?? "")) {
+        if (hechos >= MAX_CODIGOS_IMPRESOS) {
+          faltan++;
+          continue;
+        }
+        hechos++;
+        const url = await png_de_codigo(codigo, texto(metas.get(codigo)?.format) || undefined, solo_barras);
+        if (url) urls.push(url);
+      }
+      if (urls.length) dibujos.set(llave_dibujo(f, c.clave), urls.join("|"));
+    }
+  }
+  return { dibujos, faltan };
+}
+
+/** El texto de una celda: las columnas «Código» con notas llevan la nota de cada código. */
+function texto_de_celda(c: CampoSpec, f: Registro, vista: Vista): string {
+  if (c.tipo === "codigo" && c.escaner?.notas) return codigos_con_notas(c, f.valores[c.clave] ?? "", f.codigos?.[c.clave]);
+  return presentar(c, f, vista.presentacion);
+}
+
 /**
  * Columnas y celdas del impreso. Una foto va como su miniatura (en el impreso
  * se dibuja) y la de lo enlazado, en su columna junto al enlace. Sin `fotos`
@@ -141,6 +185,7 @@ function impreso_de(
   de: number,
   detalle: string,
   pedido: { fotos: boolean; completo: boolean },
+  dibujos: Dibujos = new Map(),
 ): Impreso {
   const { fotos, completo } = pedido;
   const zona = zona_valida();
@@ -151,7 +196,17 @@ function impreso_de(
       if (fotos) partes.push({ columna: { titulo: c.etiqueta, imagen: true }, celda: (f) => miniaturas_de(f, c.clave) });
       continue;
     }
-    partes.push({ columna: { titulo: c.etiqueta, derecha: NUMERICOS.has(c.tipo) }, celda: (f) => presentar(c, f, vista.presentacion) });
+    // Un código dibujado: solo la imagen («codigo») o el texto y la imagen al lado («ambos»).
+    const mostrar = dibuja_codigo(c) ? c.escaner!.mostrar : "valor";
+    if (mostrar !== "codigo") {
+      partes.push({ columna: { titulo: c.etiqueta, derecha: NUMERICOS.has(c.tipo) }, celda: (f) => texto_de_celda(c, f, vista) });
+    }
+    if (mostrar !== "valor") {
+      partes.push({
+        columna: { titulo: mostrar === "ambos" ? `Código · ${c.etiqueta}` : c.etiqueta, imagen: true },
+        celda: (f) => dibujos.get(llave_dibujo(f, c.clave)) ?? "",
+      });
+    }
     if (fotos && con_foto_de_enlace(c)) {
       partes.push({
         columna: { titulo: `Foto · ${c.etiqueta}`, imagen: true },
@@ -290,7 +345,16 @@ export async function pagina_impreso(data: Datos, spec: TablaSpec, params: URLSe
   const filas = elegidas.slice(0, MAX_FILAS);
   const detalle = ids ? "Registros elegidos" : pedido.q ? `Búsqueda: «${pedido.q}»` : "";
   const nombre = pedido.nombre || spec.name;
-  const hojas = componer(impreso_de(spec, nombre, vista, filas, elegidas.length, detalle, pedido), await medida());
+  const { dibujos, faltan } = await codigos_impresos(columnas_impresas(spec, vista, pedido.completo), filas);
+  const hojas = componer(impreso_de(spec, nombre, vista, filas, elegidas.length, detalle, pedido, dibujos), await medida());
+  if (faltan) {
+    hijos.push(
+      nodo("nox.alert", {
+        text: `Se dibujan los primeros ${MAX_CODIGOS_IMPRESOS} códigos`,
+        description: `Otros ${faltan} salen solo como texto en las columnas que lo enseñan: imprime menos registros para verlos dibujados.`,
+      }),
+    );
+  }
   const resumen = `**${cuantos(filas.length, elegidas.length)}** · ${hojas.length} ${hojas.length === 1 ? "hoja" : "hojas"}`;
   if (elegidas.length > filas.length) {
     hijos.push(

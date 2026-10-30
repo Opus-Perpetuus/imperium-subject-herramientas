@@ -377,6 +377,8 @@ export const herr_registros_flow = define_routes({
     const unidades: Record<string, string> = {};
     const codigos: Record<string, unknown> = {};
     for (const [clave, v] of Object.entries(resto)) {
+      // `__…`: controles del formulario que no son columnas (el escáner de reglas).
+      if (clave.startsWith("__")) continue;
       if (clave.endsWith(SUFIJO_UNIDAD)) unidades[clave.slice(0, -SUFIJO_UNIDAD.length)] = texto(v);
       else if (clave.endsWith(SUFIJO_CODIGO)) codigos[clave.slice(0, -SUFIJO_CODIGO.length)] = v;
       else campos[clave] = v;
