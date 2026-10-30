@@ -916,8 +916,12 @@ describe("diseñador", () => {
       escaner_abrir_url: false,
       escaner_buscar: true,
       escaner_continuo: false,
+      escaner_mostrar: "ambos",
     });
     expect(guardado.status).toBe(200);
+    const mostrar = nodos(editor, "nox.input-menu").find((n) => n.props!.name === "escaner_mostrar")!;
+    expect((mostrar.props!.options as { value: string }[]).map((o) => o.value)).toEqual(["valor", "codigo", "ambos"]);
+    expect((await call("GET", `/herr-tablas/${t.id}`)).data.campos.at(-1).escaner.mostrar).toBe("ambos");
 
     const captura = await pagina(`/pages/herramientas.herr-registro?tabla=${t.id}`);
     const [scanner] = nodos(captura, "nox.input-scanner");

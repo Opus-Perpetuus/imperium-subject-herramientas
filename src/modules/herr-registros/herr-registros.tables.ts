@@ -24,6 +24,8 @@ export const herr_registros_tables: KirletTableDecl[] = [
       { name: "miniaturas", type: "json" },
       /** clave de cada número con unidad por registro → la unidad que se le escribió. */
       { name: "unidades", type: "json" },
+      /** clave de cada columna «Código» → la metadata de lo leído en JSON (formato, versión del QR, corrección…). */
+      { name: "codigos", type: "json" },
     ],
     indexes: [
       { name: "idx_herr_registros_tabla", columns: ["tabla_id"] },

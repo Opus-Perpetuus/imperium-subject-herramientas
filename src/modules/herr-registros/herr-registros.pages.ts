@@ -9,7 +9,7 @@ import {
 } from "@opus-perpetuus/imperium-core-kit";
 import { es_foto_guardada, filas_de, momento_legible, texto } from "../../lib/comun.ts";
 import { TIPOS_UNIDAD_POR_REGISTRO, spec_de_fila, type CampoSpec, type TablaSpec } from "../../lib/formulas/esquema.ts";
-import { config_escaner } from "../../lib/formulas/escaner.ts";
+import { SUFIJO_CODIGO, config_escaner } from "../../lib/formulas/escaner.ts";
 import { MAX_FOTOS, lista_de, partir } from "../../lib/formulas/fotos.ts";
 import { cambios_de, describir_cambios, titulo_de_cambios, type Cambio } from "../../lib/formulas/historial.ts";
 import { texto_a_numero } from "../../lib/formulas/motor.ts";
@@ -109,9 +109,10 @@ export function nodo_entrada(
     case "referencia": {
       const options = [...(opciones ?? [])].map(([value, opcion]) => ({ value, ...opcion }));
       const ids = ids_referencia(raw);
-      return campo.multiple
-        ? nodo("nox.input-checkbox-group", { ...base, options, value: ids })
-        : nodo("nox.input-datalist", { ...base, options, value: ids[0] ?? "" });
+      if (campo.multiple) return nodo("nox.input-checkbox-group", { ...base, options, value: ids });
+      // Con «elegir escaneando», el datalist abre la cámara y elige la opción cuyo código se lee.
+      const scanner = campo.ref_escaner ? { scanner: { history: false } } : {};
+      return nodo("nox.input-datalist", { ...base, options, value: ids[0] ?? "", ...scanner });
     }
     case "ruta":
       return nodo("nox.input-text", { ...base, value: raw, help: "Id de la ruta registrada" });
@@ -308,6 +309,7 @@ export const herr_registros_pages: KirletPageDecl[] = [
       const valores = objeto(registro?.valores);
       const miniaturas = objeto(registro?.miniaturas);
       const unidades = objeto(registro?.unidades);
+      const codigos = objeto(registro?.codigos);
       const opciones = await opciones_referencia(data, spec);
       const con_unidad = spec.campos.filter((c) => c.unidad_por_registro && TIPOS_UNIDAD_POR_REGISTRO.has(c.tipo));
       const usadas = con_unidad.length ? unidades_usadas(await registros_de({ data }, spec.id)) : new Map<string, string[]>();
@@ -315,6 +317,8 @@ export const herr_registros_pages: KirletPageDecl[] = [
         .filter((c) => c.tipo !== "calculado")
         .flatMap((c) => {
           const entrada = nodo_entrada(c, valores[c.clave] ?? c.valor_por_defecto ?? "", opciones.get(c.clave), miniaturas[c.clave], spec);
+          // La metadata de lo leído viaja junto al código; el input del escáner la llena.
+          if (c.tipo === "codigo") return [entrada, nodo("nox.input-hidden", { name: `${c.clave}${SUFIJO_CODIGO}`, value: codigos[c.clave] ?? "" })];
           if (!con_unidad.includes(c)) return [entrada];
           // Sin unidad propia se propone la de la columna: es la que la lista ya le enseña.
           return [entrada, nodo_unidad(c, unidades[c.clave] || c.unidad || "", usadas.get(c.clave) ?? [])];

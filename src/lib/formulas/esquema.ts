@@ -94,6 +94,8 @@ export type CampoSpec = {
   ref_foto_en_tabla?: boolean;
   /** Solo código: qué formatos lee y qué hace la captura con lo leído. */
   escaner?: EscanerCampo | null;
+  /** Solo referencia: elegir el registro escaneando un código de sus columnas «Código». */
+  ref_escaner?: boolean;
 };
 
 export const SIN_FOTO = "-";
@@ -163,6 +165,8 @@ export type Registro = {
   miniaturas?: Record<string, string>;
   /** Clave de cada número con `unidad_por_registro` → la unidad que se le escribió. */
   unidades?: Record<string, string>;
+  /** Clave de cada columna «Código» → la metadata de lo leído en JSON (formato, versión, corrección). */
+  codigos?: Record<string, string>;
 };
 
 export const DECIMALES = 2;
@@ -257,6 +261,7 @@ function normalizar_campo(x: Record<string, unknown>): CampoSpec {
     unidad_de: texto_o_null(x.unidad_de),
     ref_foto: texto_o_null(x.ref_foto),
     ref_foto_en_tabla: x.ref_foto_en_tabla === true,
+    ...(x.ref_escaner === true ? { ref_escaner: true } : {}),
     ...(x.escaner ? { escaner: normalizar_escaner(x.escaner) } : {}),
   };
 }

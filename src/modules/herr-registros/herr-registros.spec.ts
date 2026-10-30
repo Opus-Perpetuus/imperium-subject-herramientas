@@ -273,3 +273,95 @@ describe("historial de un registro", () => {
     });
   });
 });
+
+describe("códigos leídos (QR o barras)", () => {
+  const QR = { value: "HERR-0001", format: "qr_code", version: "2", ec_level: "M", source: "camara", engine: "nativo" };
+
+  async function herramientas(mostrar = "ambos"): Promise<string> {
+    const r = await call("POST", "/herr-tablas", {
+      name: "Herramientas",
+      cerrable: false,
+      campos: [
+        { clave: "nombre", etiqueta: "Nombre", tipo: "texto", en_resumen: true },
+        { clave: "codigo", etiqueta: "Código", tipo: "codigo", en_resumen: true, escaner: { formatos: "todos", mostrar } },
+      ],
+    });
+    expect(r.status).toBe(201);
+    return r.data.id;
+  }
+
+  test("la metadata llega con el código, se guarda limpia y vuelve al editar", async () => {
+    const tabla_id = await herramientas();
+    const r = await capturar({ tabla_id, nombre: "Taladro", codigo: "HERR-0001", "codigo@codigo": JSON.stringify({ ...QR, raro: "x" }) });
+    expect(r.valores).toEqual({ nombre: "Taladro", codigo: "HERR-0001" });
+    expect(JSON.parse(r.codigos.codigo)).toEqual(QR);
+
+    const edicion = await pagina(`/pages/herramientas.herr-registro?tabla=${tabla_id}&id=${r.id}`);
+    const [scanner] = nodos(edicion, "nox.input-scanner");
+    expect(scanner!.props!.scanner).toMatchObject({ display: "ambos", metadata_target: "codigo@codigo" });
+    const oculto = nodos(edicion, "nox.input-hidden").find((n) => n.props!.name === "codigo@codigo");
+    expect(JSON.parse(String(oculto!.props!.value))).toEqual(QR);
+
+    // Sin la metadata en el envío se queda la que tenía mientras el código sea el mismo.
+    const igual = await capturar({ tabla_id, id: r.id, nombre: "Taladro rojo", codigo: "HERR-0001" });
+    expect(JSON.parse(igual.codigos.codigo)).toEqual(QR);
+    // Escrito a mano otro código, la metadata del anterior ya no le corresponde.
+    const otro = await capturar({ tabla_id, id: r.id, nombre: "Taladro rojo", codigo: "HERR-0009", "codigo@codigo": "" });
+    expect(otro.codigos).toEqual({});
+  });
+
+  test("Ver tabla dibuja el código con su formato cuando la columna lo pide", async () => {
+    const tabla_id = await herramientas("codigo");
+    const r = await capturar({ tabla_id, nombre: "Taladro", codigo: "HERR-0001", "codigo@codigo": JSON.stringify(QR) });
+    const doc = await pagina(`/pages/herramientas.herr-tabla?id=${tabla_id}`);
+    const [tabla] = nodos(doc, "nox.table");
+    expect(tabla!.props!.columns).toEqual([
+      { key: "nombre", label: "Nombre" },
+      { key: "codigo", label: "Código", code_display: "codigo", code_meta_key: "codigo__codigo", code_values_key: "codigo__codigos" },
+    ]);
+    const [fila] = tabla!.props!.rows as Record<string, unknown>[];
+    expect(fila).toMatchObject({ codigo: "HERR-0001", codigo__codigos: ["HERR-0001"], _id: r.id });
+    expect(JSON.parse(String(fila!.codigo__codigo))).toEqual(QR);
+  });
+
+  test("con «valor» la tabla enseña solo el texto, como siempre", async () => {
+    const tabla_id = await herramientas("valor");
+    await capturar({ tabla_id, nombre: "Taladro", codigo: "HERR-0001" });
+    const [tabla] = nodos(await pagina(`/pages/herramientas.herr-tabla?id=${tabla_id}`), "nox.table");
+    expect(tabla!.props!.columns).toEqual([
+      { key: "nombre", label: "Nombre" },
+      { key: "codigo", label: "Código" },
+    ]);
+  });
+
+  test("un enlace con «elegir escaneando» manda los códigos de cada registro al datalist", async () => {
+    const herr_id = await herramientas();
+    const taladro = await capturar({ tabla_id: herr_id, nombre: "Taladro", codigo: "HERR-0001" });
+    await capturar({ tabla_id: herr_id, nombre: "Sin código" });
+    const r = await call("POST", "/herr-tablas", {
+      name: "Préstamos",
+      cerrable: false,
+      campos: [
+        { clave: "quien", etiqueta: "Quién", tipo: "texto" },
+        { clave: "herramienta", etiqueta: "Herramienta", tipo: "referencia", tabla_ref_id: herr_id, ref_leyenda: "{nombre}" },
+      ],
+    });
+    const prestamos = r.data.id as string;
+    const sin = await pagina(`/pages/herramientas.herr-registro?tabla=${prestamos}`);
+    expect(nodos(sin, "nox.input-datalist")[0]!.props!.scanner).toBeUndefined();
+
+    const editor = await pagina(`/pages/herramientas.herr-tabla?id=${prestamos}&modo=campo&campo=herramienta`);
+    expect(nodos(editor, "nox.input-checkbox").some((n) => n.props!.name === "ref_escaner")).toBe(true);
+    expect((await call("PATCH", `/herr-tablas/${prestamos}/campos/herramienta/opcion`, { ref_escaner: true })).status).toBe(200);
+
+    const con = await pagina(`/pages/herramientas.herr-registro?tabla=${prestamos}`);
+    const [datalist] = nodos(con, "nox.input-datalist");
+    expect(datalist!.props!.scanner).toEqual({ history: false });
+    const opciones = datalist!.props!.options as { value: string; label: string; codes?: string[] }[];
+    expect(opciones.find((o) => o.value === taladro.id)).toMatchObject({ label: "Taladro", codes: ["HERR-0001"] });
+    expect(opciones.find((o) => o.label === "Sin código")?.codes).toBeUndefined();
+
+    await call("PATCH", `/herr-tablas/${prestamos}/campos/herramienta/opcion`, { ref_escaner: false });
+    expect((await call("GET", `/herr-tablas/${prestamos}`)).data.campos[1].ref_escaner).toBeUndefined();
+  });
+});

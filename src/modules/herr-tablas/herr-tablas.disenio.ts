@@ -310,6 +310,10 @@ export const herr_tablas_disenio = define_routes({
       campo.ref_foto = foto && foto !== FOTO_AUTOMATICA ? foto : null;
     }
     if ("ref_foto_en_tabla" in body) campo.ref_foto_en_tabla = booleano(body.ref_foto_en_tabla);
+    if ("ref_escaner" in body) {
+      if (booleano(body.ref_escaner)) campo.ref_escaner = true;
+      else delete campo.ref_escaner;
+    }
     for (const { campo: parte } of PARTES_REF) {
       const columna = texto(body[`columna_${parte}`]);
       if (columna === SIN_COLUMNA) campo[parte] = null;

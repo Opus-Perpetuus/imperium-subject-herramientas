@@ -26,7 +26,7 @@ import {
   type ResumenTabla,
   type TablaSpec,
 } from "../../lib/formulas/esquema.ts";
-import { ESCANER_VACIO, FORMATOS_ESCANER, TIPOS_DESTINO_ESCANER } from "../../lib/formulas/escaner.ts";
+import { ESCANER_VACIO, FORMATOS_ESCANER, MOSTRAR_ESCANER, TIPOS_DESTINO_ESCANER } from "../../lib/formulas/escaner.ts";
 import { parsear_agregado } from "../../lib/formulas/motor.ts";
 import { columna_unica, plantilla_con_etiquetas } from "../../lib/formulas/plantilla.ts";
 import { plantillas } from "../../lib/formulas/plantillas.ts";
@@ -686,6 +686,15 @@ function entradas_de_tipo(spec: TablaSpec, campo: CampoSpec, tablas: Map<string,
           Object.entries(FORMATOS_ESCANER).map(([value, label]) => ({ value, label })),
           { value: e.formatos },
         ),
+        menu(
+          "escaner_mostrar",
+          "Qué se ve",
+          Object.entries(MOSTRAR_ESCANER).map(([value, label]) => ({ value, label })),
+          {
+            value: e.mostrar ?? "valor",
+            help: "Al capturar, en la lista y en la tabla. El código se vuelve a dibujar con el mismo formato que se leyó (versión y corrección del QR incluidas).",
+          },
+        ),
         nodo("nox.input-checkbox", { name: "multiple", label: "Varios códigos en el mismo registro", value: campo.multiple === true }),
         nodo("nox.input-checkbox", { name: "escaner_continuo", label: "La cámara sigue abierta para leer uno tras otro", value: e.continuo }),
         titulo("Después de leer"),
@@ -846,7 +855,31 @@ async function seccion_opcion(data: Datos, spec: TablaSpec, campo: CampoSpec, de
           ]),
         ]
       : []),
+    tarjeta_escanear(action, campo, destino),
   ];
+}
+
+/** Elegir el registro enlazado leyendo con la cámara un código de sus columnas «Código». */
+function tarjeta_escanear(action: string, campo: CampoSpec, destino: TablaSpec): NoxUiNode {
+  const codigos = destino.campos.filter((c) => c.tipo === "codigo");
+  const cuales = codigos.map((c) => `«${c.etiqueta}»`).join(", ");
+  return nodo("nox.card", { title: "Elegir escaneando" }, [
+    nodo("nox.markdown-view", {
+      content:
+        (codigos.length
+          ? `Al capturar, un botón abre la cámara: lee el QR o código de barras guardado en ${cuales} y elige ese registro de «${destino.name}». `
+          : `«${destino.name}» aún no tiene una columna «Código»: sin ella solo se elige leyendo el título de la opción. `) +
+        (campo.multiple ? "Solo funciona cuando se elige un solo registro." : ""),
+    }),
+    nodo("nox.form", { method: "PATCH", action, then: THEN_DISENO }, [
+      nodo("nox.input-checkbox", {
+        name: "ref_escaner",
+        label: "Elegir el registro escaneando su código",
+        value: campo.ref_escaner === true,
+      }),
+      boton("Guardar", { icon: "fa-floppy-disk" }),
+    ]),
+  ]);
 }
 
 export async function pagina_campo(data: Datos, spec: TablaSpec, clave: string): Promise<NoxPageDescriptor> {

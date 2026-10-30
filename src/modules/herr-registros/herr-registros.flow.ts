@@ -21,6 +21,7 @@ import {
 import { texto_buscable } from "../../lib/formulas/busqueda.ts";
 import { calcular_valores, calculados_de } from "../../lib/formulas/calculadora.ts";
 import { TIPOS_UNIDAD_POR_REGISTRO, spec_de_fila, type CampoSpec, type TablaSpec } from "../../lib/formulas/esquema.ts";
+import { SUFIJO_CODIGO, metadata_de_codigo } from "../../lib/formulas/escaner.ts";
 import { MAX_FOTOS, lista_de, partir, unir } from "../../lib/formulas/fotos.ts";
 import { formatear as unir_multivalor } from "../../lib/formulas/multivalor.ts";
 import { objeto, registro_como_fila, registros_de, tabla_activa } from "../herr-tablas/herr-tablas.flow.ts";
@@ -95,6 +96,28 @@ function unidades_capturadas(spec: TablaSpec, previas: Record<string, string>, e
     const unidad = texto(entrada[campo.clave]).slice(0, MAX_UNIDAD);
     if (unidad) out[campo.clave] = unidad;
     else delete out[campo.clave];
+  }
+  return out;
+}
+
+/**
+ * La metadata de cada columna «Código»: la que llega con el formulario
+ * (`<clave>@codigo`) y, si no llega, la que ya tenía mientras el código sea
+ * el mismo. Un código escrito o borrado a mano se queda sin ella.
+ */
+function codigos_capturados(
+  spec: TablaSpec,
+  valores: Record<string, string>,
+  previas: Record<string, string>,
+  entrada: Record<string, unknown>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const campo of spec.campos) {
+    if (campo.tipo !== "codigo") continue;
+    const valor = valores[campo.clave] ?? "";
+    const fuente = campo.clave in entrada ? entrada[campo.clave] : previas[campo.clave];
+    const meta = metadata_de_codigo(campo, valor, fuente);
+    if (meta) out[campo.clave] = meta;
   }
   return out;
 }
@@ -211,6 +234,7 @@ export async function preparar_registro(
   const todos = calcular_valores(spec, valores, filas);
   const calculados = calculados_de(spec, todos);
   const unidades = unidades_capturadas(spec, objeto(existing?.unidades), objeto(patch.unidades));
+  const codigos = codigos_capturados(spec, valores, objeto(existing?.codigos), entrada_de(patch.codigos));
   return {
     ...patch,
     tabla_id,
@@ -218,9 +242,14 @@ export async function preparar_registro(
     calculados,
     miniaturas,
     unidades,
+    codigos,
     name: nombre_de(spec, todos) || id,
     search_field: campo_busqueda(texto_buscable(valores, { ...calculados, ...unidades }, spec)),
   };
+}
+
+function entrada_de(v: unknown): Record<string, unknown> {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 }
 
 /** Las miniaturas pesan y no son un cambio que leer: fuera del historial. */
@@ -300,15 +329,17 @@ export const herr_registros_flow = define_routes({
     const { tabla_id, id, ...resto } = await ctx.body<Record<string, unknown>>();
     const campos: Record<string, unknown> = {};
     const unidades: Record<string, string> = {};
+    const codigos: Record<string, unknown> = {};
     for (const [clave, v] of Object.entries(resto)) {
       if (clave.endsWith(SUFIJO_UNIDAD)) unidades[clave.slice(0, -SUFIJO_UNIDAD.length)] = texto(v);
+      else if (clave.endsWith(SUFIJO_CODIGO)) codigos[clave.slice(0, -SUFIJO_CODIGO.length)] = v;
       else campos[clave] = v;
     }
     if (texto(id)) {
       const existing = await fila_o_404(ctx, "herr_registros", texto(id), "El registro");
       const patch = await preparar_registro(
         ctx,
-        { tabla_id: texto(tabla_id) || existing.tabla_id, valores: campos, unidades },
+        { tabla_id: texto(tabla_id) || existing.tabla_id, valores: campos, unidades, codigos },
         existing,
       );
       const updated = await ctx.data.update(
@@ -327,6 +358,7 @@ export const herr_registros_flow = define_routes({
         tabla_id: texto(tabla_id),
         valores: campos,
         unidades,
+        codigos,
         description: "",
         is_active: true,
         created_at: ts,

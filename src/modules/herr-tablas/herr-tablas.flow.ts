@@ -20,6 +20,7 @@ import {
   type TablaSpec,
 } from "../../lib/formulas/esquema.ts";
 import { MAX_FOTOS, cuantas, cuantas_son, lista_de, partir } from "../../lib/formulas/fotos.ts";
+import { codigos_de } from "../../lib/formulas/escaner.ts";
 import { parsear } from "../../lib/formulas/multivalor.ts";
 import {
   TIPOS_AGREGADO,
@@ -87,6 +88,7 @@ export function registro_como_fila(row: DomainRow): Registro {
     updated_at: texto(row.updated_at),
     miniaturas: objeto(row.miniaturas),
     unidades: objeto(row.unidades),
+    codigos: objeto(row.codigos),
   };
 }
 
@@ -150,6 +152,8 @@ export type OpcionRef = {
   description?: string;
   description_secondary?: string;
   image?: string;
+  /** Con «elegir escaneando»: los códigos del registro, para elegirlo leyendo cualquiera. */
+  codes?: string[];
 };
 
 /** Lo que hace falta de la tabla que elige una columna «Enlace»: su esquema, sus registros y cómo se ve cada uno al elegirlo. */
@@ -212,7 +216,20 @@ function opcion_de(campo: CampoSpec, destino: TablaSpec | null, fila: DomainRow,
     campos_foto_ref(campo, destino)
       .map((c) => partir(registro.miniaturas?.[c.clave]).find((m) => m.startsWith("data:")))
       .find(Boolean) ?? "";
-  return { ...partes, label: partes.label || texto(fila.name) || String(fila.id), ...(image ? { image } : {}) };
+  const codes = campo.ref_escaner && destino ? codigos_del_registro(destino, registro) : [];
+  return {
+    ...partes,
+    label: partes.label || texto(fila.name) || String(fila.id),
+    ...(image ? { image } : {}),
+    ...(codes.length ? { codes } : {}),
+  };
+}
+
+/** Lo leído en las columnas «Código» de un registro: con cualquiera se le elige escaneando. */
+export function codigos_del_registro(destino: TablaSpec, registro: Registro): string[] {
+  return [
+    ...new Set(destino.campos.filter((c) => c.tipo === "codigo").flatMap((c) => codigos_de(c, registro.valores[c.clave] ?? ""))),
+  ];
 }
 
 /**
@@ -395,6 +412,13 @@ export async function vista_de_tabla(data: KirletCtx["data"], spec: TablaSpec) {
 
 const llave_miniatura = (clave: string) => `${clave}__mini`;
 const llave_foto = (clave: string) => `${clave}__url`;
+const llave_metadata_codigo = (clave: string) => `${clave}__codigo`;
+const llave_codigos = (clave: string) => `${clave}__codigos`;
+
+/** Una columna «Código» que pide enseñar el código dibujado (solo o con su texto). */
+export function dibuja_codigo(campo: CampoSpec): boolean {
+  return campo.tipo === "codigo" && (campo.escaner?.mostrar ?? "valor") !== "valor";
+}
 
 /** La columna con la foto de lo que elige un enlace: va junto a él cuando se pidió verla en la tabla. */
 export const clave_foto_enlace = (clave: string) => `${clave}@foto`;
@@ -425,6 +449,18 @@ export function tabla_de_registros(
     columns: columnas.flatMap((c) => {
       if (TIPOS_FOTO.has(c.tipo)) return [de_imagen(c.clave, c.etiqueta)];
       if (con_foto_de_enlace(c)) return [{ key: c.clave, label: c.etiqueta }, de_imagen(clave_foto_enlace(c.clave), `Foto · ${c.etiqueta}`)];
+      if (dibuja_codigo(c)) {
+        // Un lanzador anterior ignora `code_display` y sigue pintando el texto.
+        return [
+          {
+            key: c.clave,
+            label: c.etiqueta,
+            code_display: c.escaner!.mostrar,
+            code_meta_key: llave_metadata_codigo(c.clave),
+            code_values_key: llave_codigos(c.clave),
+          },
+        ];
+      }
       return [{ key: c.clave, label: c.etiqueta }];
     }),
     rows: filas.map((f) => {
@@ -439,6 +475,11 @@ export function tabla_de_registros(
           fila[llave_foto(c.clave)] = url;
         }
         if (c.tipo === "fotos") poner_fotos(fila, c.clave, fotos_de_registro(f, c.clave));
+        if (dibuja_codigo(c)) {
+          fila[llave_codigos(c.clave)] = codigos_de(c, raw);
+          const meta = f.codigos?.[c.clave];
+          if (meta) fila[llave_metadata_codigo(c.clave)] = meta;
+        }
         if (con_foto_de_enlace(c)) {
           const fotos = p.fotos_enlace(c, f);
           fila[clave_foto_enlace(c.clave)] = cuantas_son(fotos.urls.length);
