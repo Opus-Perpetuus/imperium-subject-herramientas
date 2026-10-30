@@ -279,13 +279,13 @@ describe("historial de un registro", () => {
 describe("códigos leídos (QR o barras)", () => {
   const QR = { value: "HERR-0001", format: "qr_code", version: "2", ec_level: "M", source: "camara", engine: "nativo" };
 
-  async function herramientas(mostrar = "ambos", notas = false): Promise<string> {
+  async function herramientas(mostrar = "ambos", notas = false, formatos = "todos"): Promise<string> {
     const r = await call("POST", "/herr-tablas", {
       name: "Herramientas",
       cerrable: false,
       campos: [
         { clave: "nombre", etiqueta: "Nombre", tipo: "texto", en_resumen: true },
-        { clave: "codigo", etiqueta: "Código", tipo: "codigo", en_resumen: true, escaner: { formatos: "todos", mostrar, notas } },
+        { clave: "codigo", etiqueta: "Código", tipo: "codigo", en_resumen: true, escaner: { formatos, mostrar, notas } },
       ],
     });
     expect(r.status).toBe(201);
@@ -324,6 +324,24 @@ describe("códigos leídos (QR o barras)", () => {
     const [fila] = tabla!.props!.rows as Record<string, unknown>[];
     expect(fila).toMatchObject({ codigo: "HERR-0001", codigo__codigos: ["HERR-0001"], _id: r.id });
     expect(JSON.parse(String(fila!.codigo__codigo))).toEqual(QR);
+  });
+
+  test("columna de barras: un EAN-13 tecleado guarda su formato deducido y la tabla no lo pinta QR", async () => {
+    const tabla_id = await herramientas("codigo", false, "barras");
+    const EAN = { value: "7501055375936", format: "ean_13", format_label: "EAN-13 (deducido)", dimension: "1d", source: "teclado", inferred: true };
+    const r = await capturar({ tabla_id, nombre: "Reja", codigo: "7501055375936", "codigo@codigo": JSON.stringify(EAN) });
+    expect(JSON.parse(r.codigos.codigo)).toMatchObject({ format: "ean_13", inferred: true });
+
+    const edicion = await pagina(`/pages/herramientas.herr-registro?tabla=${tabla_id}&id=${r.id}`);
+    const [scanner] = nodos(edicion, "nox.input-scanner");
+    expect(scanner!.props!.scanner).toMatchObject({ regenerate_format: "code_128" });
+
+    const doc = await pagina(`/pages/herramientas.herr-tabla?id=${tabla_id}`);
+    const [tabla] = nodos(doc, "nox.table");
+    const columnas = tabla!.props!.columns as Record<string, unknown>[];
+    expect(columnas[1]).toMatchObject({ key: "codigo", code_format: "code_128", code_meta_key: "codigo__codigo" });
+    const [fila] = tabla!.props!.rows as Record<string, unknown>[];
+    expect(JSON.parse(String(fila!.codigo__codigo))).toMatchObject({ format: "ean_13", inferred: true });
   });
 
   test("con «valor» la tabla enseña solo el texto, como siempre", async () => {

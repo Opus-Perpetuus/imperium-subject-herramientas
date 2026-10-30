@@ -157,7 +157,8 @@ export async function codigos_impresos(columnas: CampoSpec[], filas: Registro[])
           continue;
         }
         hechos++;
-        const url = await png_de_codigo(codigo, texto(metas.get(codigo)?.format) || undefined, solo_barras);
+        const meta = metas.get(codigo);
+        const url = await png_de_codigo(codigo, texto(meta?.format) || undefined, solo_barras, meta?.inferred === true);
         if (url) urls.push(url);
       }
       if (urls.length) dibujos.set(llave_dibujo(f, c.clave), urls.join("|"));

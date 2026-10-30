@@ -20,7 +20,7 @@ import {
   type TablaSpec,
 } from "../../lib/formulas/esquema.ts";
 import { MAX_FOTOS, cuantas, cuantas_son, lista_de, partir } from "../../lib/formulas/fotos.ts";
-import { codigos_con_notas, codigos_de } from "../../lib/formulas/escaner.ts";
+import { codigos_con_notas, codigos_de, formato_regenerado } from "../../lib/formulas/escaner.ts";
 import { parsear } from "../../lib/formulas/multivalor.ts";
 import {
   TIPOS_AGREGADO,
@@ -458,6 +458,8 @@ export function tabla_de_registros(
             code_display: c.escaner!.mostrar,
             code_meta_key: llave_metadata_codigo(c.clave),
             code_values_key: llave_codigos(c.clave),
+            // Formato para lo que no trae formato leído; el núcleo antes lo dibujaba QR siempre.
+            ...(formato_regenerado(c.escaner!.formatos) ? { code_format: formato_regenerado(c.escaner!.formatos) } : {}),
           },
         ];
       }

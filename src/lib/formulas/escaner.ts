@@ -62,6 +62,38 @@ const FORMATOS_NUCLEO: Record<Exclude<FormatosEscaner, "todos">, string[]> = {
   barras: ["ean_13", "ean_8", "upc_a", "upc_e", "code_39", "code_93", "code_128", "itf", "codabar", "databar", "databar_limited", "databar_expanded"],
 };
 
+/** Formato con que el núcleo dibuja lo que no trae formato leído (antes siempre QR). */
+export function formato_regenerado(formatos: FormatosEscaner): "code_128" | "qr_code" | undefined {
+  return formatos === "barras" ? "code_128" : formatos === "qr" ? "qr_code" : undefined;
+}
+
+/** GTIN (EAN-8, UPC-A, EAN-13, ITF-14) con dígito verificador válido. */
+export function gtin_valido(valor: string): boolean {
+  if (!/^\d{8}$|^\d{12,14}$/.test(valor)) return false;
+  const d = valor.split("").map(Number);
+  const control = d.pop()!;
+  const suma = d.reverse().reduce((acc, x, i) => acc + x * (i % 2 === 0 ? 3 : 1), 0);
+  return (10 - (suma % 10)) % 10 === control;
+}
+
+const GTIN: Record<number, string> = { 8: "ean_8", 12: "upc_a", 13: "ean_13", 14: "itf" };
+
+/**
+ * El formato de un código sin formato leído (tecleado o registro viejo), como
+ * `infer_scanner_format` del núcleo: GTIN válido → EAN/UPC/ITF-14; con
+ * `seguro` solo eso. Si no, dígitos (o columna de solo barras) → Code 128 y
+ * texto → QR.
+ */
+export function formato_de_valor(valor: string, formatos: FormatosEscaner = "todos", seguro = false): string {
+  const t = valor.trim();
+  if (!t) return "";
+  if (formatos !== "qr" && gtin_valido(t)) return GTIN[t.length]!;
+  if (seguro) return "";
+  if (formatos === "qr") return "qr_code";
+  const ascii = /^[\x20-\x7e]+$/.test(t) && t.length <= 80;
+  return ascii && (formatos === "barras" || /^\d+$/.test(t)) ? "code_128" : "qr_code";
+}
+
 /** Tipos de columna que pueden recibir lo leído. */
 export const TIPOS_DESTINO_ESCANER = new Set(["texto", "codigo", "numero", "entero", "dinero", "nota"]);
 
@@ -162,6 +194,7 @@ export function config_escaner(campo: CampoSpec, campos: CampoSpec[], tabla_id?:
     ...(e.continuo ? { continuous: true } : {}),
     ...(campo.multiple ? { multiple: true } : {}),
     ...(e.mostrar !== "valor" ? { display: e.mostrar } : {}),
+    ...(formato_regenerado(e.formatos) ? { regenerate_format: formato_regenerado(e.formatos) } : {}),
     ...(campo.multiple && e.notas ? { notes: true, notes_label: "Nota" } : {}),
     metadata_target: `${campo.clave}${SUFIJO_CODIGO}`,
     gs1: true,
@@ -203,6 +236,8 @@ function metadata_limpia(x: unknown): Record<string, unknown> | null {
   }
   if (typeof o.length === "number" && Number.isInteger(o.length) && o.length >= 0) out.length = o.length;
   if (o.gs1 === true) out.gs1 = true;
+  // El formato se dedujo del valor (tecleado), no lo leyó la cámara.
+  if (o.inferred === true && out.format) out.inferred = true;
   return typeof out.value === "string" ? out : null;
 }
 

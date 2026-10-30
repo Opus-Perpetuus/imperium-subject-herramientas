@@ -145,3 +145,20 @@ describe("metadata de lo leído", () => {
     expect(JSON.parse(metadata_de_codigo({}, "B", lista))).toEqual({ value: "B", format: "qr_code", gs1: true });
   });
 });
+
+describe("formato del código regenerado", () => {
+  test("columna de barras o QR lo pasa al núcleo; «todos» lo deja deducir", () => {
+    const barras: CampoSpec = { clave: "codigo", etiqueta: "Código", tipo: "codigo", escaner: { ...ESCANER_VACIO, formatos: "barras", mostrar: "codigo" } };
+    expect(config_escaner(barras, campos).regenerate_format).toBe("code_128");
+    expect(config_escaner({ ...barras, escaner: { ...barras.escaner!, formatos: "qr" } }, campos).regenerate_format).toBe("qr_code");
+    expect(config_escaner(campos[0]!, campos).regenerate_format).toBeUndefined();
+  });
+
+  test("la metadata deducida conserva inferred al guardarse", () => {
+    const meta = { value: "7501055375936", format: "ean_13", format_label: "EAN-13 (deducido)", source: "teclado", inferred: true, extra: 1 };
+    const guardada = JSON.parse(metadata_de_codigo({}, "7501055375936", JSON.stringify(meta)));
+    expect(guardada).toMatchObject({ format: "ean_13", inferred: true });
+    expect(guardada.extra).toBeUndefined();
+  });
+});
+
