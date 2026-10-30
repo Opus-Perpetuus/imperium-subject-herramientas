@@ -42,6 +42,8 @@ export type EscanerCampo = {
   continuo: boolean;
   /** El texto, el código regenerado o ambos. */
   mostrar: MostrarEscaner;
+  /** Con varios códigos: una nota por código (va en la metadata como `note`). */
+  notas?: boolean;
 };
 
 export const ESCANER_VACIO: EscanerCampo = {
@@ -52,6 +54,7 @@ export const ESCANER_VACIO: EscanerCampo = {
   buscar: false,
   continuo: false,
   mostrar: "valor",
+  notas: false,
 };
 
 const FORMATOS_NUCLEO: Record<Exclude<FormatosEscaner, "todos">, string[]> = {
@@ -92,6 +95,7 @@ export function normalizar_escaner(x: unknown): EscanerCampo | null {
     buscar: o.buscar === true,
     continuo: o.continuo === true,
     mostrar: es_mostrar(texto(o.mostrar)) ? (texto(o.mostrar) as MostrarEscaner) : "valor",
+    notas: o.notas === true,
   };
 }
 
@@ -128,6 +132,7 @@ export function escaner_desde_formulario(
   if ("escaner_abrir_url" in body) e.abrir_url = booleano(body.escaner_abrir_url);
   if ("escaner_buscar" in body) e.buscar = booleano(body.escaner_buscar);
   if ("escaner_continuo" in body) e.continuo = booleano(body.escaner_continuo);
+  if ("escaner_notas" in body) e.notas = booleano(body.escaner_notas);
   if ("escaner_mostrar" in body) {
     const m = texto(body.escaner_mostrar);
     e.mostrar = es_mostrar(m) ? m : "valor";
@@ -135,8 +140,12 @@ export function escaner_desde_formulario(
   return { escaner: e };
 }
 
-/** La configuración del input `nox.input-scanner` para capturar esta columna. */
-export function config_escaner(campo: CampoSpec, campos: CampoSpec[], tabla_id?: string): Record<string, unknown> {
+/**
+ * La configuración del input `nox.input-scanner` para capturar esta columna.
+ * El historial es solo del registro abierto (`history_scope`); uno nuevo aún
+ * no tiene lecturas propias, así que no ofrece las de otros registros.
+ */
+export function config_escaner(campo: CampoSpec, campos: CampoSpec[], tabla_id?: string, registro_id?: string): Record<string, unknown> {
   const e = campo.escaner ?? ESCANER_VACIO;
   const actions: Record<string, unknown>[] = [];
   if (e.destino && campos.some((c) => c.clave === e.destino && c.clave !== campo.clave)) {
@@ -153,9 +162,10 @@ export function config_escaner(campo: CampoSpec, campos: CampoSpec[], tabla_id?:
     ...(e.continuo ? { continuous: true } : {}),
     ...(campo.multiple ? { multiple: true } : {}),
     ...(e.mostrar !== "valor" ? { display: e.mostrar } : {}),
+    ...(campo.multiple && e.notas ? { notes: true, notes_label: "Nota" } : {}),
     metadata_target: `${campo.clave}${SUFIJO_CODIGO}`,
     gs1: true,
-    history: true,
+    ...(registro_id ? { history: true, history_scope: `herr-registro:${registro_id}` } : { history: false }),
   };
 }
 
@@ -179,6 +189,7 @@ const CLAVES_METADATA: Record<string, number> = {
   symbology_identifier: 16,
   content_type: 40,
   read_at: 40,
+  note: 500,
 };
 
 function metadata_limpia(x: unknown): Record<string, unknown> | null {

@@ -5,7 +5,7 @@ import {
   type DomainRow,
   type KirletCtx,
 } from "@opus-perpetuus/imperium-core-kit";
-import { booleano, campo_busqueda, falla, numero, texto } from "../../lib/comun.ts";
+import { booleano, campo_busqueda, falla, filas_de, numero, texto } from "../../lib/comun.ts";
 import {
   CON_PLANTILLA,
   FOTO_AUTOMATICA,
@@ -43,6 +43,7 @@ import {
 } from "../../lib/formulas/esquema.ts";
 import { escaner_desde_formulario } from "../../lib/formulas/escaner.ts";
 import { escaneo_desde_formulario } from "../../lib/formulas/escaneo.ts";
+import { MAX_REGLAS, regla_desde_formulario } from "../../lib/formulas/reglas.ts";
 import { claves_referenciadas, parsear_agregado } from "../../lib/formulas/motor.ts";
 import { plantilla_con_claves } from "../../lib/formulas/plantilla.ts";
 import { tabla_activa } from "./herr-tablas.flow.ts";
@@ -362,6 +363,33 @@ export const herr_tablas_disenio = define_routes({
       data: { id: String(guardada.id) },
       message: r.escaneo ? "Listo: «Ver tabla» tendrá el escáner" : "Escanear en «Ver tabla» quedó apagado",
     };
+  },
+
+  /** Regla al escanear: condición por código/tabla de origen → cantidad en un registro (abierto, padre, nuevo u otra tabla). */
+  "POST /herr-tablas/:id/reglas": async (ctx) => {
+    const { fila, spec } = await esquema(ctx);
+    const actuales = spec.reglas ?? [];
+    if (actuales.length >= MAX_REGLAS) falla(400, `Una tabla tiene hasta ${MAX_REGLAS} reglas`, "validation_error");
+    const filas = await filas_de(ctx, "herr_tablas", { is_active: true });
+    const specs = new Map(filas.map((f) => [String(f.id), spec_de_fila(f)]));
+    specs.set(spec.id, spec);
+    const r = regla_desde_formulario(
+      await ctx.body<Record<string, unknown>>(),
+      { actual: spec, tabla: (id) => specs.get(id) ?? null },
+      `regla_${crypto.randomUUID().slice(0, 8)}`,
+    );
+    if ("error" in r) falla(400, r.error, "validation_error");
+    const reglas = [...actuales, r.regla];
+    const guardada = await guardar(ctx, fila, { ...spec, reglas }, { reglas });
+    return { data: { id: String(guardada.id) }, message: `Regla «${r.regla.nombre || "Regla"}» agregada` };
+  },
+
+  "DELETE /herr-tablas/:id/reglas/:regla": async (ctx) => {
+    const { fila, spec } = await esquema(ctx);
+    const reglas = (spec.reglas ?? []).filter((r) => r.id !== ctx.params.regla);
+    if (reglas.length === (spec.reglas ?? []).length) falla(404, "Esa regla ya no está", "not_found");
+    const guardada = await guardar(ctx, fila, { ...spec, reglas }, { reglas });
+    return { data: { id: String(guardada.id) }, message: "Regla quitada" };
   },
 
   /** Valor fijo: se escribe una vez y vale para todos los registros (una meta, una deuda, el precio del litro). */

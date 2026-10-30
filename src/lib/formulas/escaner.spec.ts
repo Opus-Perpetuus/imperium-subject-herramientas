@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { CampoSpec } from "./esquema.ts";
 import {
+  ESCANER_VACIO,
   codigos_de,
   config_escaner,
   escaner_desde_formulario,
@@ -36,9 +37,10 @@ describe("desde el formulario del diseñador", () => {
       escaner_buscar: true,
       escaner_continuo: false,
       escaner_mostrar: "ambos",
+      escaner_notas: "true",
     });
     expect(r).toEqual({
-      escaner: { formatos: "qr", destino: "sku", plantilla: "https://x.mx/{valor}", abrir_url: true, buscar: true, continuo: false, mostrar: "ambos" },
+      escaner: { formatos: "qr", destino: "sku", plantilla: "https://x.mx/{valor}", abrir_url: true, buscar: true, continuo: false, mostrar: "ambos", notas: true },
     });
     expect(escaner_desde_formulario(campos, campos[0]!, { escaner_mostrar: "imagen" })).toEqual({
       escaner: expect.objectContaining({ mostrar: "valor" }),
@@ -58,6 +60,7 @@ describe("desde el formulario del diseñador", () => {
       buscar: false,
       continuo: false,
       mostrar: "valor",
+      notas: false,
     });
     expect(normalizar_escaner({ mostrar: "codigo" })?.mostrar).toBe("codigo");
   });
@@ -65,7 +68,21 @@ describe("desde el formulario del diseñador", () => {
 
 describe("configuración del input scanner", () => {
   test("sin ajustes solo deja el valor, con GS1 e historial", () => {
-    expect(config_escaner(campos[0]!, campos, "t1")).toEqual({ gs1: true, history: true, metadata_target: "codigo@codigo" });
+    expect(config_escaner(campos[0]!, campos, "t1")).toEqual({ gs1: true, history: false, metadata_target: "codigo@codigo" });
+  });
+
+  test("el historial es solo del registro abierto; las notas, solo con varios códigos", () => {
+    expect(config_escaner(campos[0]!, campos, "t1", "r9")).toMatchObject({ history: true, history_scope: "herr-registro:r9" });
+    const con_notas = { ...campos[0]!, escaner: { ...ESCANER_VACIO, notas: true } };
+    expect(config_escaner(con_notas, campos).notes).toBeUndefined();
+    expect(config_escaner({ ...con_notas, multiple: true }, campos)).toMatchObject({ multiple: true, notes: true, notes_label: "Nota" });
+  });
+
+  test("la nota de cada código se guarda limpia en la metadata", () => {
+    const meta = metadata_de_codigo({ multiple: true }, "A, B", JSON.stringify([{ value: "A", note: "x".repeat(900) }, { value: "B", note: {} }]));
+    const [a, b] = JSON.parse(meta) as { value: string; note?: string }[];
+    expect(a!.note!.length).toBe(500);
+    expect(b!.note).toBeUndefined();
   });
 
   test("traduce cada ajuste a una acción genérica del núcleo", () => {

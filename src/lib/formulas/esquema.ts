@@ -1,6 +1,7 @@
 import { texto } from "../comun.ts";
 import { normalizar_escaner, type EscanerCampo } from "./escaner.ts";
 import { normalizar_escaneo, type EscaneoTabla } from "./escaneo.ts";
+import { normalizar_reglas, type ReglaEscaneo } from "./reglas.ts";
 import { ambito_sonda, claves_referenciadas, evaluar, parsear_agregado } from "./motor.ts";
 
 /**
@@ -156,6 +157,8 @@ export type TablaSpec = {
   campos_cierre?: CampoSpec[];
   /** Qué pasa al escanear un código en «Ver tabla» (ver escaneo.ts). */
   escaneo?: EscaneoTabla | null;
+  /** Reglas al escanear: qué cantidad se anota y dónde según el código (ver reglas.ts). */
+  reglas?: ReglaEscaneo[];
 };
 
 /** Una fila como la ve el motor: clave → valor en texto (capturados y calculados juntos). */
@@ -307,6 +310,7 @@ export function spec_de_fila(fila: Record<string, unknown>): TablaSpec {
     cerrable: fila.cerrable !== false,
     campos_cierre: lista(fila.campos_cierre).map(normalizar_campo),
     escaneo: normalizar_escaneo(fila.escaneo),
+    reglas: normalizar_reglas(fila.reglas),
   };
 }
 

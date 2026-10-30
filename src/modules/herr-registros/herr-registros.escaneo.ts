@@ -25,7 +25,7 @@ const md = (s: string) => s.replace(/[\\`*_[\]<>|#]/g, "\\$&");
 export async function resolver_escaneo(data: KirletDataClient, spec: TablaSpec, leido: string): Promise<Escaneado> {
   const codigo = leido.trim();
   const nada: Escaneado = { registro: null, prellenar: {}, aviso: "" };
-  if (!codigo || !spec.escaneo) return nada;
+  if (!codigo || !spec.escaneo || spec.escaneo.accion === "reglas") return nada;
   const campo = columna_de_escaneo(spec);
   if (!campo) return { ...nada, aviso: "La columna que recibía lo escaneado ya no existe: revisa «Al escanear» en el diseño de la tabla." };
   let valor = codigo;

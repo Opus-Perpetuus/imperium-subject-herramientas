@@ -16,6 +16,10 @@ export const ACCIONES_ESCANEO = {
     label: "Abrir el registro que ya tenga ese código; si no hay, uno nuevo",
     boton: "Escanear para abrir o anotar",
   },
+  reglas: {
+    label: "Aplicar las reglas al escanear de la tabla, sin abrir un registro",
+    boton: "Escanear para aplicar reglas",
+  },
 } as const;
 export type AccionEscaneo = keyof typeof ACCIONES_ESCANEO;
 
@@ -30,6 +34,9 @@ export const TIPOS_COLUMNA_ESCANEO: ReadonlySet<string> = new Set(["codigo", "te
 
 export const es_accion_escaneo = (v: string): v is AccionEscaneo => Object.hasOwn(ACCIONES_ESCANEO, v);
 
+/** Acciones que no ponen el código en una columna (no piden «columna»). */
+export const ACCIONES_SIN_COLUMNA: ReadonlySet<AccionEscaneo> = new Set(["reglas"]);
+
 export function normalizar_escaneo(x: unknown): EscaneoTabla | null {
   let o = x;
   if (typeof x === "string") {
@@ -43,13 +50,15 @@ export function normalizar_escaneo(x: unknown): EscaneoTabla | null {
   const r = o as Record<string, unknown>;
   const accion = texto(r.accion);
   const columna = texto(r.columna);
-  return es_accion_escaneo(accion) && columna ? { accion, columna } : null;
+  if (!es_accion_escaneo(accion)) return null;
+  if (ACCIONES_SIN_COLUMNA.has(accion)) return { accion, columna: "" };
+  return columna ? { accion, columna } : null;
 }
 
 /** La columna configurada, si sigue existiendo y sigue siendo de un tipo que recibe códigos. */
 export function columna_de_escaneo(spec: Pick<TablaSpec, "campos" | "escaneo">): CampoSpec | null {
   const e = spec.escaneo;
-  if (!e) return null;
+  if (!e || ACCIONES_SIN_COLUMNA.has(e.accion)) return null;
   const campo = spec.campos.find((c) => c.clave === e.columna);
   if (!campo || !TIPOS_COLUMNA_ESCANEO.has(campo.tipo)) return null;
   if (campo.tipo === "referencia" && !campo.tabla_ref_id) return null;
@@ -64,6 +73,7 @@ export function escaneo_desde_formulario(
   const accion = texto(body.escaneo_accion);
   if (!accion || accion === "ninguna") return { escaneo: null };
   if (!es_accion_escaneo(accion)) return { error: "Esa acción no existe" };
+  if (ACCIONES_SIN_COLUMNA.has(accion)) return { escaneo: { accion, columna: "" } };
   const columna = texto(body.escaneo_columna);
   const campo = spec.campos.find((c) => c.clave === columna);
   if (!campo || !TIPOS_COLUMNA_ESCANEO.has(campo.tipo) || (campo.tipo === "referencia" && !campo.tabla_ref_id)) {
@@ -93,6 +103,17 @@ export function registro_por_codigo(spec: Pick<TablaSpec, "campos">, filas: Regi
     if (fila) return fila;
   }
   return null;
+}
+
+/**
+ * El escáner que aplica las reglas: envía el código al leerlo
+ * (`submit_on_scan`); con `registro_id` el historial es solo de ese registro.
+ */
+export function config_escaneo_reglas(registro_id?: string): Record<string, unknown> {
+  return {
+    submit_on_scan: true,
+    ...(registro_id ? { history: true, history_scope: `herr-registro:${registro_id}:reglas` } : { history: false }),
+  };
 }
 
 /** El input del escáner de «Ver tabla»: lo leído abre la captura con `escaneo=`. */

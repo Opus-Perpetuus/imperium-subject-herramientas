@@ -1,6 +1,7 @@
 import { define_crud, define_module } from "@opus-perpetuus/imperium-core-kit";
 import { con_filtro_por_tabla, herr_registros_flow, preparar_registro, sin_miniaturas } from "./herr-registros.flow.ts";
 import { herr_registros_pages } from "./herr-registros.pages.ts";
+import { herr_registros_reglas } from "./herr-registros.reglas.ts";
 import { herr_registros_tables } from "./herr-registros.tables.ts";
 
 export const herr_registros_module = define_module({
@@ -13,6 +14,7 @@ export const herr_registros_module = define_module({
   },
   routes: [
     ...herr_registros_flow,
+    ...herr_registros_reglas,
     ...con_filtro_por_tabla(
       define_crud({
         resource: "herr-registros",

@@ -6,7 +6,7 @@ import {
 import { puede, texto } from "../../lib/comun.ts";
 import { valores_resumen } from "../../lib/formulas/calculadora.ts";
 import { spec_de_fila, type TablaSpec } from "../../lib/formulas/esquema.ts";
-import { ACCIONES_ESCANEO, columna_de_escaneo, config_escaneo_tabla } from "../../lib/formulas/escaneo.ts";
+import { ACCIONES_ESCANEO, columna_de_escaneo, config_escaneo_reglas, config_escaneo_tabla } from "../../lib/formulas/escaneo.ts";
 import { ID_TABLA, href_registro, href_tabla, migas, pagina_campo, pagina_disenar, pagina_inicio } from "./herr-tablas.disenador.ts";
 import { filtrar_filas, registros_paginados, tabla_de_registros, vista_de_tabla } from "./herr-tablas.flow.ts";
 import { pagina_cerrar, pagina_cierre, pagina_cierres, pagina_comparar } from "./herr-tablas.cierres.ts";
@@ -151,6 +151,7 @@ export const herr_tablas_pages: KirletPageDecl[] = [
  * botón: no se envía, solo navega.
  */
 export function escaner_de_tabla(spec: TablaSpec): NoxUiNode | null {
+  if (spec.escaneo?.accion === "reglas") return spec.reglas?.length ? escaner_de_reglas(spec) : null;
   const campo = spec.escaneo ? columna_de_escaneo(spec) : null;
   if (!spec.escaneo || !campo) return null;
   const destino = campo.tipo === "referencia" ? `busca en «${campo.etiqueta}» el registro con ese código` : `lo pone en «${campo.etiqueta}»`;
@@ -162,6 +163,29 @@ export function escaner_de_tabla(spec: TablaSpec): NoxUiNode | null {
       value: "",
       scanner: config_escaneo_tabla(spec.id),
     }),
+  ]);
+}
+
+/**
+ * El escáner de las reglas al escanear: un formulario que se envía solo al
+ * leer (y con «Aplicar» si se escribe a mano). Con `registro_id`, las reglas
+ * ven el registro abierto.
+ */
+export function escaner_de_reglas(spec: TablaSpec, registro_id?: string): NoxUiNode {
+  return nodo("nox.form", { method: "POST", action: "api://herr-registros/escanear" }, [
+    nodo("nox.input-hidden", { name: "tabla_id", value: spec.id }),
+    ...(registro_id ? [nodo("nox.input-hidden", { name: "id", value: registro_id })] : []),
+    nodo("nox.input-scanner", {
+      name: "codigo",
+      label: ACCIONES_ESCANEO.reglas.boton,
+      help: registro_id
+        ? "Cada código leído aplica las reglas de la tabla y vuelve a cargar el registro: guarda antes lo que hayas cambiado a mano."
+        : "Cada código leído aplica las reglas de la tabla que no necesitan un registro abierto.",
+      required: true,
+      value: "",
+      scanner: config_escaneo_reglas(registro_id),
+    }),
+    boton("Aplicar", { icon: "fa-bolt", variant: "secondary" }),
   ]);
 }
 

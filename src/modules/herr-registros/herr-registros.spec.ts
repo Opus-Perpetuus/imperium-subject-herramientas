@@ -397,7 +397,7 @@ describe("al escanear un código en «Ver tabla»", () => {
     expect((columna.props!.options as { value: string }[]).map((o) => o.value)).toEqual(["nombre", "codigo"]);
     expect(columna.props!.value).toBe("codigo");
     const accion = nodos(ajustes, "nox.input-menu").find((n) => n.props!.name === "escaneo_accion")!;
-    expect((accion.props!.options as { value: string }[]).map((o) => o.value)).toEqual(["ninguna", "nuevo", "abrir_o_nuevo"]);
+    expect((accion.props!.options as { value: string }[]).map((o) => o.value)).toEqual(["ninguna", "nuevo", "abrir_o_nuevo", "reglas"]);
 
     expect((await call("PATCH", `/herr-tablas/${id}/escaneo`, { escaneo_accion: "nuevo", escaneo_columna: "foto" })).status).toBe(400);
     expect((await call("PATCH", `/herr-tablas/${id}/escaneo`, { escaneo_accion: "borrar", escaneo_columna: "codigo" })).status).toBe(400);
@@ -469,5 +469,132 @@ describe("al escanear un código en «Ver tabla»", () => {
     const prestamo = await capturar({ tabla_id: prestamos, quien: "Ana", herramienta: taladro.id });
     const abierta = await pagina(`/pages/herramientas.herr-registro?tabla=${prestamos}&escaneo=HERR-0001`);
     expect(nodos(abierta, "nox.input-hidden").find((n) => n.props!.name === "id")?.props!.value).toBe(prestamo.id);
+  });
+});
+
+describe("reglas al escanear", () => {
+  async function tabla(name: string, campos: unknown[]): Promise<string> {
+    const r = await call("POST", "/herr-tablas", { name, cerrable: false, campos });
+    expect(r.status).toBe(201);
+    return r.data.id;
+  }
+  async function regla(tabla_id: string, body: Record<string, unknown>) {
+    const r = await call("POST", `/herr-tablas/${tabla_id}/reglas`, body);
+    expect(r.status).toBe(200);
+  }
+  const escanear = (tabla_id: string, codigo: string, id?: string) => call("POST", "/herr-registros/escanear", { tabla_id, codigo, id });
+  const valores = async (id: string) => (await call("GET", `/herr-registros/${id}`)).data.valores as Record<string, string>;
+
+  test("12 botellas por caja en un registro nuevo de la tabla padre, enlazado al abierto", async () => {
+    const prod = await tabla("Productos", [
+      { clave: "nombre", etiqueta: "Nombre", tipo: "texto" },
+      { clave: "codigo", etiqueta: "Código", tipo: "codigo" },
+      { clave: "piezas", etiqueta: "Piezas por caja", tipo: "entero" },
+    ]);
+    await capturar({ tabla_id: prod, nombre: "Agua", codigo: "CAJA-AGUA", piezas: "12" });
+    const inv = await tabla("Inventario", [
+      { clave: "nota", etiqueta: "Nota", tipo: "texto" },
+      { clave: "botellas", etiqueta: "Botellas", tipo: "entero" },
+    ]);
+    const mov = await tabla("Movimientos", [
+      { clave: "quien", etiqueta: "Quién", tipo: "texto" },
+      { clave: "inventario", etiqueta: "Inventario", tipo: "referencia", tabla_ref_id: inv, ref_leyenda: "{nota}" },
+    ]);
+    await regla(mov, {
+      nombre: "Cajas",
+      tabla_origen: prod,
+      destino: "nuevo_padre",
+      enlace: "inventario",
+      accion: "sumar",
+      cantidad: "1",
+      cantidad_de: `${prod}.piezas`,
+      columna: `${inv}.botellas`,
+    });
+    const abierto = await capturar({ tabla_id: mov, quien: "Ana" });
+
+    // La página del registro trae el escáner de reglas, que se envía solo.
+    const doc = await pagina(`/pages/herramientas.herr-registro?tabla=${mov}&id=${abierto.id}`);
+    const form = nodos(doc, "nox.form").find((f) => f.props!.action === "api://herr-registros/escanear")!;
+    expect(form).toBeDefined();
+    const escaner = nodos(doc, "nox.input-scanner").find((n) => n.props!.name === "codigo")!;
+    expect(escaner.props!.scanner).toMatchObject({ submit_on_scan: true, history_scope: `herr-registro:${abierto.id}:reglas` });
+
+    const r = await escanear(mov, "caja-agua", abierto.id);
+    expect(r.status).toBe(200);
+    expect(String(r.json.message)).toContain("+12 Botellas en registro nuevo de «Inventario»");
+    const padre_id = (await valores(abierto.id)).inventario!;
+    expect(padre_id).toBeTruthy();
+    expect((await valores(padre_id)).botellas).toBe("12");
+    expect((await valores(abierto.id)).quien).toBe("Ana");
+
+    // Un código que no es de Productos no aplica la regla.
+    expect((await escanear(mov, "OTRA-COSA", abierto.id)).status).toBe(404);
+  });
+
+  test("el registro abierto y su padre; el patrón; sin registro abierto no se aplican", async () => {
+    const ped = await tabla("Pedidos", [
+      { clave: "folio", etiqueta: "Folio", tipo: "texto" },
+      { clave: "total", etiqueta: "Total", tipo: "entero" },
+    ]);
+    const lin = await tabla("Líneas", [
+      { clave: "pedido", etiqueta: "Pedido", tipo: "referencia", tabla_ref_id: ped, ref_leyenda: "{folio}" },
+      { clave: "cajas", etiqueta: "Cajas", tipo: "entero" },
+    ]);
+    await regla(lin, { nombre: "Caja", codigo: "CAJA-*", destino: "actual", accion: "sumar", cantidad: "1", columna: `${lin}.cajas` });
+    await regla(lin, { nombre: "Botellas", codigo: "CAJA-*", destino: "padre", enlace: "pedido", accion: "sumar", cantidad: "12", columna: `${ped}.total` });
+    const pedido = await capturar({ tabla_id: ped, folio: "P-1" });
+    const linea = await capturar({ tabla_id: lin, pedido: pedido.id });
+
+    expect((await escanear(lin, "CAJA-9", linea.id)).status).toBe(200);
+    expect((await escanear(lin, "CAJA-9", linea.id)).status).toBe(200);
+    expect((await valores(linea.id)).cajas).toBe("2");
+    expect((await valores(pedido.id)).total).toBe("24");
+    expect((await escanear(lin, "BOTELLA", linea.id)).status).toBe(404);
+    const sin = await escanear(lin, "CAJA-9");
+    expect(sin.status).toBe(409);
+    expect(String(sin.json.message ?? JSON.stringify(sin.json))).toContain("abre un registro");
+
+    // Quitar una regla.
+    const spec = (await call("GET", `/herr-tablas/${lin}`)).data;
+    const [primera] = spec.reglas as { id: string }[];
+    expect((await call("DELETE", `/herr-tablas/${lin}/reglas/${primera!.id}`)).status).toBe(200);
+    expect(((await call("GET", `/herr-tablas/${lin}`)).data.reglas as unknown[]).length).toBe(1);
+  });
+
+  test("desde «Ver tabla»: el registro de otra tabla con ese código, o uno nuevo", async () => {
+    const prod = await tabla("Productos", [
+      { clave: "nombre", etiqueta: "Nombre", tipo: "texto" },
+      { clave: "codigo", etiqueta: "Código", tipo: "codigo" },
+    ]);
+    const agua = await capturar({ tabla_id: prod, nombre: "Agua", codigo: "AGUA" });
+    const stock = await tabla("Existencias", [
+      { clave: "producto", etiqueta: "Producto", tipo: "referencia", tabla_ref_id: prod, ref_leyenda: "{nombre}" },
+      { clave: "cantidad", etiqueta: "Cantidad", tipo: "entero" },
+    ]);
+    const entradas = await tabla("Entradas", [{ clave: "nota", etiqueta: "Nota", tipo: "texto" }]);
+    expect(
+      (await call("POST", `/herr-tablas/${entradas}/reglas`, { destino: "existente_o_nuevo", tabla_destino: stock, cantidad: "5", columna: `${stock}.cantidad` }))
+        .status,
+    ).toBe(400);
+    await regla(entradas, {
+      tabla_origen: prod,
+      destino: "existente_o_nuevo",
+      tabla_destino: stock,
+      accion: "sumar",
+      cantidad: "5",
+      columna: `${stock}.cantidad`,
+      columna_codigo: `${stock}.producto`,
+    });
+    await call("PATCH", `/herr-tablas/${entradas}/escaneo`, { escaneo_accion: "reglas" });
+    const ver = await pagina(`/pages/herramientas.herr-tabla?id=${entradas}`);
+    expect(nodos(ver, "nox.form").some((f) => f.props!.action === "api://herr-registros/escanear")).toBe(true);
+    const diseno = await pagina(`/pages/herramientas.herr-tabla?id=${entradas}&modo=disenar&seccion=reglas`);
+    expect(nodos(diseno, "nox.markdown-view").some((n) => String(n.props!.content).includes("«Existencias» con ese código"))).toBe(true);
+
+    expect((await escanear(entradas, "AGUA")).status).toBe(200);
+    expect((await escanear(entradas, "agua")).status).toBe(200);
+    const filas = (await call("GET", `/herr-registros?tabla_id=${stock}`)).data as { valores: Record<string, string> }[];
+    expect(filas.length).toBe(1);
+    expect(filas[0]!.valores).toMatchObject({ producto: agua.id, cantidad: "10" });
   });
 });

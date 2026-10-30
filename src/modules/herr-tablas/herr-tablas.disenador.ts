@@ -28,6 +28,7 @@ import {
 } from "../../lib/formulas/esquema.ts";
 import { ESCANER_VACIO, FORMATOS_ESCANER, MOSTRAR_ESCANER, TIPOS_DESTINO_ESCANER } from "../../lib/formulas/escaner.ts";
 import { ACCIONES_ESCANEO, TIPOS_COLUMNA_ESCANEO, columna_de_escaneo } from "../../lib/formulas/escaneo.ts";
+import { ACCIONES_REGLA, DESTINOS_REGLA, MAX_REGLAS, TIPOS_CANTIDAD, TIPOS_CODIGO_REGLA, tabla_destino_de, type DestinoRegla, type ReglaEscaneo } from "../../lib/formulas/reglas.ts";
 import { parsear_agregado } from "../../lib/formulas/motor.ts";
 import { columna_unica, plantilla_con_etiquetas } from "../../lib/formulas/plantilla.ts";
 import { plantillas } from "../../lib/formulas/plantillas.ts";
@@ -181,6 +182,7 @@ const SECCIONES = [
   { id: "totales", nombre: "Totales" },
   { id: "fijos", nombre: "Valores fijos" },
   { id: "cierre", nombre: "Cierre" },
+  { id: "reglas", nombre: "Reglas al escanear" },
   { id: "ajustes", nombre: "Ajustes" },
 ] as const;
 
@@ -507,6 +509,115 @@ function tarjeta_al_escanear(spec: TablaSpec): NoxUiNode {
   ]);
 }
 
+/** Cómo se lee una regla: «Si el código es de Productos: +12 Botellas en un registro nuevo de Inventario». */
+export function describir_regla(regla: ReglaEscaneo, spec: TablaSpec, tablas: Map<string, TablaSpec>): string {
+  const t = (id: string | null) => (id ? (id === spec.id ? spec : tablas.get(id)) : undefined);
+  const col = (tabla: TablaSpec | undefined, clave: string | null) => (clave ? (tabla?.campos.find((c) => c.clave === clave)?.etiqueta ?? clave) : "");
+  const enlace = spec.campos.find((c) => c.clave === regla.enlace);
+  const destino = t(tabla_destino_de(regla, { actual: spec, tabla: (id) => t(id) ?? null })?.id ?? null);
+  const cuando = [
+    regla.codigo ? `el código es «${regla.codigo}»` : "",
+    regla.tabla_origen ? `el código es de «${t(regla.tabla_origen)?.name ?? "otra tabla"}»` : "",
+  ].filter(Boolean);
+  const cantidad = regla.cantidad_de
+    ? `${regla.cantidad} × «${col(t(regla.tabla_origen), regla.cantidad_de)}» del código`
+    : String(regla.cantidad);
+  const donde: Record<DestinoRegla, string> = {
+    actual: "el registro abierto",
+    padre: `el registro de «${enlace?.etiqueta ?? regla.enlace}»`,
+    nuevo_padre: `un registro nuevo de «${destino?.name ?? "la tabla padre"}»`,
+    nuevo: `un registro nuevo de «${destino?.name ?? "otra tabla"}»`,
+    existente_o_nuevo: `el registro de «${destino?.name ?? "otra tabla"}» con ese código (o uno nuevo)`,
+  };
+  const extra = [
+    regla.columna_codigo ? `el código va en «${col(destino, regla.columna_codigo)}»` : "",
+    regla.enlace_actual ? `«${col(destino, regla.enlace_actual)}» apunta al registro abierto` : "",
+  ].filter(Boolean);
+  return (
+    `${cuando.length ? `Si ${cuando.join(" y ")}` : "Con cualquier código"}: ` +
+    `${ACCIONES_REGLA[regla.accion].split(" ")[0]} ${cantidad} en «${col(destino, regla.columna)}» de ${donde[regla.destino]}` +
+    (extra.length ? ` (${extra.join("; ")})` : "") +
+    "."
+  );
+}
+
+/** Reglas al escanear: la lista, para quitar, y el formulario para agregar otra. */
+function seccion_reglas(spec: TablaSpec, tablas: Map<string, TablaSpec>): NoxUiNode[] {
+  const todas = [spec, ...[...tablas.values()].filter((t) => t.id !== spec.id)];
+  const columnas = (filtro: (c: CampoSpec, t: TablaSpec) => boolean) =>
+    todas.flatMap((t) => t.campos.filter((c) => filtro(c, t)).map((c) => ({ value: `${t.id}.${c.clave}`, label: `${t.name} · ${c.etiqueta}` })));
+  const ninguna = (label: string) => [{ value: "", label }];
+  const out: NoxUiNode[] = [
+    nodo("nox.markdown-view", {
+      content:
+        "Con un registro abierto (o desde «Ver tabla» si en Ajustes eliges «Aplicar las reglas»), cada código leído aplica **todas** las reglas que le coinciden: " +
+        "suma, resta o pone una cantidad en el registro abierto, en el registro padre (el de un enlace), en uno nuevo de la tabla padre o en otra tabla. " +
+        "Ejemplo: al escanear una caja de «Productos», sumar 12 en «Botellas» de un registro nuevo de «Inventario».",
+    }),
+  ];
+  for (const regla of spec.reglas ?? []) {
+    out.push(
+      nodo("nox.card", { title: regla.nombre || "Regla" }, [
+        nodo("nox.markdown-view", { content: describir_regla(regla, spec, tablas) }),
+        boton("Quitar", {
+          method: "DELETE",
+          action: `api://herr-tablas/${spec.id}/reglas/${regla.id}`,
+          confirm: `¿Quitar la regla «${regla.nombre || "Regla"}»?`,
+          icon: "fa-trash",
+          variant: "ghost",
+        }),
+      ]),
+    );
+  }
+  if ((spec.reglas?.length ?? 0) >= MAX_REGLAS) return out;
+  out.push(
+    nodo("nox.card", { title: "Agregar una regla" }, [
+      nodo(
+        "nox.form",
+        { method: "POST", action: `api://herr-tablas/${spec.id}/reglas`, then: `${ID_TABLA}?id={id}&modo=disenar&seccion=reglas` },
+        [
+          nodo("nox.input-text", { name: "nombre", label: "Nombre", help: "Para reconocerla: «Cajas de botellas»." }),
+          titulo("Cuándo"),
+          nodo("nox.input-text", { name: "codigo", label: "Código", help: "Vacío = cualquier código. Usa * como comodín: CAJA-*." }),
+          menu("tabla_origen", "El código es de un registro de", [...ninguna("Cualquier tabla (o ninguna)"), ...todas.map((t) => ({ value: t.id, label: t.name }))], {
+            value: "",
+            help: "Se busca en sus columnas «Código» y luego en las de texto. Si no está, la regla no aplica.",
+          }),
+          titulo("Qué hacer"),
+          menu("accion", "Acción", Object.entries(ACCIONES_REGLA).map(([value, label]) => ({ value, label })), { value: "sumar" }),
+          nodo("nox.input-number", { name: "cantidad", label: "Cantidad", value: 1, required: true }),
+          menu("cantidad_de", "Multiplicar por esta columna del código", [...ninguna("No: solo la cantidad"), ...columnas((c) => TIPOS_CANTIDAD.has(c.tipo))], {
+            value: "",
+            help: "Por ejemplo «Piezas por caja» de la tabla de origen.",
+          }),
+          titulo("Dónde"),
+          menu("destino", "Registro", Object.entries(DESTINOS_REGLA).map(([value, label]) => ({ value, label })), { value: "actual" }),
+          menu(
+            "enlace",
+            "Enlace a la tabla padre",
+            [...ninguna("— (solo para el registro padre)"), ...spec.campos.filter((c) => c.tipo === "referencia" && c.tabla_ref_id).map((c) => ({ value: c.clave, label: c.etiqueta }))],
+            { value: "" },
+          ),
+          menu("tabla_destino", "Otra tabla", [...ninguna("— (solo para otra tabla)"), ...todas.map((t) => ({ value: t.id, label: t.name }))], { value: "" }),
+          menu("columna", "Columna de la cantidad", columnas((c) => TIPOS_CANTIDAD.has(c.tipo)), { required: true }),
+          menu("columna_codigo", "Anotar el código en", [...ninguna("En ninguna columna"), ...columnas((c) => TIPOS_CODIGO_REGLA.has(c.tipo))], {
+            value: "",
+            help: "En un registro nuevo; con «el que ya tenga ese código», es por donde se busca. Un enlace guarda el registro del código.",
+          }),
+          menu(
+            "enlace_actual",
+            "Enlazar el registro nuevo al abierto con",
+            [...ninguna("No enlazar"), ...columnas((c, t) => t.id !== spec.id && c.tipo === "referencia" && c.tabla_ref_id === spec.id)],
+            { value: "" },
+          ),
+          boton("Agregar regla", { icon: "fa-plus" }),
+        ],
+      ),
+    ]),
+  );
+  return out;
+}
+
 function seccion_ajustes(spec: TablaSpec): NoxUiNode[] {
   return [
     nodo("nox.form", { method: "PATCH", action: `api://herr-tablas/${spec.id}` }, [
@@ -563,6 +674,7 @@ export async function pagina_disenar(data: Datos, spec: TablaSpec, params: URLSe
     totales: spec.resumenes.length,
     fijos: spec.constantes.length,
     cierre: spec.campos_cierre?.length,
+    reglas: spec.reglas?.length,
     ajustes: undefined,
   };
   const hijos: NoxUiNode[] = [migas(["Mis tablas", HOJA], [spec.name, href_tabla(spec.id)])];
@@ -591,6 +703,7 @@ export async function pagina_disenar(data: Datos, spec: TablaSpec, params: URLSe
   if (seccion === "totales") hijos.push(...(await seccion_totales(data, spec)));
   if (seccion === "fijos") hijos.push(...seccion_fijos(spec));
   if (seccion === "cierre") hijos.push(...seccion_cierre(spec));
+  if (seccion === "reglas") hijos.push(...seccion_reglas(spec, await tablas_por_id(data)));
   if (seccion === "ajustes") hijos.push(...seccion_ajustes(spec));
   hijos.push(
     nodo("nox.toolbar", {}, [
@@ -741,6 +854,12 @@ function entradas_de_tipo(spec: TablaSpec, campo: CampoSpec, tablas: Map<string,
         ),
         nodo("nox.input-checkbox", { name: "multiple", label: "Varios códigos en el mismo registro", value: campo.multiple === true }),
         nodo("nox.input-checkbox", { name: "escaner_continuo", label: "La cámara sigue abierta para leer uno tras otro", value: e.continuo }),
+        nodo("nox.input-checkbox", {
+          name: "escaner_notas",
+          label: "Una nota por código",
+          help: "Solo con «Varios códigos»: junto a cada código se puede escribir una nota.",
+          value: e.notas === true,
+        }),
         titulo("Después de leer"),
         menu("escaner_destino", "Copiar el código también a", [{ value: "", label: "A ninguna otra columna" }, ...destinos.map((c) => ({ value: c.clave, label: c.etiqueta }))], {
           value: e.destino ?? "",

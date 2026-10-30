@@ -31,6 +31,8 @@ export const herr_tablas_tables: KirletTableDecl[] = [
       { name: "version_esquema", type: "integer" },
       /** `EscaneoTabla`: qué hace «Ver tabla» al leer un código (ver lib/formulas/escaneo.ts). */
       { name: "escaneo", type: "json" },
+      /** `ReglaEscaneo[]`: qué se anota al escanear un código (ver lib/formulas/reglas.ts). */
+      { name: "reglas", type: "json" },
     ],
     indexes: [
       { name: "idx_herr_tablas_name", columns: ["name"] },

@@ -319,6 +319,52 @@ async function anotar_historial(
   });
 }
 
+/**
+ * Guarda un registro como la captura: valida, calcula y deja historial. Con
+ * `id` edita ese registro; sin él crea uno. Lo usan el formulario y las reglas
+ * al escanear.
+ */
+export async function guardar_captura(
+  ctx: KirletCtx,
+  entrada: { tabla_id: string; id?: string; valores: Record<string, unknown>; unidades?: Record<string, string>; codigos?: Record<string, unknown> },
+): Promise<{ row: DomainRow; creado: boolean }> {
+  const { tabla_id, id, valores: campos, unidades = {}, codigos = {} } = entrada;
+  if (id) {
+    const existing = await fila_o_404(ctx, "herr_registros", id, "El registro");
+    const patch = await preparar_registro(
+      ctx,
+      { tabla_id: tabla_id || existing.tabla_id, valores: campos, unidades, codigos },
+      existing,
+    );
+    const updated = await ctx.data.update(
+      "herr_registros",
+      { id: String(existing.id) },
+      { ...patch, updated_at: now_iso() },
+    );
+    if (updated) await anotar_historial(ctx, "update", existing, updated);
+    return { row: updated ?? { ...existing, ...patch }, creado: false };
+  }
+  const ts = now_iso();
+  const row = await preparar_registro(
+    ctx,
+    {
+      id: new_id("registro"),
+      tabla_id,
+      valores: campos,
+      unidades,
+      codigos,
+      description: "",
+      is_active: true,
+      created_at: ts,
+      updated_at: ts,
+    },
+    null,
+  );
+  const creado = await ctx.data.insert("herr_registros", row);
+  await anotar_historial(ctx, "create", null, creado);
+  return { row: creado, creado: true };
+}
+
 export const herr_registros_flow = define_routes({
   /**
    * Alta/edición desde el formulario de la página `herramientas.herr-registro`:
@@ -335,39 +381,7 @@ export const herr_registros_flow = define_routes({
       else if (clave.endsWith(SUFIJO_CODIGO)) codigos[clave.slice(0, -SUFIJO_CODIGO.length)] = v;
       else campos[clave] = v;
     }
-    if (texto(id)) {
-      const existing = await fila_o_404(ctx, "herr_registros", texto(id), "El registro");
-      const patch = await preparar_registro(
-        ctx,
-        { tabla_id: texto(tabla_id) || existing.tabla_id, valores: campos, unidades, codigos },
-        existing,
-      );
-      const updated = await ctx.data.update(
-        "herr_registros",
-        { id: String(existing.id) },
-        { ...patch, updated_at: now_iso() },
-      );
-      if (updated) await anotar_historial(ctx, "update", existing, updated);
-      return { data: updated };
-    }
-    const ts = now_iso();
-    const row = await preparar_registro(
-      ctx,
-      {
-        id: new_id("registro"),
-        tabla_id: texto(tabla_id),
-        valores: campos,
-        unidades,
-        codigos,
-        description: "",
-        is_active: true,
-        created_at: ts,
-        updated_at: ts,
-      },
-      null,
-    );
-    const creado = await ctx.data.insert("herr_registros", row);
-    await anotar_historial(ctx, "create", null, creado);
-    return ctx.created(creado);
+    const r = await guardar_captura(ctx, { tabla_id: texto(tabla_id), id: texto(id), valores: campos, unidades, codigos });
+    return r.creado ? ctx.created(r.row) : { data: r.row };
   },
 });
