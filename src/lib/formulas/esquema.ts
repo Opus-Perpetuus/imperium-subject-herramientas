@@ -2,6 +2,15 @@ import { texto } from "../comun.ts";
 import { normalizar_escaner, type EscanerCampo } from "./escaner.ts";
 import { normalizar_escaneo, type EscaneoTabla } from "./escaneo.ts";
 import { normalizar_reglas, type ReglaEscaneo } from "./reglas.ts";
+import {
+  MAX_COLUMNAS_SUBTABLA,
+  TIPOS_SUBCOLUMNA,
+  columna_de,
+  partir_ruta,
+  spec_de_subtabla,
+  subtabla_de,
+  type ModoRefSubtabla,
+} from "./subtabla.ts";
 import { ambito_sonda, claves_referenciadas, evaluar, parsear_agregado, referencias } from "./motor.ts";
 
 /**
@@ -39,6 +48,8 @@ export const TIPOS_CAMPO = [
   "calculado",
   /** Id de un registro de `tabla_ref_id`; las `PARTES_REF` dicen qué se enseña de él. */
   "referencia",
+  /** Tabla anidada: una lista de filas con sus `columnas` (ver subtabla.ts); se guarda como JSON. */
+  "subtabla",
 ] as const;
 
 export type TipoCampo = (typeof TIPOS_CAMPO)[number];
@@ -98,6 +109,12 @@ export type CampoSpec = {
   escaner?: EscanerCampo | null;
   /** Solo referencia: elegir el registro escaneando un código de sus columnas «Código». */
   ref_escaner?: boolean;
+  /** Solo subtabla: sus columnas (cualquier tipo de `TIPOS_SUBCOLUMNA`). */
+  columnas?: CampoSpec[];
+  /** Solo referencia: la subtabla de la tabla enlazada que se elige (ver `ref_subtabla_modo`). */
+  ref_subtabla?: string | null;
+  /** `whole`: se elige el registro con su subtabla completa; `element`: una fila suya (`<registro>~<fila>`). */
+  ref_subtabla_modo?: ModoRefSubtabla;
 };
 
 export const SIN_FOTO = "-";
@@ -245,10 +262,12 @@ function normalizar_campo(x: Record<string, unknown>): CampoSpec {
   const clave = texto(x.clave);
   // Hay filas guardadas con `clave_ref_display` (una sola columna): esa columna es su título.
   const display = texto(x.clave_ref_display);
+  const tipo = (texto(x.tipo) || "texto") as TipoCampo;
+  const ref_subtabla = tipo === "referencia" ? texto(x.ref_subtabla) : "";
   return {
     clave,
     etiqueta: texto(x.etiqueta) || clave,
-    tipo: (texto(x.tipo) || "texto") as TipoCampo,
+    tipo,
     requerido: x.requerido === true,
     valor_por_defecto: texto_o_null(x.valor_por_defecto),
     opciones: Array.isArray(x.opciones) ? x.opciones.map(texto).filter(Boolean) : [],
@@ -270,6 +289,18 @@ function normalizar_campo(x: Record<string, unknown>): CampoSpec {
     ref_foto_en_tabla: x.ref_foto_en_tabla === true,
     ...(x.ref_escaner === true ? { ref_escaner: true } : {}),
     ...(x.escaner ? { escaner: normalizar_escaner(x.escaner) } : {}),
+    ...(tipo === "subtabla"
+      ? {
+          // Una subtabla no anida otra: lo que no cabe en una columna se descarta.
+          columnas: lista(x.columnas)
+            .map(normalizar_campo)
+            .filter((c) => TIPOS_SUBCOLUMNA.has(c.tipo))
+            .slice(0, MAX_COLUMNAS_SUBTABLA),
+        }
+      : {}),
+    ...(ref_subtabla
+      ? { ref_subtabla, ref_subtabla_modo: (x.ref_subtabla_modo === "element" ? "element" : "whole") as ModoRefSubtabla }
+      : {}),
   };
 }
 
@@ -348,12 +379,20 @@ export function errores_formula(spec: TablaSpec, formula: string, donde: string,
   const errores: string[] = [];
   const refs = referencias(formula);
   for (const ref of refs.propias) {
-    if (!resuelve_clave(spec, ref)) errores.push(`«${donde}»: «${ref}» no existe`);
+    // El nombre de un `sub_*` se revisa abajo, con las columnas que lee.
+    if (!resuelve_clave(spec, ref) && !refs.subtablas.has(ref)) errores.push(`«${donde}»: «${ref}» no existe`);
   }
   const revisar_enlaces = (en: TablaSpec, enlaces: { campo: string; columna: string }[]) => {
     for (const { campo, columna } of enlaces) {
       const c = campo_de(en, campo);
       if (!c) continue;
+      if (c.tipo === "subtabla") {
+        const ruta = partir_ruta(columna);
+        if (ruta.column !== "_id" && !columna_de(c, ruta.column)) {
+          errores.push(`«${donde}»: «${ruta.column}» no es una columna de la subtabla «${c.etiqueta}»`);
+        }
+        continue;
+      }
       if (c.tipo !== "referencia" || !c.tabla_ref_id) {
         errores.push(`«${donde}»: «${campo}» no es un enlace a otra tabla; no se puede leer «${campo}.${columna}»`);
         continue;
@@ -361,10 +400,24 @@ export function errores_formula(spec: TablaSpec, formula: string, donde: string,
       if (!otras) continue;
       const destino = c.tabla_ref_id === spec.id ? spec : otras.find((t) => t.id === c.tabla_ref_id);
       if (!destino) errores.push(`«${donde}»: la tabla enlazada en «${campo}» ya no existe`);
-      else if (!resuelve_clave(destino, columna)) errores.push(`«${donde}»: «${columna}» no existe en «${destino.name}»`);
+      else if (!resuelve_en_destino(destino, c, columna)) errores.push(`«${donde}»: «${columna}» no existe en «${destino.name}»`);
     }
   };
   revisar_enlaces(spec, refs.enlaces);
+  for (const [nombre, claves] of refs.subtablas) {
+    const sub = subtabla_de(spec, nombre);
+    if (!sub) {
+      errores.push(`«${donde}»: «${nombre}» no es una subtabla de esta tabla`);
+      continue;
+    }
+    const sspec = spec_de_subtabla(spec, sub);
+    for (const clave of claves) {
+      const enlace = clave.includes(".") ? clave.slice(0, clave.indexOf(".")) : clave;
+      if (clave !== "_id" && !resuelve_clave(sspec, clave) && !resuelve_clave(sspec, enlace)) {
+        errores.push(`«${donde}»: «${clave}» no es una columna de la subtabla «${sub.etiqueta}»`);
+      }
+    }
+  }
   if (otras) {
     const todas = otras.some((t) => t.id === spec.id) ? otras : [spec, ...otras];
     for (const [nombre, claves] of refs.tablas) {
@@ -382,6 +435,19 @@ export function errores_formula(spec: TablaSpec, formula: string, donde: string,
   const r = evaluar(formula, ambito_sonda());
   if (!r.ok) errores.push(`«${donde}»: ${r.error}`);
   return errores;
+}
+
+/**
+ * ¿`{enlace.columna}` significa algo en la tabla enlazada? Una columna suya o,
+ * si el enlace elige su subtabla, una columna de esa subtabla.
+ */
+function resuelve_en_destino(destino: TablaSpec, enlace: CampoSpec, columna: string): boolean {
+  if (columna === "_id" || resuelve_clave(destino, columna)) return true;
+  const punto = columna.indexOf(".");
+  const sub_directa = punto > 0 ? campo_de(destino, columna.slice(0, punto)) : undefined;
+  if (sub_directa?.tipo === "subtabla") return !!columna_de(sub_directa, partir_ruta(columna.slice(punto + 1)).column);
+  const sub = enlace.ref_subtabla ? campo_de(destino, enlace.ref_subtabla) : undefined;
+  return sub?.tipo === "subtabla" && !!columna_de(sub, partir_ruta(columna).column);
 }
 
 /**
@@ -480,6 +546,13 @@ export function validar_esquema(spec: TablaSpec, otras?: TablaSpec[]): string[] 
       const ref = campo_de(spec, campo.unidad_de.split(":")[0] ?? "");
       if (ref?.tipo !== "referencia") errores.push(`«${campo.clave}»: su unidad sale de un enlace que ya no existe`);
     }
+    if (campo.tipo === "subtabla") errores.push(...errores_subtabla(spec, campo, otras));
+    if (campo.tipo === "referencia" && campo.ref_subtabla && otras && campo.tabla_ref_id) {
+      const destino = campo.tabla_ref_id === spec.id ? spec : otras.find((t) => t.id === campo.tabla_ref_id);
+      if (destino && campo_de(destino, campo.ref_subtabla)?.tipo !== "subtabla") {
+        errores.push(`«${campo.etiqueta}»: «${campo.ref_subtabla}» no es una subtabla de «${destino.name}»`);
+      }
+    }
   }
   for (const c of spec.constantes) revisar_clave(c.clave, "Valor fijo", vistas);
   const vistas_resumen = new Set<string>();
@@ -496,6 +569,28 @@ export function validar_esquema(spec: TablaSpec, otras?: TablaSpec[]): string[] 
       errores.push(`«${campo.clave}»: un cierre no pide datos de tipo «${campo.tipo}»`);
     }
   }
+  return errores;
+}
+
+/** Las columnas de una subtabla: claves, tipos y fórmulas (contra la fila y el registro capturado). */
+function errores_subtabla(spec: TablaSpec, campo: CampoSpec, otras?: TablaSpec[]): string[] {
+  const errores: string[] = [];
+  const columnas = campo.columnas ?? [];
+  const donde = `Subtabla «${campo.etiqueta}»`;
+  if (!columnas.length) errores.push(`${donde}: agrega al menos una columna`);
+  const vistas = new Set<string>();
+  const sspec = spec_de_subtabla(spec, campo);
+  for (const c of columnas) {
+    if (!CLAVE.test(c.clave)) errores.push(`${donde}: clave inválida «${c.clave}»`);
+    else if (vistas.has(c.clave)) errores.push(`${donde}: clave repetida «${c.clave}»`);
+    vistas.add(c.clave);
+    if (!TIPOS_SUBCOLUMNA.has(c.tipo)) errores.push(`${donde}: una columna no puede ser de tipo «${c.tipo}»`);
+    if (c.tipo === "calculado") {
+      if (!c.formula) errores.push(`${donde}: «${c.clave}» no tiene fórmula`);
+      else errores.push(...errores_formula(sspec, c.formula, `${campo.etiqueta} › ${c.etiqueta}`, otras));
+    }
+  }
+  if (!errores.length) errores.push(...ciclos_de_calculo(sspec).map((e) => `${donde}: ${e}`));
   return errores;
 }
 

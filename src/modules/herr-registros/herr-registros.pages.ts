@@ -1,5 +1,6 @@
 import {
   build_feature_shell_page,
+  subtable_input,
   type DomainRow,
   type KirletDataClient,
   type KirletPageDecl,
@@ -14,6 +15,7 @@ import { MAX_FOTOS, lista_de, partir } from "../../lib/formulas/fotos.ts";
 import { cambios_de, describir_cambios, titulo_de_cambios, type Cambio } from "../../lib/formulas/historial.ts";
 import { texto_a_numero } from "../../lib/formulas/motor.ts";
 import { parsear } from "../../lib/formulas/multivalor.ts";
+import { MAX_FILAS_SUBTABLA, columnas_de } from "../../lib/formulas/subtabla.ts";
 import { href_registro, href_tabla, migas } from "../herr-tablas/herr-tablas.disenador.ts";
 import { escaner_de_reglas_en_formulario } from "../herr-tablas/herr-tablas.pages.ts";
 import { PREFIJO_ESCANER_ENLACE } from "./herr-registros.reglas.ts";
@@ -53,6 +55,7 @@ export function nodo_entrada(
   miniatura?: string,
   spec?: Pick<TablaSpec, "id" | "campos">,
   registro_id?: string,
+  todas?: Map<string, Map<string, OpcionRef>>,
 ): NoxUiNode {
   // Con unidad por registro o tomada de un enlace, la de la columna no es la de todos.
   const unidad_fija = campo.unidad && !campo.unidad_por_registro && !campo.unidad_de ? campo.unidad : null;
@@ -122,6 +125,20 @@ export function nodo_entrada(
       return nodo("nox.input-text", { ...base, value: raw, help: "Id de la ruta registrada" });
     case "codigo":
       return nodo("nox.input-scanner", { ...base, value: raw, scanner: config_escaner(campo, spec?.campos ?? [], spec?.id, registro_id) });
+    case "subtabla":
+      return subtable_input({
+        ...base,
+        value: raw,
+        max_rows: MAX_FILAS_SUBTABLA,
+        add_label: "Agregar fila",
+        empty_text: "Sin filas todavía",
+        // Cada columna es la entrada de su tipo; su valor es el de cada fila nueva.
+        columns: columnas_de(campo).map((c) =>
+          c.tipo === "calculado"
+            ? nodo("nox.input-text", { name: c.clave, label: c.etiqueta, computed: true, read_only: true })
+            : nodo_entrada(c, c.valor_por_defecto ?? "", todas?.get(`${campo.clave}.${c.clave}`)),
+        ),
+      });
     default:
       return nodo("nox.input-text", { ...base, value: raw });
   }
@@ -342,6 +359,7 @@ export const herr_registros_pages: KirletPageDecl[] = [
             miniaturas[c.clave],
             spec,
             registro ? String(registro.id) : undefined,
+            opciones,
           );
           // La metadata de lo leído viaja junto al código; el input del escáner la llena.
           if (c.tipo === "codigo") return [entrada, nodo("nox.input-hidden", { name: `${c.clave}${SUFIJO_CODIGO}`, value: codigos[c.clave] ?? "" })];

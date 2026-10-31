@@ -14,6 +14,7 @@ import {
   SIN_COLUMNA,
   TIPO_AUTOMATICO,
   TOTAL_REGISTROS,
+  campo_nuevo,
   campos_desde_propuestas,
   clave_libre,
   claves_usadas,
@@ -49,6 +50,7 @@ import { MAX_REGLAS, regla_desde_formulario, regla_usa } from "../../lib/formula
 import { claves_referenciadas, parsear_agregado, referencias } from "../../lib/formulas/motor.ts";
 import { HUECO, armar_formula, pedido_desde_formulario } from "../../lib/formulas/constructor.ts";
 import { plantilla_con_claves } from "../../lib/formulas/plantilla.ts";
+import { TIPOS_SUBCOLUMNA, spec_de_subtabla } from "../../lib/formulas/subtabla.ts";
 import { tabla_activa } from "./herr-tablas.flow.ts";
 
 const ESQUEMA = ["campos", "constantes", "resumenes"] as const;
@@ -157,6 +159,55 @@ function indice_de<T extends { clave: string }>(lista: T[], clave: string | unde
   return i;
 }
 
+/**
+ * Dónde vive una columna: `clave` en la tabla o `subtabla.clave` en una
+ * subtabla. `en` es el esquema contra el que se escriben sus fórmulas y
+ * `con(campos)` la tabla con esa lista de columnas cambiada.
+ */
+type Lugar = {
+  campos: CampoSpec[];
+  i: number;
+  sub: CampoSpec | null;
+  en: TablaSpec;
+  con: (campos: CampoSpec[]) => TablaSpec;
+};
+
+function ubicar(spec: TablaSpec, clave: string | undefined): Lugar {
+  const punto = (clave ?? "").indexOf(".");
+  if (punto < 0) return { campos: spec.campos, i: indice_de(spec.campos, clave, "La columna"), sub: null, en: spec, con: (campos) => ({ ...spec, campos }) };
+  const sub = spec.campos.find((c) => c.clave === clave!.slice(0, punto) && c.tipo === "subtabla");
+  if (!sub) falla(404, "La subtabla no existe", "not_found");
+  const campos = sub!.columnas ?? [];
+  return {
+    campos,
+    i: indice_de(campos, clave!.slice(punto + 1), "La columna de la subtabla"),
+    sub: sub!,
+    en: spec_de_subtabla(spec, sub!),
+    con: (columnas) => ({ ...spec, campos: spec.campos.map((c) => (c === sub ? { ...c, columnas } : c)) }),
+  };
+}
+
+/** En una subtabla no caben fotos, rutas ni otra subtabla. */
+function exigir_subcolumna(tipo: TipoCampo): void {
+  if (!TIPOS_SUBCOLUMNA.has(tipo)) falla(400, "Ese tipo no se puede usar dentro de una subtabla", "validation_error");
+}
+
+/** Lo que lee `subtabla.columna`: las otras columnas de la subtabla y las fórmulas del registro que la nombran. */
+function exigir_sin_uso_en_subtabla(spec: TablaSpec, sub: CampoSpec, col: CampoSpec): void {
+  const lee = (formula: string | null | undefined) => {
+    const refs = referencias(formula ?? "");
+    const directa = refs.enlaces.some((e) => e.campo === sub.clave && e.columna.split(".").pop() === col.clave);
+    const en_sub = [...refs.subtablas].some(([n, claves]) => (n === sub.clave || n === sub.etiqueta) && claves.has(col.clave));
+    return directa || en_sub;
+  };
+  const usan = [
+    ...(sub.columnas ?? []).filter((c) => c.clave !== col.clave && c.tipo === "calculado" && usa(c.formula, col.clave)),
+    ...spec.campos.filter((c) => c.tipo === "calculado" && lee(c.formula)),
+    ...spec.resumenes.filter((r) => lee(r.formula)),
+  ].map((x) => `«${x.etiqueta}»`);
+  if (usan.length) falla(409, `«${col.etiqueta}» se usa en ${usan.join(", ")}: cambia o quita eso primero`, "conflict");
+}
+
 function usa(formula: string | null | undefined, clave: string): boolean {
   return [...claves_referenciadas(formula ?? "")].some((ref) => ref === clave || parsear_agregado(ref)?.campo === clave);
 }
@@ -241,6 +292,24 @@ async function aplicar_cambios(ctx: KirletCtx, spec: TablaSpec, antes: CampoSpec
     }
     campo.tabla_ref_id = tabla_ref;
   }
+  if ("ref_subtabla" in body) {
+    const sub = texto(body.ref_subtabla);
+    if (!sub || !campo.tabla_ref_id) {
+      delete campo.ref_subtabla;
+      delete campo.ref_subtabla_modo;
+    } else {
+      const destino = await ctx.data.findOne("herr_tablas", { id: campo.tabla_ref_id });
+      if (!destino || !spec_de_fila(destino).campos.some((c) => c.clave === sub && c.tipo === "subtabla")) {
+        falla(400, "Esa subtabla ya no está en la tabla enlazada", "validation_error");
+      }
+      campo.ref_subtabla = sub;
+      campo.ref_subtabla_modo = texto(body.ref_subtabla_modo) === "element" ? "element" : "whole";
+    }
+  }
+  if (campo.tipo !== "referencia") {
+    delete campo.ref_subtabla;
+    delete campo.ref_subtabla_modo;
+  }
   const op = texto(body.operacion);
   const pedido = pedido_desde_formulario(body);
   if (pedido) {
@@ -318,11 +387,33 @@ export const herr_tablas_disenio = define_routes({
    */
   "POST /herr-tablas/:id/campos": async (ctx) => {
     const { fila, spec } = await esquema(ctx);
-    const body = await ctx.body<{ etiqueta?: string; tipo?: string }>();
+    const body = await ctx.body<{ etiqueta?: string; tipo?: string; subtabla?: string }>();
     const propuestas = columnas_desde_texto(texto(body.etiqueta));
     if (!propuestas.length) falla(400, "Escribe el nombre de la columna", "validation_error");
     const tipo = tipo_elegido(body.tipo);
     if (tipo && propuestas.length === 1) propuestas[0]!.tipo = tipo;
+    if (texto(body.subtabla)) {
+      // Columnas de una subtabla: claves propias de la subtabla; lo que no cabe en ella se vuelve texto.
+      const sub = spec.campos.find((c) => c.clave === texto(body.subtabla) && c.tipo === "subtabla");
+      if (!sub) falla(404, "La subtabla no existe", "validation_error");
+      if (tipo) exigir_subcolumna(tipo);
+      const actuales = sub!.columnas ?? [];
+      const vacia: TablaSpec = { id: spec.id, name: sub!.etiqueta, campos: actuales, constantes: [], resumenes: [] };
+      const usadas = new Set([...actuales.map((c) => c.clave), ...spec.constantes.map((c) => c.clave)]);
+      const nuevas = propuestas.map((p) => {
+        const c = campo_nuevo(vacia, { ...p, tipo: TIPOS_SUBCOLUMNA.has(p.tipo) ? p.tipo : "texto" }, usadas);
+        usadas.add(c.clave);
+        return c;
+      });
+      const lugar = ubicar(spec, `${sub!.clave}.${actuales[0]?.clave ?? nuevas[0]!.clave}`);
+      const guardada = await guardar(ctx, fila, lugar.con([...actuales, ...nuevas]));
+      const primera = nuevas[0]!;
+      const ajustar = nuevas.length === 1 && necesita_ajustes(primera);
+      return {
+        data: siguiente(guardada, "campo", ajustar ? `${sub!.clave}.${primera.clave}` : sub!.clave),
+        message: `«${sub!.etiqueta}»: ${nuevas.map((c) => `«${c.etiqueta}»`).join(", ")} agregada${nuevas.length === 1 ? "" : "s"}`,
+      };
+    }
     const nuevos = campos_desde_propuestas(spec, propuestas);
     const guardada = await guardar(ctx, fila, { ...spec, campos: [...spec.campos, ...nuevos] });
     const primero = nuevos[0]!;
@@ -336,7 +427,24 @@ export const herr_tablas_disenio = define_routes({
 
   "PATCH /herr-tablas/:id/campos/:clave": async (ctx) => {
     const { fila, spec } = await esquema(ctx);
-    const i = indice_de(spec.campos, ctx.params.clave, "La columna");
+    const lugar = ubicar(spec, ctx.params.clave);
+    if (lugar.sub) {
+      const sub = lugar.sub;
+      const antes = lugar.campos[lugar.i]!;
+      const body = await ctx.body<Record<string, unknown>>();
+      const campo = await aplicar_cambios(ctx, lugar.en, antes, body);
+      exigir_subcolumna(campo.tipo);
+      const columnas = lugar.campos.toSpliced(lugar.i, 1);
+      const posicion = numero(body.posicion);
+      columnas.splice(posicion === null ? lugar.i : Math.min(columnas.length, Math.max(0, Math.round(posicion))), 0, campo);
+      const guardada = await guardar(ctx, fila, lugar.con(columnas));
+      const otra_vez = campo.tipo !== antes.tipo || campo.tabla_ref_id !== antes.tabla_ref_id || necesita_ajustes(campo);
+      return {
+        data: siguiente(guardada, "campo", otra_vez ? `${sub.clave}.${campo.clave}` : sub.clave),
+        message: `«${sub.etiqueta} › ${campo.etiqueta}» guardada`,
+      };
+    }
+    const i = lugar.i;
     const antes = spec.campos[i]!;
     const body = await ctx.body<Record<string, unknown>>();
     const campo = await aplicar_cambios(ctx, spec, antes, body);
@@ -363,8 +471,9 @@ export const herr_tablas_disenio = define_routes({
    */
   "PATCH /herr-tablas/:id/campos/:clave/opcion": async (ctx) => {
     const { fila, spec } = await esquema(ctx);
-    const i = indice_de(spec.campos, ctx.params.clave, "La columna");
-    const campo = { ...spec.campos[i]! };
+    const lugar = ubicar(spec, ctx.params.clave);
+    const i = lugar.i;
+    const campo = { ...lugar.campos[i]! };
     if (campo.tipo !== "referencia" || !campo.tabla_ref_id) {
       falla(409, `Elige primero de qué tabla se toma «${campo.etiqueta}»`, "conflict");
     }
@@ -401,13 +510,29 @@ export const herr_tablas_disenio = define_routes({
         campo[parte] = plantilla || null;
       }
     }
-    const guardada = await guardar(ctx, fila, { ...spec, campos: spec.campos.with(i, campo) });
-    return { data: siguiente(guardada, "campo", campo.clave), message: `Así se verá «${campo.etiqueta}» al capturar` };
+    const guardada = await guardar(ctx, fila, lugar.con(lugar.campos.with(i, campo)));
+    const clave = lugar.sub ? `${lugar.sub.clave}.${campo.clave}` : campo.clave;
+    return { data: siguiente(guardada, "campo", clave), message: `Así se verá «${campo.etiqueta}» al capturar` };
   },
 
   "DELETE /herr-tablas/:id/campos/:clave": async (ctx) => {
     const { fila, spec } = await esquema(ctx);
-    const campo = spec.campos[indice_de(spec.campos, ctx.params.clave, "La columna")]!;
+    const lugar = ubicar(spec, ctx.params.clave);
+    if (lugar.sub) {
+      const sub = lugar.sub;
+      const col = lugar.campos[lugar.i]!;
+      if (lugar.campos.length === 1) falla(409, `«${sub.etiqueta}» necesita al menos una columna`, "conflict");
+      exigir_sin_uso_en_subtabla(spec, sub, col);
+      const ruta = `${sub.clave}.${col.clave}`;
+      const propias = (spec.reglas ?? []).filter((r) => !regla_usa(r, spec, spec.id, ruta));
+      const quitadas = (spec.reglas ?? []).length - propias.length;
+      const guardada = await guardar(ctx, { ...fila }, { ...lugar.con(lugar.campos.filter((c) => c !== col)), reglas: propias }, quitadas ? { reglas: propias } : {});
+      return {
+        data: siguiente(guardada, "campo", sub.clave),
+        message: `«${sub.etiqueta} › ${col.etiqueta}» quitada` + (quitadas ? ` · ${quitadas === 1 ? "se quitó 1 regla" : `se quitaron ${quitadas} reglas`}` : ""),
+      };
+    }
+    const campo = lugar.campos[lugar.i]!;
     exigir_sin_uso(spec, campo.clave, campo.etiqueta);
     await exigir_sin_uso_en_otras(ctx, spec, campo.clave, campo.etiqueta);
     const campos = spec.campos.filter((c) => c.clave !== campo.clave);

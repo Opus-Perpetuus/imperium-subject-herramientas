@@ -32,6 +32,8 @@ export type Ambito = {
   filas?(): Ambito[];
   /** Los registros de otra tabla (por nombre o id) para `tabla_*`; `{ error }` se ve en la celda. */
   tabla?(nombre: string): { filas: Ambito[] } | { error: string };
+  /** Las filas de una subtabla del registro para `sub_*`; `null` = no es una subtabla. */
+  subtabla?(nombre: string): Ambito[] | null;
   /**
    * Resultados de `sumasi`/`tabla_*` que no dependen del registro (sin
    * `{actual:…}`), compartidos entre todos los registros de una misma vista:
@@ -66,6 +68,17 @@ const FUNCIONES_TABLA: Record<string, Agregacion> = {
   tabla_maximo: "maximo",
   tabla_buscar: "buscar",
   tabla_unir: "unir",
+};
+
+/** Funciones sobre una subtabla del registro: el primer argumento es su clave (o nombre) entre comillas. */
+const FUNCIONES_SUBTABLA: Record<string, Agregacion> = {
+  sub_suma: "suma",
+  sub_cuenta: "cuenta",
+  sub_promedio: "promedio",
+  sub_minimo: "minimo",
+  sub_maximo: "maximo",
+  sub_buscar: "buscar",
+  sub_unir: "unir",
 };
 
 type Agregacion = TipoAgregado | "buscar" | "unir";
@@ -185,14 +198,15 @@ export function ambito_de(valores: Record<string, Valor>, filas: Ambito[] = []):
 
 /** Toda clave vale lo mismo y toda tabla está vacía: sirve para comprobar la sintaxis antes de tener datos. */
 export function ambito_sonda(fijo: Valor = 1): Ambito {
-  return { valor: () => fijo, filas: () => [], tabla: () => ({ filas: [] }) };
+  return { valor: () => fijo, filas: () => [], tabla: () => ({ filas: [] }), subtabla: () => [] };
 }
 
 /** Una clave que el ámbito no conoce vale vacío, no error: a media captura casi todas lo están. */
-export function evaluar(formula: string, ambito: Ambito): Resultado {
+export function evaluar(formula: string, ambito: Ambito, raiz: Ambito = ambito): Resultado {
   try {
     const arbol = analizar(formula);
-    const valor = evaluar_nodo(arbol, ambito, { raiz: ambito, profundidad: 0 });
+    // `raiz` distinta: una columna calculada de subtabla, donde `{actual:x}` es el registro padre.
+    const valor = evaluar_nodo(arbol, ambito, { raiz, profundidad: 0 });
     if (typeof valor === "number" && !Number.isFinite(valor)) {
       return { ok: false, error: "Resultado no representable" };
     }
@@ -232,6 +246,8 @@ export type Referencias = {
   enlaces: { campo: string; columna: string }[];
   /** Enlaces dentro de otra tabla: tabla → enlaces. */
   enlaces_tablas: Map<string, { campo: string; columna: string }[]>;
+  /** Subtabla propia (como se escribió en `sub_*`) → columnas suyas que se leen. */
+  subtablas: Map<string, Set<string>>;
 };
 
 /**
@@ -239,12 +255,23 @@ export type Referencias = {
  * léxico que `mapear_referencias`, así que también sirve con fórmulas a medio escribir.
  */
 export function referencias(formula: string): Referencias {
-  const r: Referencias = { propias: new Set(), directas: new Set(), tablas: new Map(), enlaces: [], enlaces_tablas: new Map() };
-  mapear_referencias(formula, (clave, tabla, en_filas) => {
+  const r: Referencias = { propias: new Set(), directas: new Set(), tablas: new Map(), enlaces: [], enlaces_tablas: new Map(), subtablas: new Map() };
+  mapear_referencias(
+    formula,
+    (clave, tabla, en_filas, sub) => {
     if (!CLAVE_VALIDA.test(clave)) return `{${clave}}`;
     const { clave: limpia, actual } = sin_actual(clave);
     const destino = actual ? null : tabla;
     const enlace = partir_enlace(limpia);
+    if (!actual && sub !== null) {
+      // Columna de cada fila de la subtabla: la de la tabla propia solo si no hay otra tabla alrededor.
+      if (tabla === null) {
+        let claves = r.subtablas.get(sub);
+        if (!claves) r.subtablas.set(sub, (claves = new Set()));
+        claves.add(limpia);
+      }
+      return `{${clave}}`;
+    }
     if (destino === null) {
       if (actual || !en_filas) r.directas.add(enlace ? enlace.campo : limpia);
       if (enlace) {
@@ -266,7 +293,17 @@ export function referencias(formula: string): Referencias {
       }
     }
     return `{${clave}}`;
-  });
+    },
+    (nombre, tipo, tabla) => {
+      // La subtabla que lee un `sub_*` de la tabla propia es una dependencia directa del registro.
+      if (tipo === "sub" && tabla === null) {
+        r.propias.add(nombre);
+        r.directas.add(nombre);
+        if (!r.subtablas.has(nombre)) r.subtablas.set(nombre, new Set());
+      }
+      return nombre;
+    },
+  );
   return r;
 }
 
@@ -291,23 +328,37 @@ export function partir_enlace(clave: string): { campo: string; columna: string }
 }
 
 /**
- * Reescribe cada `{clave}` de la fórmula con `cambiar(clave, tabla)`; `tabla` es el
- * nombre entre comillas de la `tabla_*` que la envuelve, o `null` si es de la tabla
- * propia. Respeta las cadenas: `"{x}"` no es una referencia.
+ * Reescribe cada `{clave}` de la fórmula con `cambiar(clave, tabla, en_filas, sub)`;
+ * `tabla` es el nombre entre comillas de la `tabla_*` que la envuelve, o `null` si
+ * es de la tabla propia; `sub`, el de la `sub_*` más cercana (sus `{x}` son columnas
+ * de la subtabla). `cambiar_tabla` recibe (y puede reescribir) esos nombres entre
+ * comillas. Respeta las cadenas: `"{x}"` no es una referencia.
  */
 export function mapear_referencias(
   formula: string,
-  cambiar: (clave: string, tabla: string | null, en_filas: boolean) => string,
-  cambiar_tabla?: (tabla: string) => string,
+  cambiar: (clave: string, tabla: string | null, en_filas: boolean, sub: string | null) => string,
+  cambiar_tabla?: (nombre: string, tipo: "tabla" | "sub", tabla: string | null) => string,
 ): string {
   type Marco = { funcion: string; argumento: number; tabla: string | null };
   const pila: Marco[] = [];
   let out = "";
   let i = 0;
-  const tabla_vigente = (): string | null => {
+  const es_tabla = (m: Marco) => Object.hasOwn(FUNCIONES_TABLA, m.funcion);
+  const es_sub = (m: Marco) => Object.hasOwn(FUNCIONES_SUBTABLA, m.funcion);
+  const tabla_vigente = (hasta = pila.length): string | null => {
+    for (let k = hasta - 1; k >= 0; k--) {
+      const m = pila[k]!;
+      if (es_tabla(m) && m.argumento >= 1) return m.tabla;
+    }
+    return null;
+  };
+  /** La subtabla de la `sub_*` más cercana, salvo que una `tabla_*` más adentro cambie de tabla. */
+  const sub_vigente = (): string | null => {
     for (let k = pila.length - 1; k >= 0; k--) {
       const m = pila[k]!;
-      if (Object.hasOwn(FUNCIONES_TABLA, m.funcion) && m.argumento >= 1) return m.tabla;
+      if (m.argumento < 1) continue;
+      if (es_tabla(m)) return null;
+      if (es_sub(m)) return m.tabla;
     }
     return null;
   };
@@ -325,10 +376,10 @@ export function mapear_referencias(
         }
       }
       const tope = pila[pila.length - 1];
-      if (tope && Object.hasOwn(FUNCIONES_TABLA, tope.funcion) && tope.argumento === 0 && tope.tabla === null) {
+      if (tope && (es_tabla(tope) || es_sub(tope)) && tope.argumento === 0 && tope.tabla === null) {
         tope.tabla = texto.trim();
         if (cambiar_tabla && j < formula.length) {
-          const nueva = cambiar_tabla(tope.tabla);
+          const nueva = cambiar_tabla(tope.tabla, es_sub(tope) ? "sub" : "tabla", tabla_vigente(pila.length - 1));
           if (nueva !== tope.tabla) {
             out += JSON.stringify(nueva);
             i = j + 1;
@@ -345,8 +396,8 @@ export function mapear_referencias(
         break;
       }
       const clave = formula.slice(i + 1, fin);
-      const en_filas = pila.some((m) => Object.hasOwn(FUNCIONES_FILA, m.funcion) || Object.hasOwn(FUNCIONES_TABLA, m.funcion));
-      out += /^[^{}"]*$/.test(clave) ? cambiar(clave, tabla_vigente(), en_filas) : formula.slice(i, fin + 1);
+      const en_filas = pila.some((m) => Object.hasOwn(FUNCIONES_FILA, m.funcion) || es_tabla(m) || es_sub(m));
+      out += /^[^{}"]*$/.test(clave) ? cambiar(clave, tabla_vigente(), en_filas, sub_vigente()) : formula.slice(i, fin + 1);
       i = fin + 1;
     } else if (es_letra(c)) {
       let j = i;
@@ -382,6 +433,8 @@ export function tablas_referenciadas(formula: string): Set<string> {
 
 /** Los nombres de las funciones que leen otra tabla, para la ayuda. */
 export const NOMBRES_FUNCIONES_TABLA = Object.keys(FUNCIONES_TABLA);
+/** Los nombres de las funciones que recorren una subtabla, para la ayuda. */
+export const NOMBRES_FUNCIONES_SUBTABLA = Object.keys(FUNCIONES_SUBTABLA);
 
 // #endregion
 
@@ -403,6 +456,8 @@ type Nodo =
       agregacion: Agregacion;
       /** `null` = las filas de la tabla propia. */
       tabla: string | null;
+      /** Las filas de esta subtabla del registro (`sub_*`); `null` si no es una. */
+      sub: string | null;
       valor: Nodo | null;
       condicion: Nodo | null;
       separador: Nodo | null;
@@ -640,8 +695,9 @@ class Analizador {
     if (!this.token("(")) {
       this.fallar(`«${nombre}» necesita paréntesis; si querías el texto, ponlo entre comillas: "${nombre}"`);
     }
-    if (Object.hasOwn(FUNCIONES_FILA, nombre)) return this.funcion_filas(nombre, false);
-    if (Object.hasOwn(FUNCIONES_TABLA, nombre)) return this.funcion_filas(nombre, true);
+    if (Object.hasOwn(FUNCIONES_FILA, nombre)) return this.funcion_filas(nombre, "propia");
+    if (Object.hasOwn(FUNCIONES_TABLA, nombre)) return this.funcion_filas(nombre, "tabla");
+    if (Object.hasOwn(FUNCIONES_SUBTABLA, nombre)) return this.funcion_filas(nombre, "sub");
     const args = this.argumentos(nombre);
     if (nombre === "si" || nombre === "if") {
       if (args.length !== 3) this.fallar(`«${nombre}» necesita condición, valor y alternativa`);
@@ -672,31 +728,40 @@ class Analizador {
   }
 
   /**
-   * `sumasi(valor, condición)` y `tabla_suma("Tabla", valor[, condición])`: dentro,
-   * `{x}` es la columna de CADA fila, no del registro que se calcula.
+   * `sumasi(valor, condición)`, `tabla_suma("Tabla", valor[, condición])` y
+   * `sub_suma("subtabla", valor[, condición])`: dentro, `{x}` es la columna de
+   * CADA fila, no del registro que se calcula.
    */
-  private funcion_filas(nombre: string, de_tabla: boolean): Nodo {
+  private funcion_filas(nombre: string, de: "propia" | "tabla" | "sub"): Nodo {
+    const de_tabla = de !== "propia";
     this.anidadas++;
     if (this.anidadas > MAX_PROFUNDIDAD_FILA) {
       this.fallar(`«${nombre}»: demasiadas funciones de columna anidadas`);
     }
     const args = this.argumentos(nombre);
     this.anidadas--;
-    const agregacion = (de_tabla ? FUNCIONES_TABLA : FUNCIONES_FILA)[nombre]!;
+    const agregacion = (de === "tabla" ? FUNCIONES_TABLA : de === "sub" ? FUNCIONES_SUBTABLA : FUNCIONES_FILA)[nombre]!;
     let tabla: string | null = null;
+    let sub: string | null = null;
     if (de_tabla) {
       const primero = args.shift();
       if (!primero || primero.t !== "valor" || typeof primero.v !== "string" || !primero.v.trim()) {
-        this.fallar(`«${nombre}» empieza con el nombre de la tabla entre comillas: ${nombre}("Ventas", …)`);
+        this.fallar(
+          de === "sub"
+            ? `«${nombre}» empieza con la subtabla entre comillas: ${nombre}("Productos", …)`
+            : `«${nombre}» empieza con el nombre de la tabla entre comillas: ${nombre}("Ventas", …)`,
+        );
       }
-      tabla = primero.v.trim();
+      if (de === "sub") sub = primero.v.trim();
+      else tabla = primero.v.trim();
     }
+    const quien = de === "sub" ? "la subtabla" : "la tabla";
     let valor: Nodo | null = null;
     let condicion: Nodo | null = null;
     let separador: Nodo | null = null;
     if (agregacion === "cuenta") {
       if (de_tabla ? args.length > 1 : args.length !== 1) {
-        this.fallar(de_tabla ? `«${nombre}» lleva la tabla y, si quieres, una condición` : `«${nombre}» necesita una condición`);
+        this.fallar(de_tabla ? `«${nombre}» lleva ${quien} y, si quieres, una condición` : `«${nombre}» necesita una condición`);
       }
       condicion = args[0] ?? null;
     } else {
@@ -705,14 +770,14 @@ class Analizador {
       if (args.length < min || args.length > max) {
         this.fallar(
           de_tabla
-            ? `«${nombre}» lleva la tabla, el valor y, si quieres, una condición${agregacion === "unir" ? " y un separador" : ""}`
+            ? `«${nombre}» lleva ${quien}, el valor y, si quieres, una condición${agregacion === "unir" ? " y un separador" : ""}`
             : `«${nombre}» necesita un valor y una condición${agregacion === "unir" ? " (y, si quieres, un separador)" : ""}`,
         );
       }
       [valor, condicion = null, separador = null] = args as [Nodo, Nodo?, Nodo?];
     }
     return {
-      t: "filas", nombre, agregacion, tabla, valor, condicion, separador,
+      t: "filas", nombre, agregacion, tabla, sub, valor, condicion, separador,
       usa_actual: usa_actual(valor) || usa_actual(condicion) || usa_actual(separador),
     };
   }
@@ -807,12 +872,17 @@ function evaluar_filas(n: Extract<Nodo, { t: "filas" }>, ambito: Ambito, ctx: Co
     throw new ErrorFormula(`«${n.nombre}»: demasiadas funciones de columna anidadas`);
   }
   // Las filas propias dependen de quién pregunta salvo en el nivel de arriba.
-  const compartible = !n.usa_actual && (n.tabla !== null || ctx.profundidad === 0);
+  // Las de una subtabla son del registro (o de la fila) que pregunta: nunca se comparten.
+  const compartible = !n.usa_actual && n.sub === null && (n.tabla !== null || ctx.profundidad === 0);
   const compartido = ctx.raiz.compartido;
   if (compartible && compartido?.has(n)) return compartido.get(n)!;
 
   let filas: Ambito[];
-  if (n.tabla === null) {
+  if (n.sub !== null) {
+    const sub = ambito.subtabla ? ambito.subtabla(n.sub) : [];
+    if (sub === null) throw new ErrorFormula(`«${n.sub}» no es una subtabla de este registro`);
+    filas = sub;
+  } else if (n.tabla === null) {
     filas = ambito.filas?.() ?? [];
   } else {
     const t = ctx.raiz.tabla?.(n.tabla) ?? { error: `No se puede leer la tabla «${n.tabla}» aquí` };

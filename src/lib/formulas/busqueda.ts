@@ -1,4 +1,5 @@
 import type { TablaSpec } from "./esquema.ts";
+import { texto_buscable_subtabla } from "./subtabla.ts";
 
 /**
  * Índice invertido para buscar en los registros de una tabla: token → ids.
@@ -93,8 +94,9 @@ export function texto_buscable(
   const excluidos = new Set(
     (spec?.campos ?? []).filter((c) => NO_INDEXABLES.has(c.tipo)).map((c) => c.clave),
   );
+  const subtablas = new Set((spec?.campos ?? []).filter((c) => c.tipo === "subtabla").map((c) => c.clave));
   const propios = Object.entries(valores)
     .filter(([clave]) => !excluidos.has(clave))
-    .map(([, v]) => v);
+    .map(([clave, v]) => (subtablas.has(clave) ? texto_buscable_subtabla(v) : v));
   return [...propios, ...Object.values(extras)].filter((v) => v && v.trim()).join(" ");
 }

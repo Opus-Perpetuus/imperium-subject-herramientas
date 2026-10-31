@@ -28,7 +28,18 @@ import {
 } from "../../lib/formulas/esquema.ts";
 import { ESCANER_VACIO, FORMATOS_ESCANER, MOSTRAR_ESCANER, TIPOS_DESTINO_ESCANER } from "../../lib/formulas/escaner.ts";
 import { ACCIONES_ESCANEO, TIPOS_COLUMNA_ESCANEO, columna_de_escaneo } from "../../lib/formulas/escaneo.ts";
-import { ACCIONES_REGLA, DESTINOS_REGLA, MAX_REGLAS, TIPOS_CANTIDAD, TIPOS_CODIGO_REGLA, tabla_destino_de, type DestinoRegla, type ReglaEscaneo } from "../../lib/formulas/reglas.ts";
+import {
+  ACCIONES_REGLA,
+  DESTINOS_REGLA,
+  MAX_REGLAS,
+  MODOS_SUBTABLA,
+  TIPOS_CANTIDAD,
+  TIPOS_CODIGO_REGLA,
+  tabla_destino_de,
+  type DestinoRegla,
+  type ReglaEscaneo,
+} from "../../lib/formulas/reglas.ts";
+import { MODOS_REF_SUBTABLA, TIPOS_SUBCOLUMNA, columnas_de, spec_de_subtabla } from "../../lib/formulas/subtabla.ts";
 import { parsear_agregado } from "../../lib/formulas/motor.ts";
 import { COMPARADORES, HUECO, MAX_CONDICIONES, QUE_HACER, opciones_columnas } from "../../lib/formulas/constructor.ts";
 import { columna_unica, plantilla_con_etiquetas } from "../../lib/formulas/plantilla.ts";
@@ -81,10 +92,13 @@ function menu(name: string, label: string, options: Array<{ value: string; label
   return nodo("nox.input-menu", { name, label, options, ...extra });
 }
 
-function opciones_tipo(con_automatico: boolean): Array<{ value: string; label: string }> {
+function opciones_tipo(con_automatico: boolean, en_subtabla = false): Array<{ value: string; label: string }> {
   return [
     ...(con_automatico ? [{ value: TIPO_AUTOMATICO, label: "Que se adivine por el nombre" }] : []),
-    ...ORDEN_TIPOS.map((t) => ({ value: t, label: `${TIPOS_UI[t].nombre} — ${TIPOS_UI[t].ayuda}` })),
+    ...ORDEN_TIPOS.filter((t) => !en_subtabla || TIPOS_SUBCOLUMNA.has(t)).map((t) => ({
+      value: t,
+      label: `${TIPOS_UI[t].nombre} — ${TIPOS_UI[t].ayuda}`,
+    })),
   ];
 }
 
@@ -219,6 +233,15 @@ function detalle_columna(spec: TablaSpec, campo: CampoSpec, tablas: Map<string, 
       label: "Enlaza con",
       value: destino ? (mostrar ? `${destino.name} › ${mostrar}` : destino.name) : "Sin tabla: toca Editar",
     });
+  }
+  if (campo.tipo === "subtabla") {
+    const cols = columnas_de(campo);
+    items.push({ label: "Columnas", value: cols.length ? lista_corta(cols.map((c) => c.etiqueta)) : "Sin columnas: toca Editar" });
+  }
+  if (campo.tipo === "referencia" && campo.ref_subtabla) {
+    const destino = campo.tabla_ref_id ? tablas.get(campo.tabla_ref_id) : undefined;
+    const sub = destino?.campos.find((c) => c.clave === campo.ref_subtabla);
+    items.push({ label: "Elige", value: `${MODOS_REF_SUBTABLA[campo.ref_subtabla_modo ?? "whole"]}: «${sub?.etiqueta ?? campo.ref_subtabla}»` });
   }
   const marcas = [campo.requerido ? "Obligatoria" : "", campo.en_resumen ? "Se ve en la lista" : ""].filter(Boolean);
   if (marcas.length) items.push({ label: "Captura", value: marcas.join(" · ") });
@@ -364,6 +387,10 @@ function ayuda_formula(spec: TablaSpec, extra = "", excepto?: string, otras: Tab
     "Solo las filas que cumplen: sumasi({Monto}, {Estado} = \"Pagado\"); también cuentasi, promediosi, minimosi, maximosi, buscarsi y unirsi.",
     "De otra tabla: tabla_suma(\"Ventas\", {Cantidad}, {Producto} = {actual:Nombre}) — dentro, {Columna} es de esa tabla y {actual:Columna} de este registro; también tabla_cuenta, tabla_promedio, tabla_minimo, tabla_maximo, tabla_buscar y tabla_unir.",
     "De un enlace: {Cliente.Teléfono}.",
+    spec.campos.some((c) => c.tipo === "subtabla")
+      ? "De una subtabla: {Productos} es cuántas filas tiene, {Productos.Importe} junta la columna (suma si son números), {Productos.ultima.Nombre} o {Productos.1.Nombre} una fila; " +
+        "sub_suma(\"Productos\", {Cantidad} * {Precio}, {Tipo} = \"Bebida\" o {Precio} > 100) — dentro, {Columna} es de cada fila y {actual:Columna} de este registro; también sub_cuenta, sub_promedio, sub_minimo, sub_maximo, sub_buscar y sub_unir."
+      : "",
     tablas.length ? `Otras tablas: ${lista_corta(tablas, 8)}.` : "",
   ]
     .filter(Boolean)
@@ -535,7 +562,28 @@ export function describir_regla(regla: ReglaEscaneo, spec: TablaSpec, tablas: Ma
     nuevo_padre: `un registro nuevo de «${destino?.name ?? "la tabla padre"}»`,
     nuevo: `un registro nuevo de «${destino?.name ?? "otra tabla"}»`,
     existente_o_nuevo: `el registro de «${destino?.name ?? "otra tabla"}» con ese código (o uno nuevo)`,
+    subtabla: "",
   };
+  if (regla.destino === "subtabla") {
+    const sub = spec.campos.find((c) => c.clave === regla.subtabla);
+    const sc = (clave: string | null) => (clave ? (columnas_de(sub ?? { columnas: [] }).find((c) => c.clave === clave)?.etiqueta ?? clave) : "");
+    const origen = t(regla.tabla_origen);
+    const copias = (regla.copiar ?? []).map((c) => `«${col(origen, c.de)}» → «${sc(c.a)}»`);
+    const como =
+      regla.modo_subtabla === "agregar" || !regla.columna_codigo
+        ? "agrega una fila"
+        : `si ya hay una fila con ese código en «${sc(regla.columna_codigo)}», ${ACCIONES_REGLA[regla.accion].split(" ")[0]!.toLowerCase()} ${cantidad} en su «${sc(regla.columna)}»; si no, agrega una fila`;
+    const detalles = [
+      regla.columna_codigo ? `el código va en «${sc(regla.columna_codigo)}»` : "",
+      origen ? "copia las columnas de igual nombre del registro del código" : "",
+      copias.length ? `y también ${copias.join(", ")}` : "",
+    ].filter(Boolean);
+    return (
+      `${cuando.length ? `Si ${cuando.join(" y ")}` : "Con cualquier código"}: en la subtabla «${sub?.etiqueta ?? regla.subtabla}» del registro abierto ${como}` +
+      (detalles.length ? ` (${detalles.join("; ")})` : "") +
+      "."
+    );
+  }
   const extra = [
     regla.columna_codigo ? `el código va en «${col(destino, regla.columna_codigo)}»` : "",
     regla.enlace_actual ? `«${col(destino, regla.enlace_actual)}» apunta al registro abierto` : "",
@@ -553,6 +601,14 @@ function seccion_reglas(spec: TablaSpec, tablas: Map<string, TablaSpec>): NoxUiN
   const todas = [spec, ...[...tablas.values()].filter((t) => t.id !== spec.id)];
   const columnas = (filtro: (c: CampoSpec, t: TablaSpec) => boolean) =>
     todas.flatMap((t) => t.campos.filter((c) => filtro(c, t)).map((c) => ({ value: `${t.id}.${c.clave}`, label: `${t.name} · ${c.etiqueta}` })));
+  const subtablas = spec.campos.filter((c) => c.tipo === "subtabla");
+  /** Columnas de las subtablas de esta tabla (destino «subtabla»): `<tabla>.<subtabla>.<columna>`. */
+  const subcolumnas = (filtro: (c: CampoSpec) => boolean) =>
+    subtablas.flatMap((sub) =>
+      columnas_de(sub)
+        .filter(filtro)
+        .map((c) => ({ value: `${spec.id}.${sub.clave}.${c.clave}`, label: `${sub.etiqueta} › ${c.etiqueta}` })),
+    );
   const ninguna = (label: string) => [{ value: "", label }];
   const out: NoxUiNode[] = [
     nodo("nox.markdown-view", {
@@ -606,8 +662,17 @@ function seccion_reglas(spec: TablaSpec, tablas: Map<string, TablaSpec>): NoxUiN
             { value: "" },
           ),
           menu("tabla_destino", "Otra tabla", [...ninguna("— (solo para otra tabla)"), ...todas.map((t) => ({ value: t.id, label: t.name }))], { value: "" }),
-          menu("columna", "Columna de la cantidad", columnas((c) => TIPOS_CANTIDAD.has(c.tipo)), { required: true }),
-          menu("columna_codigo", "Anotar el código en", [...ninguna("En ninguna columna"), ...columnas((c) => TIPOS_CODIGO_REGLA.has(c.tipo))], {
+          ...(subtablas.length
+            ? [
+                menu("subtabla", "Subtabla del registro abierto", [...ninguna("— (solo para una subtabla)"), ...subtablas.map((c) => ({ value: c.clave, label: c.etiqueta }))], {
+                  value: "",
+                  help: "Con «Una fila de una subtabla»: cada código agrega una fila (o cambia la cantidad de la que ya lo tiene) sin perder lo que no has guardado.",
+                }),
+                menu("modo_subtabla", "Si la fila ya está", Object.entries(MODOS_SUBTABLA).map(([value, label]) => ({ value, label })), { value: "sumar_o_agregar" }),
+              ]
+            : []),
+          menu("columna", "Columna de la cantidad", [...columnas((c) => TIPOS_CANTIDAD.has(c.tipo)), ...subcolumnas((c) => TIPOS_CANTIDAD.has(c.tipo))], { required: true }),
+          menu("columna_codigo", "Anotar el código en", [...ninguna("En ninguna columna"), ...columnas((c) => TIPOS_CODIGO_REGLA.has(c.tipo)), ...subcolumnas((c) => TIPOS_CODIGO_REGLA.has(c.tipo))], {
             value: "",
             help: "En un registro nuevo; con «el que ya tenga ese código», es por donde se busca. Un enlace guarda el registro del código.",
           }),
@@ -617,6 +682,19 @@ function seccion_reglas(spec: TablaSpec, tablas: Map<string, TablaSpec>): NoxUiN
             [...ninguna("No enlazar"), ...columnas((c, t) => t.id !== spec.id && c.tipo === "referencia" && c.tabla_ref_id === spec.id)],
             { value: "" },
           ),
+          ...(subtablas.length
+            ? [
+                titulo("Fila nueva de la subtabla"),
+                nodo("nox.markdown-view", {
+                  content:
+                    "La fila nueva toma del registro del código las columnas que se llaman igual (Nombre, Precio…). Si alguna se llama distinto, elígela aquí.",
+                }),
+                ...[1, 2, 3].flatMap((n) => [
+                  menu(`copiar_de_${n}`, `Copiar ${n}: esta columna del código…`, [...ninguna("—"), ...columnas((c, t) => t.id !== spec.id && c.tipo !== "subtabla")], { value: "" }),
+                  menu(`copiar_a_${n}`, `…a esta columna de la fila`, [...ninguna("—"), ...subcolumnas((c) => c.tipo !== "calculado")], { value: "" }),
+                ]),
+              ]
+            : []),
           boton("Agregar regla", { icon: "fa-plus" }),
         ],
       ),
@@ -806,7 +884,10 @@ function entradas_de_tipo(spec: TablaSpec, campo: CampoSpec, tablas: Map<string,
           help: "Al capturar se elige un registro de esa tabla. Al guardar decides qué se ve de cada uno.",
         }),
         nodo("nox.input-checkbox", { name: "multiple", label: "Se pueden elegir varios", value: campo.multiple === true }),
+        ...menus_ref_subtabla(campo, tablas),
       ];
+    case "subtabla":
+      return [];
     case "calculado": {
       const datos = opciones_numericas(spec, campo.clave);
       const otras = [...tablas.values()];
@@ -902,6 +983,26 @@ function entradas_de_tipo(spec: TablaSpec, campo: CampoSpec, tablas: Map<string,
 }
 
 /**
+ * Si la tabla enlazada tiene subtablas: elegir el registro con su subtabla
+ * completa o una sola fila suya (`<registro>~<fila>`).
+ */
+function menus_ref_subtabla(campo: CampoSpec, tablas: Map<string, TablaSpec>): NoxUiNode[] {
+  const destino = campo.tabla_ref_id ? tablas.get(campo.tabla_ref_id) : undefined;
+  const subs = destino?.campos.filter((c) => c.tipo === "subtabla") ?? [];
+  if (!subs.length) return [];
+  return [
+    menu("ref_subtabla", "Su subtabla", [{ value: "", label: "No: solo el registro" }, ...subs.map((c) => ({ value: c.clave, label: c.etiqueta }))], {
+      value: campo.ref_subtabla ?? "",
+      help: "Para usar en cálculos sus columnas: {Enlace.Columna}.",
+    }),
+    menu("ref_subtabla_modo", "Qué se elige", Object.entries(MODOS_REF_SUBTABLA).map(([value, label]) => ({ value, label })), {
+      value: campo.ref_subtabla_modo ?? "whole",
+      help: "«Una fila»: al capturar se elige un renglón de la subtabla de algún registro (p. ej. un producto de una venta).",
+    }),
+  ];
+}
+
+/**
  * «Tomar de otra tabla o con condiciones»: arma `tabla_suma(…)` o `sumasi(…)`
  * sin escribirlos. Lo armado reemplaza la fórmula (o entra en su `{?}`); para
  * anidar más se edita la fórmula que queda.
@@ -989,8 +1090,8 @@ async function vista_opcion(data: Datos, spec: TablaSpec, campo: CampoSpec, dest
  * Elegir una columna y escribir una plantilla son dos formularios: cada uno
  * guarda lo que enseña, sin adivinar cuál de los dos se quiso.
  */
-async function seccion_opcion(data: Datos, spec: TablaSpec, campo: CampoSpec, destino: TablaSpec): Promise<NoxUiNode[]> {
-  const action = `api://herr-tablas/${spec.id}/campos/${campo.clave}/opcion`;
+async function seccion_opcion(data: Datos, spec: TablaSpec, campo: CampoSpec, destino: TablaSpec, ruta = campo.clave): Promise<NoxUiNode[]> {
+  const action = `api://herr-tablas/${spec.id}/campos/${ruta}/opcion`;
   const columnas = destino.campos.filter((c) => !TIPOS_FOTO.has(c.tipo));
   const fotos = destino.campos.filter((c) => TIPOS_FOTO.has(c.tipo));
   const nombres = columnas.map((c) => `{${c.etiqueta}}`);
@@ -1097,23 +1198,85 @@ function tarjeta_escanear(action: string, campo: CampoSpec, destino: TablaSpec):
   ]);
 }
 
-export async function pagina_campo(data: Datos, spec: TablaSpec, clave: string): Promise<NoxPageDescriptor> {
-  const campo = spec.campos.find((c) => c.clave === clave);
-  const disenar = href_tabla(spec.id, { modo: "disenar" });
-  const hijos: NoxUiNode[] = [migas(["Mis tablas", HOJA], [spec.name, href_tabla(spec.id)], ["Diseñar", disenar])];
+/** Las columnas de una subtabla: cada una con su editor, y el formulario para agregar otra. */
+function seccion_subtabla(spec: TablaSpec, sub: CampoSpec, tablas: Map<string, TablaSpec>): NoxUiNode[] {
+  const base = `api://herr-tablas/${spec.id}/campos`;
+  const sspec = spec_de_subtabla(spec, sub);
+  const columnas = columnas_de(sub);
+  return [
+    titulo("Columnas de la subtabla"),
+    nodo("nox.markdown-view", {
+      content:
+        "Cada registro tiene sus propias filas con estas columnas (texto, números, dinero, listas, enlaces, cálculos…). " +
+        "Un cálculo de la subtabla se hace en cada fila: {Cantidad} × {Precio}. En los cálculos del registro: " +
+        `{${sub.etiqueta}.Columna} junta la columna y sub_suma("${sub.etiqueta}", …) suma con condiciones.`,
+    }),
+    nodo(
+      "nox.stack",
+      { layout: "grid" },
+      columnas.map((c) =>
+        nodo("nox.detail", { text: c.etiqueta, items: detalle_columna(sspec, c, tablas) }, [
+          nodo("nox.toolbar", {}, [
+            boton("Editar", { href: href_tabla(spec.id, { modo: "campo", campo: `${sub.clave}.${c.clave}` }), icon: "fa-pen" }),
+            boton("Quitar", {
+              method: "DELETE",
+              action: `${base}/${sub.clave}.${c.clave}`,
+              then: THEN_DISENO,
+              confirm: `¿Quitar la columna «${c.etiqueta}» de «${sub.etiqueta}»?`,
+              icon: "fa-trash",
+              variant: "ghost",
+            }),
+          ]),
+        ]),
+      ),
+    ),
+    nodo("nox.card", { title: `Agregar columna a «${sub.etiqueta}»` }, [
+      nodo("nox.form", { method: "POST", action: base, then: THEN_DISENO }, [
+        nodo("nox.input-hidden", { name: "subtabla", value: sub.clave }),
+        nodo("nox.input-text", {
+          name: "etiqueta",
+          label: "Nombre de la columna",
+          placeholder: "Ej.: Producto, Cantidad, Precio",
+          required: true,
+          help: "Varias a la vez: sepáralas con comas.",
+        }),
+        menu("tipo", "¿Qué guarda?", opciones_tipo(true, true), { value: TIPO_AUTOMATICO }),
+        boton("Agregar", { icon: "fa-plus" }),
+      ]),
+    ]),
+  ];
+}
+
+export async function pagina_campo(data: Datos, spec_tabla: TablaSpec, clave: string): Promise<NoxPageDescriptor> {
+  // `subtabla.columna`: una columna de una subtabla, editada con el mismo editor.
+  const punto = clave.indexOf(".");
+  const sub = punto > 0 ? spec_tabla.campos.find((c) => c.tipo === "subtabla" && c.clave === clave.slice(0, punto)) : undefined;
+  const spec = sub ? spec_de_subtabla(spec_tabla, sub) : spec_tabla;
+  const lista = sub ? columnas_de(sub) : spec_tabla.campos;
+  const campo = lista.find((c) => c.clave === (sub ? clave.slice(punto + 1) : clave));
+  const ruta = sub && campo ? `${sub.clave}.${campo.clave}` : (campo?.clave ?? clave);
+  const disenar = href_tabla(spec_tabla.id, { modo: "disenar" });
+  const hijos: NoxUiNode[] = [
+    migas(
+      ["Mis tablas", HOJA],
+      [spec_tabla.name, href_tabla(spec_tabla.id)],
+      ["Diseñar", disenar],
+      ...(sub ? [[sub.etiqueta, href_tabla(spec_tabla.id, { modo: "campo", campo: sub.clave })] as [string, string]] : []),
+    ),
+  ];
   if (!campo) {
     hijos.push(nodo("nox.empty", { text: "La columna ya no existe" }, [boton("Volver al diseño", { href: disenar, icon: "fa-arrow-left" })]));
     return pagina(ID_TABLA, spec.name, hijos);
   }
   const tipo = TIPOS_UI[campo.tipo];
   hijos.push(nodo("nox.markdown-view", { content: `**${tipo?.nombre ?? campo.tipo}**: ${tipo?.ayuda ?? ""}` }));
-  const previa = await vista_previa(data, spec, campo);
+  const previa = sub ? null : await vista_previa(data, spec, campo);
   if (previa) hijos.push(previa);
-  const otras = spec.campos.filter((c) => c.clave !== campo.clave);
+  const otras = lista.filter((c) => c.clave !== campo.clave);
   const tablas = await tablas_por_id(data);
   const entradas: NoxUiNode[] = [
     nodo("nox.input-text", { name: "etiqueta", label: "Nombre", value: campo.etiqueta, required: true }),
-    menu("tipo", "Qué guarda", opciones_tipo(false), {
+    menu("tipo", "Qué guarda", opciones_tipo(false, !!sub), {
       value: campo.tipo,
       help: "Si cambias el tipo, al guardar verás sus ajustes.",
     }),
@@ -1132,7 +1295,13 @@ export async function pagina_campo(data: Datos, spec: TablaSpec, clave: string):
   if (campo.tipo !== "calculado") {
     entradas.push(nodo("nox.input-checkbox", { name: "requerido", label: "Obligatoria: no se guarda sin ella", value: campo.requerido === true }));
   }
-  entradas.push(nodo("nox.input-checkbox", { name: "en_resumen", label: "Se ve en la lista de registros", value: campo.en_resumen === true }));
+  entradas.push(
+    nodo("nox.input-checkbox", {
+      name: "en_resumen",
+      label: sub ? `Se ve en el resumen de «${sub.etiqueta}» en la lista` : "Se ve en la lista de registros",
+      value: campo.en_resumen === true,
+    }),
+  );
   if (otras.length) {
     entradas.push(
       menu(
@@ -1142,33 +1311,35 @@ export async function pagina_campo(data: Datos, spec: TablaSpec, clave: string):
           value: String(p),
           label: p === 0 ? "Al principio" : `Después de «${otras[p - 1]!.etiqueta}»`,
         })),
-        { value: String(spec.campos.indexOf(campo)) },
+        { value: String(lista.indexOf(campo)) },
       ),
     );
   }
   hijos.push(
     nodo(
       "nox.form",
-      { method: "PATCH", action: `api://herr-tablas/${spec.id}/campos/${campo.clave}`, then: THEN_DISENO },
+      { method: "PATCH", action: `api://herr-tablas/${spec_tabla.id}/campos/${ruta}`, then: THEN_DISENO },
       [...entradas, boton("Guardar columna", { icon: "fa-floppy-disk" })],
     ),
   );
+  if (campo.tipo === "subtabla") hijos.push(...seccion_subtabla(spec_tabla, campo, tablas));
   const destino = campo.tipo === "referencia" && campo.tabla_ref_id ? tablas.get(campo.tabla_ref_id) : undefined;
-  if (destino) hijos.push(...(await seccion_opcion(data, spec, campo, destino)));
+  if (destino) hijos.push(...(await seccion_opcion(data, spec_tabla, campo, destino, ruta)));
+  const volver = sub ? href_tabla(spec_tabla.id, { modo: "campo", campo: sub.clave }) : disenar;
   hijos.push(
     nodo("nox.toolbar", {}, [
-      boton("Volver", { href: disenar, icon: "fa-arrow-left" }),
+      boton("Volver", { href: volver, icon: "fa-arrow-left" }),
       boton("Quitar columna", {
         method: "DELETE",
-        action: `api://herr-tablas/${spec.id}/campos/${campo.clave}`,
+        action: `api://herr-tablas/${spec_tabla.id}/campos/${ruta}`,
         confirm: `¿Quitar la columna «${campo.etiqueta}»? Lo ya capturado en ella deja de verse.`,
-        then: `${ID_TABLA}?id=${spec.id}&modo=disenar`,
+        then: sub ? `${ID_TABLA}?id=${spec_tabla.id}&modo=campo&campo=${sub.clave}` : `${ID_TABLA}?id=${spec_tabla.id}&modo=disenar`,
         icon: "fa-trash",
         variant: "ghost",
       }),
     ]),
   );
-  return pagina(ID_TABLA, `${campo.etiqueta} · ${spec.name}`, hijos);
+  return pagina(ID_TABLA, `${campo.etiqueta} · ${spec_tabla.name}`, hijos);
 }
 
 // #endregion

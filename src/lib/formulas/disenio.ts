@@ -1,6 +1,7 @@
 import { clave_desde_etiqueta, normalizar, texto } from "../comun.ts";
 import { mapear_referencias, parsear_agregado, PREFIJO_ACTUAL, TIPOS_AGREGADO, type TipoAgregado } from "./motor.ts";
 import { buscar_tabla, type CampoSpec, type ParteRef, type ResumenTabla, type TablaSpec, type TipoCampo } from "./esquema.ts";
+import { partir_ruta, spec_de_subtabla, subtabla_de } from "./subtabla.ts";
 
 /**
  * Diseñador de tablas para quien no programa: tipos con nombre de todos los
@@ -30,6 +31,7 @@ export const TIPOS_UI: Record<TipoCampo, TipoUi> = {
   nivel: { nombre: "Medidor", icono: "fa-gauge", ayuda: "Nivel de un tanque: 3 de 6 rayas" },
   ruta: { nombre: "Ruta GPS", icono: "fa-route", ayuda: "Una ruta registrada con el teléfono" },
   codigo: { nombre: "Código (escáner)", icono: "fa-barcode", ayuda: "QR o código de barras con la cámara o un lector" },
+  subtabla: { nombre: "Subtabla", icono: "fa-table-list", ayuda: "Una tabla dentro de cada registro: renglones con sus propias columnas" },
 };
 
 /** Valor del selector de tipo que deja que el nombre decida. */
@@ -207,6 +209,8 @@ export function campo_nuevo(
     unidad_de: null,
     ref_foto: null,
     ref_foto_en_tabla: false,
+    // Una subtabla nace con una columna para que ya se pueda capturar.
+    ...(tipo === "subtabla" ? { columnas: [campo_nuevo({ campos: [], constantes: [] } as unknown as TablaSpec, { etiqueta: "Descripción", tipo: "texto" })] } : {}),
   };
 }
 
@@ -247,6 +251,7 @@ export function necesita_ajustes(campo: CampoSpec): boolean {
   if (campo.tipo === "opcion") return !campo.opciones?.length;
   if (campo.tipo === "calculado") return !campo.formula || campo.formula === "0";
   if (campo.tipo === "referencia") return !campo.tabla_ref_id;
+  if (campo.tipo === "subtabla") return !campo.columnas?.length;
   return false;
 }
 
@@ -273,8 +278,14 @@ function traducir_llaves(
   traducir: (en: TablaSpec, nombre: string) => string | null,
   partir: (en: TablaSpec, nombre: string) => Array<[string, string]>,
   nombre_tabla: (t: TablaSpec) => string,
+  nombre_sub: (c: CampoSpec) => string,
 ): string {
   const todas = otras.some((t) => t.id === spec.id) ? otras : [spec, ...otras];
+  const tabla_de = (nombre: string | null): TablaSpec | null => {
+    if (nombre === null) return spec;
+    const otra = buscar_tabla(todas, nombre);
+    return "error" in otra ? null : otra;
+  };
   const enlazada = (en: TablaSpec, campo: string): TablaSpec | null => {
     const c = en.campos.find((x) => x.clave === campo);
     if (c?.tipo !== "referencia" || !c.tabla_ref_id) return null;
@@ -287,20 +298,43 @@ function traducir_llaves(
     if (directa !== null) return directa;
     for (const [izq, der] of partir(en, dentro.trim())) {
       const campo = traducir(en, izq);
+      const c = campo === null ? undefined : en.campos.find((x) => x.clave === campo);
+      if (c?.tipo === "subtabla") return `${campo}.${ruta_en(spec_de_subtabla(en, c), der, traducir)}`;
       const destino = campo === null ? null : enlazada(en, campo);
-      if (destino) return `${campo}.${traducir(destino, der) ?? der}`;
+      if (!destino) continue;
+      const propia = traducir(destino, der);
+      if (propia !== null) return `${campo}.${propia}`;
+      const sub = c?.ref_subtabla ? subtabla_de(destino, c.ref_subtabla) : undefined;
+      return `${campo}.${sub ? ruta_en(spec_de_subtabla(destino, sub), der, traducir) : der}`;
     }
     return dentro.trim();
   };
-  return mapear_referencias(formula, (dentro, tabla) => {
+  return mapear_referencias(formula, (dentro, tabla, _en_filas, sub) => {
     if (dentro.toLowerCase().startsWith(PREFIJO_ACTUAL)) return `{${PREFIJO_ACTUAL}${una(spec, dentro.slice(PREFIJO_ACTUAL.length))}}`;
-    if (tabla === null) return `{${una(spec, dentro)}}`;
-    const otra = buscar_tabla(todas, tabla);
-    return "error" in otra ? `{${dentro}}` : `{${una(otra, dentro)}}`;
-  }, (tabla) => {
-    const otra = buscar_tabla(todas, tabla);
-    return "error" in otra ? tabla : nombre_tabla(otra);
+    const en = tabla_de(tabla);
+    if (!en) return `{${dentro}}`;
+    // Dentro de `sub_suma("Productos", …)` las llaves son columnas de esa subtabla (o del registro).
+    const campo_sub = sub === null ? undefined : subtabla_de(en, sub);
+    return `{${una(campo_sub ? spec_de_subtabla(en, campo_sub) : en, dentro)}}`;
+  }, (nombre, tipo, tabla) => {
+    if (tipo === "sub") {
+      const en = tabla_de(tabla);
+      const c = en ? subtabla_de(en, nombre) : undefined;
+      return c ? nombre_sub(c) : nombre;
+    }
+    const otra = buscar_tabla(todas, nombre);
+    return "error" in otra ? nombre : nombre_tabla(otra);
   });
+}
+
+/** `Última.Cantidad` en una subtabla: la fila elegida queda, la columna se traduce. */
+function ruta_en(sub: TablaSpec, ruta: string, traducir: (en: TablaSpec, nombre: string) => string | null): string {
+  const directa = traducir(sub, ruta);
+  if (directa !== null) return directa;
+  const { row, column } = partir_ruta(ruta);
+  if (row === "all") return ruta;
+  const fila = row === "first" ? "primera" : row === "last" ? "ultima" : String(row);
+  return `${fila}.${traducir(sub, column) ?? column}`;
 }
 
 /** `Cliente.Teléfono` → cada forma de partirlo por un punto (las etiquetas pueden llevar puntos). */
@@ -334,7 +368,7 @@ export function formula_con_claves(spec: TablaSpec, entrada: string, otras: Tabl
   };
   const con_signos = fuera_de_comillas(texto(entrada), (p) => p.replace(/×/g, "*").replace(/÷/g, "/"));
   // Se guarda el id de la otra tabla: renombrarla no rompe la fórmula.
-  return traducir_llaves(spec, otras, con_signos, traducir, (_en, nombre) => partes_por_punto(nombre), (t) => t.id);
+  return traducir_llaves(spec, otras, con_signos, traducir, (_en, nombre) => partes_por_punto(nombre), (t) => t.id, (c) => c.clave);
 }
 
 /** La inversa, para enseñar una fórmula guardada: `{suma:pagado}` → `{suma:Abono}`. */
@@ -352,8 +386,13 @@ export function formula_con_etiquetas(spec: TablaSpec, formula: string, otras: T
     if (directa !== null) return directa;
     for (const [campo, columna] of partir(nombre)) {
       const c = en.campos.find((x) => x.clave === campo);
+      if (c?.tipo === "subtabla") return `${c.etiqueta}.${ruta_en(spec_de_subtabla(en, c), columna, traducir)}`;
       const destino = c?.tipo === "referencia" ? todas.find((t) => t.id === c.tabla_ref_id) : undefined;
-      if (c && destino) return `${c.etiqueta}.${traducir(destino, columna) ?? columna}`;
+      if (!c || !destino) continue;
+      const propia = traducir(destino, columna);
+      if (propia !== null) return `${c.etiqueta}.${propia}`;
+      const sub = c.ref_subtabla ? subtabla_de(destino, c.ref_subtabla) : undefined;
+      return `${c.etiqueta}.${sub ? ruta_en(spec_de_subtabla(destino, sub), columna, traducir) : columna}`;
     }
     return null;
   };
@@ -362,7 +401,7 @@ export function formula_con_etiquetas(spec: TablaSpec, formula: string, otras: T
     const r = buscar_tabla(todas, t.name);
     return "error" in r || r.id !== t.id ? t.id : t.name;
   };
-  return traducir_llaves(spec, otras, texto(formula), por_clave, () => [], nombre_unico);
+  return traducir_llaves(spec, otras, texto(formula), por_clave, () => [], nombre_unico, (c) => c.etiqueta);
 }
 
 /** Mensajes de validación con los nombres que ve la persona, no las claves. */

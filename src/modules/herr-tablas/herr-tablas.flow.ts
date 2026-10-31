@@ -43,6 +43,7 @@ import {
 import { ordenar } from "../../lib/formulas/orden.ts";
 import { rellenar_plantilla } from "../../lib/formulas/plantilla.ts";
 import { plantilla_de, plantillas } from "../../lib/formulas/plantillas.ts";
+import { columnas_de, filas_de_subtabla, id_elemento, resumen_subtabla, spec_de_subtabla } from "../../lib/formulas/subtabla.ts";
 import { con_unidad, nodo } from "./herr-tablas.nox.ts";
 
 type Datos = Pick<KirletCtx, "data">;
@@ -139,16 +140,25 @@ type CacheTablas = {
 function lo_que_lee(spec: TablaSpec): { nombres: Set<string>; enlaces: Set<string> } {
   const nombres = new Set<string>();
   const enlaces = new Set<string>();
-  const formulas = [
-    ...spec.campos.filter((c) => c.tipo === "calculado").map((c) => c.formula ?? ""),
-    ...spec.resumenes.map((r) => r.formula),
+  // Los cálculos de cada fila de una subtabla se leen contra sus columnas (y las del registro).
+  const formulas: Array<[TablaSpec, string]> = [
+    ...spec.campos.filter((c) => c.tipo === "calculado").map((c): [TablaSpec, string] => [spec, c.formula ?? ""]),
+    ...spec.resumenes.map((r): [TablaSpec, string] => [spec, r.formula]),
+    ...spec.campos
+      .filter((c) => c.tipo === "subtabla")
+      .flatMap((sub) => {
+        const en = spec_de_subtabla(spec, sub);
+        return columnas_de(sub)
+          .filter((c) => c.tipo === "calculado")
+          .map((c): [TablaSpec, string] => [en, c.formula ?? ""]);
+      }),
   ];
-  for (const f of formulas) {
+  for (const [en, f] of formulas) {
     if (!f.includes("tabla_") && !f.includes(".")) continue;
     const refs = referencias(f);
     for (const n of refs.tablas.keys()) nombres.add(n);
     for (const e of refs.enlaces) {
-      const id = campo_de(spec, e.campo)?.tabla_ref_id;
+      const id = campo_de(en, e.campo)?.tabla_ref_id;
       if (id) enlaces.add(id);
     }
   }
@@ -250,6 +260,13 @@ export function valor_presentado(
   if (campo.tipo === "foto") return es_foto_guardada(raw) ? "Foto" : "";
   if (campo.tipo === "fotos") return cuantas(raw);
   if (campo.tipo === "booleano") return raw === "true" ? "Sí" : "No";
+  if (campo.tipo === "subtabla") {
+    // Las celdas se leen como su columna; los enlaces de la subtabla van en `etiquetas` como `<subtabla>.<columna>`.
+    const sub_etiquetas: Etiquetas = new Map(
+      columnas_de(campo).map((c) => [c.clave, etiquetas.get(`${campo.clave}.${c.clave}`) ?? new Map()]),
+    );
+    return resumen_subtabla(campo, filas_de_subtabla(raw), (c, v) => valor_presentado(c, v, sub_etiquetas));
+  }
   if (campo.tipo === "referencia") {
     const de = etiquetas.get(campo.clave);
     return ids_referencia(raw).map((id) => de?.get(id) ?? "—").join(" · ");
@@ -358,7 +375,11 @@ export function codigos_del_registro(destino: TablaSpec, registro: Registro): st
 export async function enlaces_de(data: KirletCtx["data"], spec: TablaSpec, profundidad = 1): Promise<Enlaces> {
   const out: Enlaces = new Map();
   const leidas = new Map<string, DomainRow[]>();
-  for (const campo of spec.campos) {
+  // Los enlaces dentro de una subtabla van como `<subtabla>.<columna>`.
+  const con_ruta: Array<[string, CampoSpec]> = spec.campos.flatMap((c): Array<[string, CampoSpec]> =>
+    c.tipo === "subtabla" ? columnas_de(c).map((s): [string, CampoSpec] => [`${c.clave}.${s.clave}`, s]) : [[c.clave, c]],
+  );
+  for (const [ruta, campo] of con_ruta) {
     if (campo.tipo !== "referencia" || !campo.tabla_ref_id) continue;
     const tabla = await data.findOne("herr_tablas", { id: campo.tabla_ref_id });
     const destino = tabla ? spec_de_fila(tabla) : null;
@@ -370,11 +391,36 @@ export async function enlaces_de(data: KirletCtx["data"], spec: TablaSpec, profu
     const filas = leidas.get(campo.tabla_ref_id) ?? (await registros_de({ data }, campo.tabla_ref_id));
     leidas.set(campo.tabla_ref_id, filas);
     const registros = new Map(filas.map((r) => [String(r.id), registro_como_fila(r)]));
-    out.set(campo.clave, {
+    const opciones = new Map(filas.map((r) => [String(r.id), opcion_de(campo, destino, r, registros.get(String(r.id))!, anidadas)]));
+    const sub = campo.ref_subtabla ? destino?.campos.find((c) => c.clave === campo.ref_subtabla && c.tipo === "subtabla") : undefined;
+    out.set(ruta, {
       destino,
       registros,
-      opciones: new Map(filas.map((r) => [String(r.id), opcion_de(campo, destino, r, registros.get(String(r.id))!, anidadas)])),
+      opciones: sub && campo.ref_subtabla_modo === "element" ? opciones_de_elementos(sub, registros, opciones) : opciones,
     });
+  }
+  return out;
+}
+
+/**
+ * Con «una fila de la subtabla»: cada fila de la subtabla de cada registro es
+ * una opción (`<registro>~<fila>`), titulada con el registro y la fila.
+ */
+function opciones_de_elementos(sub: CampoSpec, registros: Map<string, Registro>, de_registro: Map<string, OpcionRef>): Map<string, OpcionRef> {
+  const out = new Map<string, OpcionRef>();
+  const visibles = columnas_de(sub).filter((c) => !TIPOS_FOTO.has(c.tipo) && c.tipo !== "referencia" && c.tipo !== "nota");
+  const preferidas = visibles.filter((c) => c.en_resumen);
+  const titulo = (preferidas.length ? preferidas : visibles).slice(0, 3);
+  for (const [id, registro] of registros) {
+    const padre = de_registro.get(id);
+    for (const fila of filas_de_subtabla(registro.valores[sub.clave] ?? "")) {
+      const partes = titulo.map((c) => valor_presentado(c, fila[c.clave] ?? "", new Map())).filter(Boolean);
+      out.set(id_elemento(id, fila._id), {
+        label: partes.join(" · ") || `Fila de «${sub.etiqueta}»`,
+        leyend_secondary: padre?.label ?? "",
+        ...(padre?.image ? { image: padre.image } : {}),
+      });
+    }
   }
   return out;
 }

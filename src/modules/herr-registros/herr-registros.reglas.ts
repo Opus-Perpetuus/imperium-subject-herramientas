@@ -1,5 +1,5 @@
-import { define_routes, type DomainRow, type KirletCtx } from "@opus-perpetuus/imperium-core-kit";
-import { falla, fila_o_404, texto } from "../../lib/comun.ts";
+import { define_routes, subtable_scan_append, type DomainRow, type KirletCtx } from "@opus-perpetuus/imperium-core-kit";
+import { falla, fila_o_404, normalizar, texto } from "../../lib/comun.ts";
 import { celda_coincide, registro_por_codigo } from "../../lib/formulas/escaneo.ts";
 import { spec_de_fila, type TablaSpec } from "../../lib/formulas/esquema.ts";
 import { texto_a_numero } from "../../lib/formulas/motor.ts";
@@ -13,6 +13,7 @@ import {
   type ReglaEscaneo,
 } from "../../lib/formulas/reglas.ts";
 import { formatear, parsear } from "../../lib/formulas/multivalor.ts";
+import { columna_de, columnas_de, filas_de_subtabla, MAX_FILAS_SUBTABLA, texto_de_subtabla, type FilaSubtabla } from "../../lib/formulas/subtabla.ts";
 import { filas_recalculadas, ids_referencia, objeto, registros_de, tabla_activa } from "../herr-tablas/herr-tablas.flow.ts";
 import { guardar_captura } from "./herr-registros.flow.ts";
 
@@ -25,7 +26,7 @@ export type ResultadoReglas = {
    * En memoria: lo que cambia en el formulario abierto (columna → valor). El
    * navegador lo pone en el formulario sin recargar; se guarda con «Guardar».
    */
-  set: Record<string, string | number | string[]>;
+  set: Record<string, string | number | string[] | FilaSubtabla[]>;
 };
 
 /**
@@ -59,6 +60,11 @@ export function valores_de_formulario(spec: TablaSpec, form: Record<string, unkn
   for (const c of spec.campos) {
     const v = form[c.clave];
     if (v === undefined || v === null) continue;
+    // Una subtabla llega como sus filas (objetos): se guarda como JSON.
+    if (c.tipo === "subtabla") {
+      out[c.clave] = typeof v === "string" ? v : texto_de_subtabla(filas_de_subtabla(v));
+      continue;
+    }
     const lista = Array.isArray(v) ? v.map((x) => texto(x)).filter(Boolean) : null;
     out[c.clave] = lista ? (c.multiple ? formatear(lista) : lista.join(",")) : texto(v);
   }
@@ -82,6 +88,10 @@ export async function aplicar_reglas(ctx: KirletCtx, spec: TablaSpec, abierto: A
     if (actual.en_memoria) {
       for (const [clave, v] of Object.entries(cambios)) {
         const campo = spec.campos.find((x) => x.clave === clave);
+        if (campo?.tipo === "subtabla") {
+          out.set[clave] = [...filas_de_subtabla(v)];
+          continue;
+        }
         out.set[clave] = campo?.multiple ? parsear(v) : campo && TIPOS_CANTIDAD.has(campo.tipo) ? (texto_a_numero(v) ?? v) : v;
       }
       return;
@@ -120,6 +130,41 @@ export async function aplicar_reglas(ctx: KirletCtx, spec: TablaSpec, abierto: A
 
     if (DESTINOS_CON_REGISTRO.has(regla.destino) && !actual) {
       omitir("abre un registro para aplicarla");
+      continue;
+    }
+
+    if (regla.destino === "subtabla") {
+      const sub = spec.campos.find((x) => x.clave === regla.subtabla && x.tipo === "subtabla");
+      const columna = sub ? columna_de(sub, regla.columna) : undefined;
+      if (!sub || !columna) {
+        omitir(sub ? "la columna de la cantidad ya no está en la subtabla" : "la subtabla ya no está");
+        continue;
+      }
+      const col_codigo = regla.columna_codigo ? columna_de(sub, regla.columna_codigo) : undefined;
+      const por_enlace = col_codigo?.tipo === "referencia";
+      if (por_enlace && !origen) {
+        omitir("el código no es de la tabla a la que apunta la columna del código");
+        continue;
+      }
+      try {
+        const r = subtable_scan_append(filas_de_subtabla(actual!.valores[sub.clave]), {
+          match_column: col_codigo?.clave ?? null,
+          match_value: por_enlace ? origen!.id : codigo,
+          mode: regla.modo_subtabla === "agregar" ? "append" : "merge",
+          quantity_column: columna.clave,
+          quantity: cantidad,
+          op: regla.accion === "sumar" ? "add" : regla.accion === "restar" ? "subtract" : "set",
+          fill: celdas_de_origen(sub, regla, origen, [columna.clave, col_codigo?.clave ?? ""]),
+          matches: (celda, valor) => (por_enlace ? ids_referencia(celda).includes(valor) : celda_coincide(col_codigo!, celda, valor)),
+          max_rows: MAX_FILAS_SUBTABLA,
+        });
+        await cambiar_actual({ [sub.clave]: texto_de_subtabla(r.rows) });
+        const cambio = describir_cambio(regla.accion, cantidad, columna.etiqueta);
+        out.aplicadas.push(`${nombre}: ${r.created ? `fila nueva (${cambio})` : cambio} en «${sub.etiqueta}»`);
+      } catch (e) {
+        const lleno = e instanceof Error && e.message === "The subtable is full";
+        omitir(lleno ? `«${sub.etiqueta}» ya tiene ${MAX_FILAS_SUBTABLA} filas` : e instanceof Error ? e.message : "no se pudo guardar");
+      }
       continue;
     }
 
@@ -198,6 +243,38 @@ export async function aplicar_reglas(ctx: KirletCtx, spec: TablaSpec, abierto: A
     } catch (e) {
       omitir(e instanceof Error ? e.message : "no se pudo guardar");
     }
+  }
+  return out;
+}
+
+/**
+ * Lo que una fila nueva de subtabla toma del registro del código: las
+ * columnas de igual nombre (Nombre, Precio…) y luego los pares de `copiar`.
+ * `excepto`: la cantidad y el código, que pone la regla.
+ */
+function celdas_de_origen(
+  sub: TablaSpec["campos"][number],
+  regla: ReglaEscaneo,
+  origen: { spec: TablaSpec; id: string; valores: Record<string, string> } | null,
+  excepto: string[],
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!origen) return out;
+  for (const c of columnas_de(sub)) {
+    if (c.tipo === "calculado" || excepto.includes(c.clave)) continue;
+    if (c.tipo === "referencia" && c.tabla_ref_id === origen.spec.id) {
+      out[c.clave] = origen.id;
+      continue;
+    }
+    const igual = origen.spec.campos.find(
+      (o) => o.tipo !== "subtabla" && (o.clave === c.clave || normalizar(o.etiqueta) === normalizar(c.etiqueta)),
+    );
+    const v = igual ? texto(origen.valores[igual.clave]) : "";
+    if (v && !v.startsWith("⚠")) out[c.clave] = v;
+  }
+  for (const { de, a } of regla.copiar ?? []) {
+    const v = texto(origen.valores[de]);
+    if (v && !v.startsWith("⚠")) out[a] = v;
   }
   return out;
 }

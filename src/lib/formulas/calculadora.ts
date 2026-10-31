@@ -1,6 +1,7 @@
 import {
   calculados_en_orden,
   campo_de,
+  type CampoSpec,
   constante_de,
   decimales_de,
   normalizar_nombre,
@@ -10,6 +11,19 @@ import {
   type TablaSpec,
 } from "./esquema.ts";
 import { ids_referencia } from "./multivalor.ts";
+import {
+  columna_de,
+  columnas_de,
+  filas_de_ruta,
+  filas_de_subtabla,
+  juntar,
+  partir_elemento,
+  partir_ruta,
+  spec_de_subtabla,
+  subtabla_de,
+  texto_de_subtabla,
+  type FilaSubtabla,
+} from "./subtabla.ts";
 import {
   calcular_agregado,
   evaluar,
@@ -85,12 +99,117 @@ export function calcular_valores(
 ): Record<string, string> {
   const resueltos = { ...capturados };
   const ambito = ambito_tabla(spec, resueltos, filas, contexto, id);
+  // Las columnas calculadas de cada subtabla van antes: los calculados del registro las leen.
+  for (const campo of spec.campos) {
+    if (campo.tipo !== "subtabla" || !campo.columnas?.some((c) => c.tipo === "calculado")) continue;
+    const raw = resueltos[campo.clave];
+    if (!raw) continue;
+    resueltos[campo.clave] = calcular_subtabla(spec, campo, resueltos, contexto, ambito);
+  }
   for (const campo of calculados_en_orden(spec)) {
     const formula = campo.formula?.trim();
     if (!formula) continue;
     resueltos[campo.clave] = presentar(evaluar(formula, ambito), decimales_de(campo));
   }
   return resueltos;
+}
+
+/**
+ * Las columnas calculadas de una subtabla, fila por fila, ya presentadas para
+ * guardarse junto a la fila. En su fórmula `{x}` es la columna de la fila (o,
+ * si no es de la fila, la del registro capturado), `{actual:x}` el registro y
+ * `sumasi` recorre las demás filas de la subtabla.
+ */
+function calcular_subtabla(
+  spec: TablaSpec,
+  campo: CampoSpec,
+  valores: Record<string, string>,
+  contexto: ContextoCalculo,
+  padre: Ambito,
+): string {
+  const calculadas = columnas_de(campo).filter((c) => c.tipo === "calculado" && c.formula?.trim());
+  const ambitos = ambitos_subtabla(spec, campo, valores, contexto, padre);
+  const filas = filas_de_subtabla(valores[campo.clave]).map((f, i) => {
+    const out: FilaSubtabla = { ...f };
+    for (const c of calculadas) out[c.clave] = presentar(ambitos[i]!.resultado(c.clave), decimales_de(c));
+    return out;
+  });
+  return texto_de_subtabla(filas);
+}
+
+/** Lo del registro que ve una fila de subtabla detrás de sus columnas: lo capturado, sin subtablas. */
+function base_de_filas(spec: TablaSpec, valores: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const c of spec.campos) {
+    if (c.tipo === "calculado" || c.tipo === "subtabla") continue;
+    const v = valores[c.clave];
+    if (v !== undefined) out[c.clave] = v;
+  }
+  return out;
+}
+
+type AmbitoDeFila = Ambito & { resultado(clave: string): Resultado };
+
+/**
+ * Un ámbito por fila de la subtabla: su columna o, si no es suya, la del
+ * registro. Las columnas calculadas se evalúan al leerlas (no se guardan), así
+ * también valen en la fila de un registro de otra tabla.
+ */
+function ambitos_subtabla(
+  spec: TablaSpec,
+  campo: CampoSpec,
+  valores: Record<string, string>,
+  contexto: ContextoCalculo,
+  padre?: Ambito,
+): AmbitoDeFila[] {
+  const filas = filas_de_subtabla(valores[campo.clave]);
+  if (!filas.length) return [];
+  const sspec = spec_de_subtabla(spec, campo);
+  const base = base_de_filas(spec, valores);
+  // `{actual:x}` es el registro; sin `compartido`: lo de una fila no vale para la de otro registro.
+  const raiz: Ambito = padre
+    ? { ...padre, compartido: undefined }
+    : { valor: (k) => valor_en(spec, valores, k, contexto, undefined), subtabla: subtabla_en(spec, valores, contexto) };
+  const formulas = new Map(
+    columnas_de(campo)
+      .filter((c) => c.tipo === "calculado")
+      .map((c) => [c.clave, c.formula?.trim() ?? ""]),
+  );
+  const lista: AmbitoDeFila[] = [];
+  for (const f of filas) {
+    const vivos: Record<string, string> = { ...base, ...f };
+    for (const k of formulas.keys()) delete vivos[k];
+    const hechos = new Map<string, Resultado>();
+    const ambito: AmbitoDeFila = {
+      valor(clave) {
+        if (!formulas.has(clave)) return valor_en(sspec, vivos, clave, contexto, f._id);
+        const r = ambito.resultado(clave);
+        return r.ok ? r.valor : undefined;
+      },
+      resultado(clave) {
+        let r = hechos.get(clave);
+        if (!r) {
+          // Un ciclo entre columnas lo rechaza la validación; aquí solo no se cuelga.
+          hechos.set(clave, { ok: false, error: `«${clave}» depende de sí misma` });
+          const formula = formulas.get(clave) ?? "";
+          r = formula ? evaluar(formula, ambito, raiz) : { ok: true, valor: null };
+          hechos.set(clave, r);
+        }
+        return r;
+      },
+      filas: () => lista,
+    };
+    lista.push(ambito);
+  }
+  return lista;
+}
+
+/** `sub_*("nombre", …)`: las filas de esa subtabla del registro; `null` si no es una. */
+function subtabla_en(spec: TablaSpec, valores: Record<string, string>, contexto: ContextoCalculo) {
+  return (nombre: string): Ambito[] | null => {
+    const campo = subtabla_de(spec, nombre);
+    return campo ? ambitos_subtabla(spec, campo, valores, contexto) : null;
+  };
 }
 
 /** Solo los calculados de un mapa ya resuelto (lo que se guarda en `calculados`). */
@@ -153,6 +272,7 @@ function ambito_tabla(
       const t = contexto.externas.por_nombre(nombre);
       return "error" in t ? t : { filas: ambitos_de(t, contexto).filas };
     },
+    subtabla: subtabla_en(spec, valores_registro, contexto),
     compartido: contexto.compartido,
   };
 }
@@ -171,7 +291,10 @@ function ambitos_de(tabla: TablaCargada, contexto: ContextoCalculo): { filas: Am
 
 /** Un registro visto desde dentro: sus campos y los fijos, sin filas (evita el cuadrado). */
 function ambito_fila(spec: TablaSpec, fila: Registro, contexto: ContextoCalculo): Ambito {
-  return { valor: (clave) => valor_en(spec, fila.valores, clave, contexto, fila.id) };
+  return {
+    valor: (clave) => valor_en(spec, fila.valores, clave, contexto, fila.id),
+    subtabla: subtabla_en(spec, fila.valores, contexto),
+  };
 }
 
 /** Un campo, un fijo, `_id` o `{referencia.columna}` del registro dado. */
@@ -202,16 +325,32 @@ function valor_enlazado(
   contexto: ContextoCalculo,
 ): Valor | undefined {
   const campo = campo_de(spec, enlace.campo);
+  if (campo?.tipo === "subtabla") return valor_de_ruta(spec, campo, valores, enlace.columna, contexto);
   if (campo?.tipo !== "referencia" || !campo.tabla_ref_id) return undefined;
   const ids = ids_referencia(valores[campo.clave] ?? "");
   if (!ids.length) return null;
   const destino = contexto.externas?.por_id(campo.tabla_ref_id);
   if (!destino) return undefined;
   const { por_id } = ambitos_de(destino, contexto);
+  const sub = campo.ref_subtabla ? campo_de(destino.spec, campo.ref_subtabla) : undefined;
+  const subtabla = sub?.tipo === "subtabla" ? sub : undefined;
   const encontrados = ids
-    .map((id) => por_id.get(id))
-    .filter((f): f is Registro => !!f)
-    .map((f) => (enlace.columna === "_id" ? f.id : valor_de(destino.spec, f.valores, enlace.columna)))
+    .map((id) => {
+      const { registro, fila } = partir_elemento(id);
+      const f = por_id.get(registro);
+      if (!f) return undefined;
+      if (enlace.columna === "_id") return id;
+      // Una fila elegida: su columna primero, luego la del registro.
+      if (subtabla && fila && columna_de(subtabla, enlace.columna)) {
+        const i = filas_de_subtabla(f.valores[subtabla.clave]).findIndex((x) => x._id === fila);
+        if (i < 0) return null;
+        return ambitos_subtabla(destino.spec, subtabla, f.valores, contexto)[i]!.valor(enlace.columna) ?? null;
+      }
+      const propio = valor_en(destino.spec, f.valores, enlace.columna, contexto, f.id);
+      if (propio !== undefined || !subtabla) return propio;
+      // La subtabla completa: la columna de todas sus filas.
+      return valor_de_ruta(destino.spec, subtabla, f.valores, enlace.columna, contexto);
+    })
     .filter((v): v is Valor => v !== undefined);
   if (!encontrados.length) return null;
   if (encontrados.length === 1) return encontrados[0]!;
@@ -219,6 +358,24 @@ function valor_enlazado(
   return encontrados.map(a_texto).filter(Boolean).join(", ");
 }
 
+/** `{items.cantidad}`, `{items.2.cantidad}`, `{items.ultima.cantidad}`: celdas de la subtabla juntas. */
+function valor_de_ruta(
+  spec: TablaSpec,
+  campo: CampoSpec,
+  valores: Record<string, string>,
+  ruta_texto: string,
+  contexto: ContextoCalculo,
+): Valor | undefined {
+  const ruta = partir_ruta(ruta_texto);
+  if (ruta.column !== "_id" && !columna_de(campo, ruta.column)) return undefined;
+  const filas = filas_de_ruta(ambitos_subtabla(spec, campo, valores, contexto), ruta);
+  const junto = juntar(filas.map((a) => a.valor(ruta.column)));
+  // Sin filas, la suma de una columna de números es 0 (un carrito vacío cuesta 0, no «nada»).
+  if (junto === null && ruta.row === "all" && NUMERICAS.has(columna_de(campo, ruta.column)?.tipo ?? "texto")) return 0;
+  return junto;
+}
+
+const NUMERICAS: ReadonlySet<string> = new Set(["numero", "dinero", "entero", "nivel", "calculado"]);
 
 /** Un fijo entra como lo que parece: número si se lee como número, texto si no. */
 function valor_constante(constante: ConstanteTabla): Valor {
@@ -245,10 +402,12 @@ export function valor_de(
   clave: string,
 ): Valor | undefined {
   const raw = Object.hasOwn(valores, clave) ? valores[clave] : undefined;
+  const campo = campo_de(spec, clave);
+  // `{items}`: cuántas filas tiene (0 si aún no tiene ninguna).
+  if (campo?.tipo === "subtabla") return filas_de_subtabla(raw ?? "").length;
   if (raw === undefined) return undefined;
   if (raw === "") return null;
   if (raw.startsWith("⚠")) return undefined;
-  const campo = campo_de(spec, clave);
   switch (campo?.tipo) {
     case "booleano":
       return raw.trim().toLowerCase() === "true" ? 1 : 0;

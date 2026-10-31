@@ -24,6 +24,7 @@ import { TIPOS_UNIDAD_POR_REGISTRO, spec_de_fila, type CampoSpec, type TablaSpec
 import { SUFIJO_CODIGO, metadata_de_codigo } from "../../lib/formulas/escaner.ts";
 import { MAX_FOTOS, lista_de, partir, unir } from "../../lib/formulas/fotos.ts";
 import { formatear as unir_multivalor } from "../../lib/formulas/multivalor.ts";
+import { columnas_de, normalizar_filas, texto_de_subtabla } from "../../lib/formulas/subtabla.ts";
 import { contexto_calculo, objeto, registro_como_fila, registros_de, tabla_activa } from "../herr-tablas/herr-tablas.flow.ts";
 
 /** Un valor capturado se guarda como texto; los compuestos del formulario se aplanan. */
@@ -48,6 +49,7 @@ const id_de_opcion = (v: unknown) => (v && typeof v === "object" && "_id" in v ?
 /** Fecha como día `AAAA-MM-DD`; fecha y hora como hora de pared del negocio `AAAA-MM-DDTHH:mm`. */
 function valor_de_campo(campo: CampoSpec, v: unknown): string {
   if (campo.tipo === "fecha") return como_texto(solo_dia(v));
+  if (campo.tipo === "subtabla") return valor_de_subtabla(campo, v);
   if (campo.tipo === "fotos") {
     const fotos = Array.isArray(v) ? v.map((x) => texto(x)).filter(Boolean) : lista_de(texto(v));
     if (fotos.length > MAX_FOTOS) falla(400, `«${campo.etiqueta}»: hasta ${MAX_FOTOS} fotos`, "validation_error");
@@ -60,6 +62,25 @@ function valor_de_campo(campo: CampoSpec, v: unknown): string {
     return sello_ahora(zona_valida(), new Date(ms)).replace(" ", "T");
   }
   return como_texto(v);
+}
+
+/**
+ * Las filas de una subtabla: cada celda con la regla de su columna, sin filas
+ * vacías ni calculadas (se calculan al guardar) y con lo obligatorio en cada fila.
+ */
+function valor_de_subtabla(campo: CampoSpec, v: unknown): string {
+  let filas;
+  try {
+    filas = normalizar_filas(campo, v, (columna, celda) => valor_de_campo(columna, celda));
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith("«")) falla(400, e.message, "validation_error");
+    throw e;
+  }
+  for (const [i, fila] of filas.entries()) {
+    const falta = columnas_de(campo).find((c) => c.requerido && c.tipo !== "calculado" && !texto(fila[c.clave]));
+    if (falta) falla(400, `«${campo.etiqueta}», fila ${i + 1}: falta «${falta.etiqueta}»`, "validation_error");
+  }
+  return texto_de_subtabla(filas);
 }
 
 /** Solo campos capturables de la tabla, y los requeridos presentes. */
@@ -167,7 +188,7 @@ async function guardar_fotos(
 
 /** Texto de presentación: el primer campo `en_resumen` con valor. */
 function nombre_de(spec: TablaSpec, valores: Record<string, string>): string {
-  const campo = spec.campos.find((c) => c.en_resumen && texto(valores[c.clave]));
+  const campo = spec.campos.find((c) => c.en_resumen && c.tipo !== "subtabla" && texto(valores[c.clave]));
   return campo ? texto(valores[campo.clave]) : "";
 }
 
@@ -233,6 +254,8 @@ export async function preparar_registro(
   filas.push({ id, valores });
   const todos = calcular_valores(spec, valores, filas, await contexto_calculo(ctx, spec), id);
   const calculados = calculados_de(spec, todos);
+  // Las filas se guardan con sus columnas calculadas: así las lee quien elige una fila desde otra tabla.
+  for (const c of spec.campos) if (c.tipo === "subtabla" && valores[c.clave]) valores[c.clave] = todos[c.clave] ?? valores[c.clave]!;
   const unidades = unidades_capturadas(spec, objeto(existing?.unidades), objeto(patch.unidades));
   const codigos = codigos_capturados(spec, valores, objeto(existing?.codigos), entrada_de(patch.codigos));
   return {

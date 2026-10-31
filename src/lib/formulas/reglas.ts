@@ -23,11 +23,12 @@ export const DESTINOS_REGLA = {
   nuevo_padre: "Un registro nuevo en la tabla a la que apunta un enlace",
   nuevo: "Un registro nuevo en otra tabla",
   existente_o_nuevo: "El registro de otra tabla que ya tenga ese código; si no hay, uno nuevo",
+  subtabla: "Una fila de una subtabla del registro abierto (la que ya tenga ese código o una nueva)",
 } as const;
 export type DestinoRegla = keyof typeof DESTINOS_REGLA;
 
 /** Destinos que necesitan un registro abierto. */
-export const DESTINOS_CON_REGISTRO: ReadonlySet<DestinoRegla> = new Set(["actual", "padre"]);
+export const DESTINOS_CON_REGISTRO: ReadonlySet<DestinoRegla> = new Set(["actual", "padre", "subtabla"]);
 /** Destinos cuya tabla sale de un enlace de esta tabla. */
 export const DESTINOS_POR_ENLACE: ReadonlySet<DestinoRegla> = new Set(["padre", "nuevo_padre"]);
 /** Destinos que crean (o pueden crear) un registro. */
@@ -36,6 +37,18 @@ export const DESTINOS_QUE_CREAN: ReadonlySet<DestinoRegla> = new Set(["nuevo_pad
 export const TIPOS_CANTIDAD: ReadonlySet<string> = new Set(["numero", "entero", "dinero"]);
 /** Dónde puede anotarse el código (o el registro de origen) en un registro creado. */
 export const TIPOS_CODIGO_REGLA: ReadonlySet<string> = new Set(["codigo", "texto", "referencia"]);
+
+/** En una subtabla: si ya hay una fila con ese código, ¿se le suma la cantidad o siempre va una fila nueva? */
+export const MODOS_SUBTABLA = {
+  sumar_o_agregar: "Si ya está, cambia su cantidad; si no, agrega una fila",
+  agregar: "Siempre agrega una fila nueva",
+} as const;
+export type ModoSubtabla = keyof typeof MODOS_SUBTABLA;
+
+/** Cuántos pares «columna del código → columna de la fila» se configuran a mano (además de los de igual nombre). */
+export const MAX_COPIAR = 6;
+
+export type CopiaRegla = { de: string; a: string };
 
 export type ReglaEscaneo = {
   id: string;
@@ -59,10 +72,24 @@ export type ReglaEscaneo = {
   columna_codigo: string | null;
   /** En un registro creado: el enlace que apunta al registro abierto. */
   enlace_actual: string | null;
+  /** Destino «subtabla»: la subtabla del registro abierto (`columna` y `columna_codigo` son columnas suyas). */
+  subtabla?: string | null;
+  modo_subtabla?: ModoSubtabla;
+  /** Destino «subtabla»: columnas del registro del código que se copian a la fila nueva. */
+  copiar?: CopiaRegla[];
 };
 
 const es_accion = (v: string): v is AccionRegla => Object.hasOwn(ACCIONES_REGLA, v);
 const es_destino = (v: string): v is DestinoRegla => Object.hasOwn(DESTINOS_REGLA, v);
+const es_modo = (v: string): v is ModoSubtabla => Object.hasOwn(MODOS_SUBTABLA, v);
+
+function normalizar_copiar(x: unknown): CopiaRegla[] {
+  if (!Array.isArray(x)) return [];
+  return x
+    .map((c) => (c && typeof c === "object" ? { de: texto((c as CopiaRegla).de), a: texto((c as CopiaRegla).a) } : null))
+    .filter((c): c is CopiaRegla => !!c?.de && !!c.a)
+    .slice(0, MAX_COPIAR);
+}
 const o_null = (v: unknown) => texto(v) || null;
 
 export const MAX_REGLAS = 30;
@@ -92,6 +119,13 @@ export function normalizar_regla(x: unknown): ReglaEscaneo | null {
     cantidad_de: o_null(o.cantidad_de),
     columna_codigo: o_null(o.columna_codigo),
     enlace_actual: o_null(o.enlace_actual),
+    ...(destino === "subtabla"
+      ? {
+          subtabla: o_null(o.subtabla),
+          modo_subtabla: es_modo(texto(o.modo_subtabla)) ? (texto(o.modo_subtabla) as ModoSubtabla) : "sumar_o_agregar",
+          copiar: normalizar_copiar(o.copiar),
+        }
+      : {}),
   };
 }
 
@@ -139,7 +173,7 @@ export type TablasDeRegla = {
 
 /** La tabla destino de una regla (sin validarla aún). */
 export function tabla_destino_de(regla: Pick<ReglaEscaneo, "destino" | "enlace" | "tabla_destino">, t: TablasDeRegla) {
-  if (regla.destino === "actual") return t.actual;
+  if (regla.destino === "actual" || regla.destino === "subtabla") return t.actual;
   if (DESTINOS_POR_ENLACE.has(regla.destino)) {
     const enlace = t.actual.campos.find((c) => c.clave === regla.enlace && c.tipo === "referencia");
     return enlace?.tabla_ref_id ? t.tabla(enlace.tabla_ref_id) : null;
@@ -169,6 +203,7 @@ export function regla_desde_formulario(
   }
   const tabla_destino = destino === "nuevo" || destino === "existente_o_nuevo" ? texto(body.tabla_destino) : "";
   const borrador = { destino, enlace: enlace || null, tabla_destino: tabla_destino || null };
+  if (destino === "subtabla") return regla_de_subtabla(body, t, id, accion, cantidad);
   const dest = tabla_destino_de(borrador, t);
   if (!dest) return { error: "Elige la tabla donde se anota" };
 
@@ -229,9 +264,105 @@ export function regla_desde_formulario(
   };
 }
 
+/**
+ * Destino «subtabla»: la cantidad y el código van en columnas de una subtabla
+ * del registro abierto. Las columnas llegan como `<tabla>.<subtabla>.<clave>`
+ * (o `<subtabla>.<clave>`, o solo `<clave>`).
+ */
+function regla_de_subtabla(
+  body: Record<string, unknown>,
+  t: TablasDeRegla,
+  id: string,
+  accion: AccionRegla,
+  cantidad: number,
+): { regla: ReglaEscaneo } | { error: string } {
+  const sub_desde = (raw: unknown): string => {
+    const v = texto(raw);
+    const sin_tabla = v.startsWith(`${t.actual.id}.`) ? v.slice(t.actual.id.length + 1) : v;
+    return sin_tabla.includes(".") ? sin_tabla.slice(0, sin_tabla.indexOf(".")) : "";
+  };
+  const clave_sub = texto(body.subtabla) || sub_desde(body.columna) || sub_desde(body.columna_codigo);
+  const sub = t.actual.campos.find((c) => c.clave === clave_sub && c.tipo === "subtabla");
+  if (!sub) return { error: "Elige la subtabla del registro abierto donde van las filas" };
+  const columna_sub = (raw: unknown): CampoSpec | null | "otra" => {
+    let v = texto(raw);
+    if (!v) return null;
+    if (v.startsWith(`${t.actual.id}.`)) v = v.slice(t.actual.id.length + 1);
+    if (v.startsWith(`${sub.clave}.`)) v = v.slice(sub.clave.length + 1);
+    else if (v.includes(".")) return "otra";
+    return sub.columnas?.find((c) => c.clave === v) ?? "otra";
+  };
+  const columna = columna_sub(body.columna);
+  if (!columna || columna === "otra" || !TIPOS_CANTIDAD.has(columna.tipo)) {
+    return { error: `Elige una columna de número de la subtabla «${sub.etiqueta}» para la cantidad` };
+  }
+  const tabla_origen = texto(body.tabla_origen) || null;
+  const origen = tabla_origen ? t.tabla(tabla_origen) : null;
+  if (tabla_origen && !origen) return { error: "La tabla de origen no existe" };
+  const del_origen = (raw: unknown): CampoSpec | null | "otra" => {
+    const v = texto(raw);
+    if (!v) return null;
+    if (!origen) return "otra";
+    const clave = v.startsWith(`${origen.id}.`) ? v.slice(origen.id.length + 1) : v;
+    return origen.campos.find((c) => c.clave === clave) ?? "otra";
+  };
+  let cantidad_de: string | null = null;
+  if (texto(body.cantidad_de)) {
+    const c = del_origen(body.cantidad_de);
+    if (!c || c === "otra" || !TIPOS_CANTIDAD.has(c.tipo)) return { error: "La cantidad por código debe ser una columna de número de la tabla de origen" };
+    cantidad_de = c.clave;
+  }
+  let columna_codigo: string | null = null;
+  if (texto(body.columna_codigo)) {
+    const c = columna_sub(body.columna_codigo);
+    if (!c || c === "otra" || !TIPOS_CODIGO_REGLA.has(c.tipo)) {
+      return { error: `El código va en una columna «Código», de texto o un enlace de la subtabla «${sub.etiqueta}»` };
+    }
+    if (c.tipo === "referencia" && c.tabla_ref_id !== tabla_origen) return { error: "Ese enlace no apunta a la tabla de origen del código" };
+    columna_codigo = c.clave;
+  }
+  const modo = texto(body.modo_subtabla) || "sumar_o_agregar";
+  if (!es_modo(modo)) return { error: "Ese modo no existe" };
+  if (modo === "sumar_o_agregar" && !columna_codigo) {
+    return { error: "Elige en qué columna de la fila va el código: por ella se reconoce la fila que ya está" };
+  }
+  const copiar: CopiaRegla[] = [];
+  const pares = Array.isArray(body.copiar)
+    ? normalizar_copiar(body.copiar)
+    : Array.from({ length: MAX_COPIAR }, (_, i) => ({ de: texto(body[`copiar_de_${i + 1}`]), a: texto(body[`copiar_a_${i + 1}`]) }));
+  for (const { de, a } of pares) {
+    if (!de && !a) continue;
+    const c_de = del_origen(de);
+    const c_a = columna_sub(a);
+    if (!c_de || c_de === "otra") return { error: "Lo que se copia debe ser una columna de la tabla de origen" };
+    if (!c_a || c_a === "otra" || c_a.tipo === "calculado") return { error: `Se copia a una columna (no calculada) de «${sub.etiqueta}»` };
+    copiar.push({ de: c_de.clave, a: c_a.clave });
+  }
+  return {
+    regla: {
+      id,
+      nombre: texto(body.nombre).slice(0, 120),
+      codigo: texto(body.codigo).slice(0, 200),
+      tabla_origen,
+      destino: "subtabla",
+      enlace: null,
+      tabla_destino: null,
+      accion,
+      columna: columna.clave,
+      cantidad,
+      cantidad_de,
+      columna_codigo,
+      enlace_actual: null,
+      subtabla: sub.clave,
+      modo_subtabla: modo,
+      copiar,
+    },
+  };
+}
+
 /** La tabla donde escribe una regla, por id (sin cargarla). */
 export function id_destino_de(regla: Pick<ReglaEscaneo, "destino" | "enlace" | "tabla_destino">, dueno: { id: string; campos: CampoSpec[] }): string | null {
-  if (regla.destino === "actual") return dueno.id;
+  if (regla.destino === "actual" || regla.destino === "subtabla") return dueno.id;
   if (DESTINOS_POR_ENLACE.has(regla.destino)) {
     return dueno.campos.find((c) => c.clave === regla.enlace && c.tipo === "referencia")?.tabla_ref_id ?? null;
   }
@@ -248,5 +379,15 @@ export function regla_usa(regla: ReglaEscaneo, dueno: { id: string; campos: Camp
   if (clave === undefined) return regla.tabla_origen === tabla_id || destino === tabla_id;
   if (dueno.id === tabla_id && regla.enlace === clave) return true;
   if (regla.tabla_origen === tabla_id && regla.cantidad_de === clave) return true;
+  if (regla.destino === "subtabla") {
+    if (regla.tabla_origen === tabla_id && regla.copiar?.some((c) => c.de === clave)) return true;
+    if (dueno.id !== tabla_id) return false;
+    // `clave` puede ser la subtabla o `subtabla.columna`.
+    const sub = regla.subtabla ?? "";
+    if (clave === sub) return true;
+    if (!clave.startsWith(`${sub}.`)) return false;
+    const col = clave.slice(sub.length + 1);
+    return [regla.columna, regla.columna_codigo].includes(col) || !!regla.copiar?.some((c) => c.a === col);
+  }
   return destino === tabla_id && [regla.columna, regla.columna_codigo, regla.enlace_actual].includes(clave);
 }
