@@ -1,3 +1,4 @@
+import { es_calculado } from "../../lib/formulas/automatico.ts";
 import type { DomainRow, KirletCtx, KirletIdentity, NoxPageDescriptor, NoxUiNode } from "@opus-perpetuus/imperium-core-kit";
 import { filas_de, puede, texto } from "../../lib/comun.ts";
 import { valores_resumen } from "../../lib/formulas/calculadora.ts";
@@ -220,7 +221,7 @@ function describir_tipo(campo: CampoSpec, spec: TablaSpec): string {
 
 function detalle_columna(spec: TablaSpec, campo: CampoSpec, tablas: Map<string, TablaSpec>): Array<{ label: string; value: string }> {
   const items = [{ label: "Tipo", value: describir_tipo(campo, spec) }];
-  if (campo.tipo === "calculado") {
+  if (es_calculado(campo)) {
     items.push({ label: "Cálculo", value: campo.formula === "0" ? "Sin configurar: toca Editar" : formula_con_etiquetas(spec, campo.formula ?? "", [...tablas.values()]) });
   }
   if (campo.tipo === "opcion") {
@@ -415,6 +416,35 @@ export function ayuda_subtabla(sub: CampoSpec): string {
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+/**
+ * Entero, número o dinero que se llenan solos: contar las filas de una
+ * subtabla (con condiciones sobre sus columnas), sumar una columna de otra
+ * tabla… Es el mismo constructor y la misma fórmula que un «Cálculo»; la
+ * columna sigue siendo de su tipo. Vacía, se captura a mano.
+ */
+function llenado_automatico(spec: TablaSpec, campo: CampoSpec, otras: TablaSpec[]): NoxUiNode[] {
+  const formula = es_calculado(campo) ? formula_con_etiquetas(spec, campo.formula ?? "", otras) : "";
+  const ejemplo = subtablas_de(spec)[0];
+  return [
+    titulo("Llenar solo (opcional)"),
+    nodo("nox.markdown-view", {
+      content:
+        "Si eliges abajo qué contar o sumar (o escribes la fórmula), esta columna ya no se captura: se llena sola cada vez, " +
+        (ejemplo ? `por ejemplo con cuántas filas de «${ejemplo.etiqueta}» cumplen unas condiciones. ` : "por ejemplo con cuántos registros de otra tabla cumplen unas condiciones. ") +
+        "Para volver a capturarla a mano, borra la fórmula y guarda.",
+    }),
+    nodo("nox.input-text", {
+      name: "formula",
+      label: "Fórmula",
+      value: formula,
+      placeholder: ejemplo ? `sub_cuenta("${ejemplo.etiqueta}", {Columna} = "X")` : "tabla_cuenta(\"Ventas\", {Estado} = \"Pagado\")",
+      help: ayuda_formula(spec, "", campo.clave, otras),
+    }),
+    ...referencias_subtablas(spec, campo.clave),
+    ...constructor_de_formula(spec, campo, otras),
+  ];
 }
 
 /** Las referencias de cada subtabla, a la vista (no solo en la ayuda): se copian tal cual a la fórmula. */
@@ -737,7 +767,7 @@ function seccion_reglas(spec: TablaSpec, tablas: Map<string, TablaSpec>): NoxUiN
                 }),
                 ...[1, 2, 3].flatMap((n) => [
                   menu(`copiar_de_${n}`, `Copiar ${n}: esta columna del código…`, [...ninguna("—"), ...columnas((c, t) => t.id !== spec.id && c.tipo !== "subtabla")], { value: "" }),
-                  menu(`copiar_a_${n}`, `…a esta columna de la fila`, [...ninguna("—"), ...subcolumnas((c) => c.tipo !== "calculado")], { value: "" }),
+                  menu(`copiar_a_${n}`, `…a esta columna de la fila`, [...ninguna("—"), ...subcolumnas((c) => !es_calculado(c))], { value: "" }),
                 ]),
               ]
             : []),
@@ -965,11 +995,15 @@ function entradas_de_tipo(spec: TablaSpec, campo: CampoSpec, tablas: Map<string,
       ];
     }
     case "numero":
-      return [...unidad("km, L, kg…"), decimales];
+      return [...unidad("km, L, kg…"), decimales, ...llenado_automatico(spec, campo, [...tablas.values()])];
     case "dinero":
-      return [nodo("nox.input-text", { name: "unidad", label: "Unidad (opcional)", placeholder: "$", value: campo.unidad ?? "" }), decimales];
+      return [
+        nodo("nox.input-text", { name: "unidad", label: "Unidad (opcional)", placeholder: "$", value: campo.unidad ?? "" }),
+        decimales,
+        ...llenado_automatico(spec, campo, [...tablas.values()]),
+      ];
     case "entero":
-      return unidad("piezas, personas…");
+      return [...unidad("piezas, personas…"), ...llenado_automatico(spec, campo, [...tablas.values()])];
     case "codigo": {
       const e = campo.escaner ?? ESCANER_VACIO;
       const destinos = spec.campos.filter((c) => c.clave !== campo.clave && TIPOS_DESTINO_ESCANER.has(c.tipo));
@@ -1100,7 +1134,7 @@ const CON_VALOR_INICIAL = new Set(["texto", "numero", "dinero", "entero", "opcio
 
 /** Lo que da el cálculo con el último registro: se ve si la fórmula hace lo que se quería. */
 async function vista_previa(data: Datos, spec: TablaSpec, campo: CampoSpec): Promise<NoxUiNode | null> {
-  if (campo.tipo !== "calculado" || !campo.formula || campo.formula === "0") return null;
+  if (!es_calculado(campo) || !campo.formula || campo.formula === "0") return null;
   const filas = await filas_recalculadas({ data }, spec, await registros_de({ data }, spec.id));
   const ultima = filas.reduce<(typeof filas)[number] | null>(
     (a, f) => (!a || texto(f.created_at) >= texto(a.created_at) ? f : a),
@@ -1330,7 +1364,7 @@ export async function pagina_campo(data: Datos, spec_tabla: TablaSpec, clave: st
     }),
     ...entradas_de_tipo(spec, campo, tablas),
   ];
-  if (CON_VALOR_INICIAL.has(campo.tipo)) {
+  if (CON_VALOR_INICIAL.has(campo.tipo) && !es_calculado(campo)) {
     entradas.push(
       nodo("nox.input-text", {
         name: "valor_por_defecto",
@@ -1340,7 +1374,7 @@ export async function pagina_campo(data: Datos, spec_tabla: TablaSpec, clave: st
       }),
     );
   }
-  if (campo.tipo !== "calculado") {
+  if (!es_calculado(campo)) {
     entradas.push(nodo("nox.input-checkbox", { name: "requerido", label: "Obligatoria: no se guarda sin ella", value: campo.requerido === true }));
   }
   entradas.push(

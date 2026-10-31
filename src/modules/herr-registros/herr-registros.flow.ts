@@ -1,3 +1,4 @@
+import { es_calculado } from "../../lib/formulas/automatico.ts";
 import {
   define_routes,
   new_id,
@@ -77,7 +78,7 @@ function valor_de_subtabla(campo: CampoSpec, v: unknown): string {
     throw e;
   }
   for (const [i, fila] of filas.entries()) {
-    const falta = columnas_de(campo).find((c) => c.requerido && c.tipo !== "calculado" && !texto(fila[c.clave]));
+    const falta = columnas_de(campo).find((c) => c.requerido && !es_calculado(c) && !texto(fila[c.clave]));
     if (falta) falla(400, `«${campo.etiqueta}», fila ${i + 1}: falta «${falta.etiqueta}»`, "validation_error");
   }
   return texto_de_subtabla(filas);
@@ -87,7 +88,7 @@ function valor_de_subtabla(campo: CampoSpec, v: unknown): string {
 export function valores_capturados(spec: TablaSpec, entrada: unknown): Record<string, string> {
   const fuente = entrada ?? {};
   if (typeof fuente !== "object" || Array.isArray(fuente)) falla(400, "valores debe ser un objeto clave → valor");
-  const capturables = new Map(spec.campos.filter((c) => c.tipo !== "calculado").map((c) => [c.clave, c]));
+  const capturables = new Map(spec.campos.filter((c) => !es_calculado(c)).map((c) => [c.clave, c]));
   const valores: Record<string, string> = {};
   for (const [clave, v] of Object.entries(fuente as Record<string, unknown>)) {
     const campo = capturables.get(clave);

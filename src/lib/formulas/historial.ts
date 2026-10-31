@@ -1,3 +1,4 @@
+import { es_calculado } from "./automatico.ts";
 import { es_foto_guardada } from "../comun.ts";
 import type { CampoSpec } from "./esquema.ts";
 import { cuantas, lista_de } from "./fotos.ts";
@@ -18,7 +19,7 @@ export function cambios_de(
 ): Cambio[] {
   const out: Cambio[] = [];
   for (const campo of campos) {
-    if (campo.tipo === "calculado") continue;
+    if (es_calculado(campo)) continue;
     const a = antes[campo.clave] ?? "";
     const d = despues[campo.clave] ?? "";
     if (a === d) continue;

@@ -1,3 +1,4 @@
+import { es_calculado } from "../../lib/formulas/automatico.ts";
 import {
   build_feature_shell_page,
   subtable_input,
@@ -134,7 +135,7 @@ export function nodo_entrada(
         empty_text: "Sin filas todavía",
         // Cada columna es la entrada de su tipo; su valor es el de cada fila nueva.
         columns: columnas_de(campo).map((c) =>
-          c.tipo === "calculado"
+          es_calculado(c)
             ? nodo("nox.input-text", { name: c.clave, label: c.etiqueta, computed: true, read_only: true })
             : nodo_entrada(c, c.valor_por_defecto ?? "", todas?.get(`${campo.clave}.${c.clave}`)),
         ),
@@ -350,7 +351,7 @@ export const herr_registros_pages: KirletPageDecl[] = [
       const con_unidad = spec.campos.filter((c) => c.unidad_por_registro && TIPOS_UNIDAD_POR_REGISTRO.has(c.tipo));
       const usadas = con_unidad.length ? unidades_usadas(await registros_de({ data }, spec.id)) : new Map<string, string[]>();
       const entradas = spec.campos
-        .filter((c) => c.tipo !== "calculado")
+        .filter((c) => !es_calculado(c))
         .flatMap((c) => {
           const entrada = nodo_entrada(
             c,

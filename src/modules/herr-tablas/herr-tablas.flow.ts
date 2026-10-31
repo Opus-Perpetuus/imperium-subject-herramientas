@@ -1,3 +1,4 @@
+import { es_calculado } from "../../lib/formulas/automatico.ts";
 import {
   define_routes,
   new_id,
@@ -142,14 +143,14 @@ function lo_que_lee(spec: TablaSpec): { nombres: Set<string>; enlaces: Set<strin
   const enlaces = new Set<string>();
   // Los cálculos de cada fila de una subtabla se leen contra sus columnas (y las del registro).
   const formulas: Array<[TablaSpec, string]> = [
-    ...spec.campos.filter((c) => c.tipo === "calculado").map((c): [TablaSpec, string] => [spec, c.formula ?? ""]),
+    ...spec.campos.filter((c) => es_calculado(c)).map((c): [TablaSpec, string] => [spec, c.formula ?? ""]),
     ...spec.resumenes.map((r): [TablaSpec, string] => [spec, r.formula]),
     ...spec.campos
       .filter((c) => c.tipo === "subtabla")
       .flatMap((sub) => {
         const en = spec_de_subtabla(spec, sub);
         return columnas_de(sub)
-          .filter((c) => c.tipo === "calculado")
+          .filter((c) => es_calculado(c))
           .map((c): [TablaSpec, string] => [en, c.formula ?? ""]);
       }),
   ];

@@ -1,3 +1,4 @@
+import { es_calculado } from "./automatico.ts";
 import { sello_ahora, zona_valida } from "../comun.ts";
 import { constante_de, type CampoSpec, type Registro, type TablaSpec } from "./esquema.ts";
 
@@ -41,7 +42,7 @@ export function planear_cierre(
     const valores: Record<string, string> = {};
     for (const campo of origen.campos) {
       const raw =
-        campo.tipo === "calculado"
+        es_calculado(campo)
           ? (calculados[campo.clave] ?? fila.valores[campo.clave])
           : fila.valores[campo.clave];
       if (raw !== undefined) valores[campo.clave] = raw;
@@ -78,8 +79,8 @@ export function esquema_archivo(origen: TablaSpec): TablaSpec {
 
   for (const campo of origen.campos) {
     const congelado: CampoSpec =
-      campo.tipo === "calculado"
-        ? { ...campo, tipo: "numero", formula: null, requerido: false }
+      es_calculado(campo)
+        ? { ...campo, tipo: campo.tipo === "calculado" ? "numero" : campo.tipo, formula: null, requerido: false }
         : { ...campo, requerido: false };
     campos.push(congelado);
     ocupadas.push(congelado.clave);

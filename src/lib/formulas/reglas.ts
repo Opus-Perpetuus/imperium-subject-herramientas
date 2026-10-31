@@ -1,3 +1,4 @@
+import { es_calculado } from "./automatico.ts";
 import { numero, texto } from "../comun.ts";
 import type { CampoSpec } from "./esquema.ts";
 import { texto_a_numero } from "./motor.ts";
@@ -335,7 +336,7 @@ function regla_de_subtabla(
     const c_de = del_origen(de);
     const c_a = columna_sub(a);
     if (!c_de || c_de === "otra") return { error: "Lo que se copia debe ser una columna de la tabla de origen" };
-    if (!c_a || c_a === "otra" || c_a.tipo === "calculado") return { error: `Se copia a una columna (no calculada) de «${sub.etiqueta}»` };
+    if (!c_a || c_a === "otra" || es_calculado(c_a)) return { error: `Se copia a una columna (no calculada) de «${sub.etiqueta}»` };
     copiar.push({ de: c_de.clave, a: c_a.clave });
   }
   return {

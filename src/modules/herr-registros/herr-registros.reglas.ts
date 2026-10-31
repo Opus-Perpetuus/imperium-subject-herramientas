@@ -1,3 +1,4 @@
+import { es_calculado } from "../../lib/formulas/automatico.ts";
 import { define_routes, subtable_scan_append, type DomainRow, type KirletCtx } from "@opus-perpetuus/imperium-core-kit";
 import { falla, fila_o_404, normalizar, texto } from "../../lib/comun.ts";
 import { celda_coincide, registro_por_codigo } from "../../lib/formulas/escaneo.ts";
@@ -261,7 +262,7 @@ function celdas_de_origen(
   const out: Record<string, string> = {};
   if (!origen) return out;
   for (const c of columnas_de(sub)) {
-    if (c.tipo === "calculado" || excepto.includes(c.clave)) continue;
+    if (es_calculado(c) || excepto.includes(c.clave)) continue;
     if (c.tipo === "referencia" && c.tabla_ref_id === origen.spec.id) {
       out[c.clave] = origen.id;
       continue;

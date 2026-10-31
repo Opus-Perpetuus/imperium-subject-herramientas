@@ -1,3 +1,4 @@
+import { es_calculado } from "./automatico.ts";
 import { texto } from "../comun.ts";
 import { normalizar_escaner, type EscanerCampo } from "./escaner.ts";
 import { normalizar_escaneo, type EscaneoTabla } from "./escaneo.ts";
@@ -219,7 +220,7 @@ export function resuelve_clave(spec: TablaSpec, clave: string): boolean {
  * la rama sin ordenar y el motor lo reporta al evaluar en vez de colgarse.
  */
 export function calculados_en_orden(spec: TablaSpec): CampoSpec[] {
-  const calculados = spec.campos.filter((c) => c.tipo === "calculado");
+  const calculados = spec.campos.filter((c) => es_calculado(c));
   const por_clave = new Map(calculados.map((c) => [c.clave, c]));
   const resueltos = new Set<string>();
   const orden: CampoSpec[] = [];
@@ -474,7 +475,7 @@ export function ciclos_de_calculo(spec: TablaSpec, otras: TablaSpec[] = []): str
     deps.set(id, out);
     const formula = campo_de(t, clave)?.formula ?? "";
     const refs = referencias(formula);
-    const calculado = (en: TablaSpec, c: string) => campo_de(en, c)?.tipo === "calculado";
+    const calculado = (en: TablaSpec, c: string) => es_calculado(campo_de(en, c));
     const enlazar = (en: TablaSpec, enlaces: { campo: string; columna: string }[]) => {
       for (const { campo, columna } of enlaces) {
         const destino = tablas.get(campo_de(en, campo)?.tabla_ref_id ?? "");
@@ -514,7 +515,7 @@ export function ciclos_de_calculo(spec: TablaSpec, otras: TablaSpec[] = []): str
     en_camino.delete(id);
   };
   for (const c of spec.campos) {
-    if (c.tipo !== "calculado" || errores.length) continue;
+    if (!es_calculado(c) || errores.length) continue;
     visitar(spec, nodo(spec, c.clave));
   }
   return errores;
@@ -538,7 +539,7 @@ export function validar_esquema(spec: TablaSpec, otras?: TablaSpec[]): string[] 
     if (!(TIPOS_CAMPO as readonly string[]).includes(campo.tipo)) {
       errores.push(`«${campo.clave}»: tipo desconocido «${campo.tipo}»`);
     }
-    if (campo.tipo === "calculado") {
+    if (es_calculado(campo)) {
       if (!campo.formula) errores.push(`«${campo.clave}»: falta la fórmula`);
       else errores.push(...errores_formula(spec, campo.formula, campo.clave, otras));
     }
@@ -585,7 +586,7 @@ function errores_subtabla(spec: TablaSpec, campo: CampoSpec, otras?: TablaSpec[]
     else if (vistas.has(c.clave)) errores.push(`${donde}: clave repetida «${c.clave}»`);
     vistas.add(c.clave);
     if (!TIPOS_SUBCOLUMNA.has(c.tipo)) errores.push(`${donde}: una columna no puede ser de tipo «${c.tipo}»`);
-    if (c.tipo === "calculado") {
+    if (es_calculado(c)) {
       if (!c.formula) errores.push(`${donde}: «${c.clave}» no tiene fórmula`);
       else errores.push(...errores_formula(sspec, c.formula, `${campo.etiqueta} › ${c.etiqueta}`, otras));
     }

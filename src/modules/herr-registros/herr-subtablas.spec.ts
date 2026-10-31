@@ -144,6 +144,78 @@ describe("subtablas", () => {
     expect((await call("DELETE", `/herr-tablas/${ventas}/campos/${items.clave}.${desc!.clave}`)).status).toBe(200);
   });
 
+  test("un entero se llena solo: cuenta filas de la subtabla con condiciones o registros de otra tabla", async () => {
+    const pagos = await tabla("Pagos", [
+      { clave: "pedido", etiqueta: "Pedido", tipo: "texto" },
+      { clave: "monto", etiqueta: "Monto", tipo: "dinero" },
+    ]);
+    const pedidos = await tabla("Pedidos", [
+      { clave: "folio", etiqueta: "Folio", tipo: "texto" },
+      {
+        clave: "partidas", etiqueta: "Partidas", tipo: "subtabla",
+        columnas: [
+          { clave: "tipo", etiqueta: "Tipo", tipo: "texto" },
+          { clave: "cantidad", etiqueta: "Cantidad", tipo: "entero" },
+          { clave: "precio", etiqueta: "Precio", tipo: "dinero" },
+        ],
+      },
+      { clave: "piezas_x", etiqueta: "Piezas X", tipo: "entero" },
+      { clave: "pagos", etiqueta: "Pagos", tipo: "entero" },
+    ]);
+    // El editor del entero ofrece la subtabla y sus columnas como «Subtabla › Columna».
+    const editor = await pagina(`/pages/herramientas.herr-tabla?id=${pedidos}&modo=campo&campo=piezas_x`);
+    const menus = nodos(editor, "nox.input-menu");
+    const opciones = (name: string) => (menus.find((m) => m.props?.name === name)!.props!.options as { value: string; label: string }[]);
+    expect(opciones("ext_tabla").map((o) => o.value)).toEqual(expect.arrayContaining(["sub:partidas", pagos]));
+    expect(opciones("ext_c1_columna")).toContainEqual({ value: "sub:partidas|tipo", label: "Subtabla Partidas › Tipo" });
+    expect(nodos(editor, "nox.input-text").some((n) => n.props?.name === "formula")).toBe(true);
+
+    // Contar las filas con Tipo = X y (Precio > 10 o Cantidad ≥ 5); otro entero suma.
+    const contar = await call("PATCH", `/herr-tablas/${pedidos}/campos/piezas_x`, {
+      etiqueta: "Piezas X", tipo: "entero", formula: "",
+      ext_que: "cuenta", ext_tabla: "sub:partidas", ext_union: "y_o",
+      ext_c1_columna: "sub:partidas|tipo", ext_c1_valor: "X",
+      ext_c2_columna: "sub:partidas|precio", ext_c2_op: ">", ext_c2_valor: "10",
+      ext_c3_columna: "sub:partidas|cantidad", ext_c3_op: ">=", ext_c3_valor: "5",
+    });
+    expect(contar.status).toBe(200);
+    // Contar los pagos de otra tabla cuyo Pedido es el folio de este registro.
+    const de_otra = await call("PATCH", `/herr-tablas/${pedidos}/campos/pagos`, {
+      tipo: "entero", formula: "",
+      ext_que: "cuenta", ext_tabla: pagos, ext_c1_columna: `${pagos}|pedido`, ext_c1_actual: "folio",
+    });
+    expect(de_otra.status).toBe(200);
+    let spec = (await call("GET", `/herr-tablas/${pedidos}`)).data;
+    const por = (k: string) => spec.campos.find((c: { clave: string }) => c.clave === k);
+    expect(por("piezas_x")).toMatchObject({ tipo: "entero", formula: 'sub_cuenta("partidas", ({tipo} == "X") y (({precio} > 10) o ({cantidad} >= 5)))' });
+    expect(por("pagos").formula).toBe(`tabla_cuenta("${pagos}", {pedido} == {actual:folio})`);
+
+    // Ya no se capturan: el formulario no los pide y al guardar se llenan solos.
+    const form = await pagina(`/pages/herramientas.herr-registro?tabla=${pedidos}`);
+    const nombres = [...nodos(form, "nox.input-number"), ...nodos(form, "nox.input-text")].map((n) => n.props?.name);
+    expect(nombres).not.toContain("piezas_x");
+    await capturar({ tabla_id: pagos, pedido: "P-1", monto: 10 });
+    await capturar({ tabla_id: pagos, pedido: "P-1", monto: 20 });
+    await capturar({ tabla_id: pagos, pedido: "P-2", monto: 5 });
+    const r = await capturar({
+      tabla_id: pedidos,
+      folio: "P-1",
+      partidas: [
+        { tipo: "X", cantidad: 2, precio: 15 },
+        { tipo: "X", cantidad: 5, precio: 8 },
+        { tipo: "Y", cantidad: 1, precio: 50 },
+        { tipo: "X", cantidad: 1, precio: 3 },
+      ],
+    });
+    expect(r.calculados.piezas_x).toBe("2");
+    expect(r.calculados.pagos).toBe("2");
+
+    // Con la fórmula vacía vuelve a capturarse a mano.
+    expect((await call("PATCH", `/herr-tablas/${pedidos}/campos/piezas_x`, { formula: "" })).status).toBe(200);
+    spec = (await call("GET", `/herr-tablas/${pedidos}`)).data;
+    expect(por("piezas_x").formula ?? null).toBeNull();
+  });
+
   test("una regla al escanear agrega la fila o suma su cantidad sin perder lo no guardado", async () => {
     const prod = await tabla("Productos", [
       { clave: "nombre", etiqueta: "Nombre", tipo: "texto" },

@@ -1,3 +1,4 @@
+import { es_calculado } from "./automatico.ts";
 import {
   SUBTABLE_ELEMENT_SEPARATOR,
   SUBTABLE_MAX_ROWS,
@@ -86,7 +87,7 @@ export function normalizar_filas(
   raw: unknown,
   normalizar_celda: (columna: CampoSpec, v: unknown) => string,
 ): FilaSubtabla[] {
-  const reglas = columnas_de(campo).map((c) => ({ key: c.clave, computed: c.tipo === "calculado", campo: c }));
+  const reglas = columnas_de(campo).map((c) => ({ key: c.clave, computed: es_calculado(c), campo: c }));
   try {
     return normalize_subtable_rows(raw, reglas, (r, v) => normalizar_celda(r.campo, v));
   } catch (e) {
@@ -110,7 +111,7 @@ export function spec_de_subtabla(spec: TablaSpec, campo: CampoSpec): TablaSpec {
     name: `${spec.name} › ${campo.etiqueta}`,
     campos: [
       ...columnas,
-      ...spec.campos.filter((c) => c.tipo !== "calculado" && c.tipo !== "subtabla" && !propias.has(c.clave)),
+      ...spec.campos.filter((c) => !es_calculado(c) && c.tipo !== "subtabla" && !propias.has(c.clave)),
     ],
     constantes: spec.constantes,
     resumenes: [],

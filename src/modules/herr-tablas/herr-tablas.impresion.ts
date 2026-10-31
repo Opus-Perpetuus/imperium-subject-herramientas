@@ -1,3 +1,4 @@
+import { es_calculado } from "../../lib/formulas/automatico.ts";
 import { define_routes, type KirletCtx, type NoxPageDescriptor, type NoxUiNode } from "@opus-perpetuus/imperium-core-kit";
 import { booleano, dia_legible, falla, fecha_hoy, hora_ahora, texto, zona_valida } from "../../lib/comun.ts";
 import { valores_resumen } from "../../lib/formulas/calculadora.ts";
@@ -113,7 +114,7 @@ function miniaturas_de(fila: Registro, clave: string): string {
 export function columnas_impresas(spec: TablaSpec, vista: Vista, completo: boolean): CampoSpec[] {
   if (!completo) return vista.columnas;
   const en_lista = new Set(vista.columnas.map((c) => c.clave));
-  return spec.campos.filter((c) => en_lista.has(c.clave) || c.tipo === "calculado");
+  return spec.campos.filter((c) => en_lista.has(c.clave) || es_calculado(c));
 }
 
 /** Valores fijos y totales (los resúmenes de la tabla calculados sobre los registros impresos). */

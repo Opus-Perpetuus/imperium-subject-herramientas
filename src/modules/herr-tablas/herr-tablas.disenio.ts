@@ -1,3 +1,4 @@
+import { TIPOS_LLENADO_AUTOMATICO, es_calculado } from "../../lib/formulas/automatico.ts";
 import {
   define_routes,
   new_id,
@@ -120,7 +121,7 @@ function usos_en_otras(spec: TablaSpec, otras: TablaSpec[], clave: string): stri
   const out: string[] = [];
   for (const otra of otras) {
     const formulas = [
-      ...otra.campos.filter((c) => c.tipo === "calculado").map((c) => ({ etiqueta: c.etiqueta, formula: c.formula ?? "" })),
+      ...otra.campos.filter((c) => es_calculado(c)).map((c) => ({ etiqueta: c.etiqueta, formula: c.formula ?? "" })),
       ...otra.resumenes.map((r) => ({ etiqueta: r.etiqueta, formula: r.formula })),
     ];
     for (const { etiqueta, formula } of formulas) {
@@ -201,8 +202,8 @@ function exigir_sin_uso_en_subtabla(spec: TablaSpec, sub: CampoSpec, col: CampoS
     return directa || en_sub;
   };
   const usan = [
-    ...(sub.columnas ?? []).filter((c) => c.clave !== col.clave && c.tipo === "calculado" && usa(c.formula, col.clave)),
-    ...spec.campos.filter((c) => c.tipo === "calculado" && lee(c.formula)),
+    ...(sub.columnas ?? []).filter((c) => c.clave !== col.clave && es_calculado(c) && usa(c.formula, col.clave)),
+    ...spec.campos.filter((c) => es_calculado(c) && lee(c.formula)),
     ...spec.resumenes.filter((r) => lee(r.formula)),
   ].map((x) => `«${x.etiqueta}»`);
   if (usan.length) falla(409, `«${col.etiqueta}» se usa en ${usan.join(", ")}: cambia o quita eso primero`, "conflict");
@@ -236,7 +237,7 @@ export async function quitar_reglas_que_usan(ctx: KirletCtx, tabla_id: string, c
 
 function exigir_sin_uso(spec: TablaSpec, clave: string, etiqueta: string): void {
   const usan = [
-    ...spec.campos.filter((c) => c.clave !== clave && c.tipo === "calculado" && usa(c.formula, clave)),
+    ...spec.campos.filter((c) => c.clave !== clave && es_calculado(c) && usa(c.formula, clave)),
     ...spec.campos.filter((c) => unidad_de_enlace(c, clave)),
     ...spec.resumenes.filter((r) => usa(r.formula, clave)),
   ].map((x) => `«${x.etiqueta}»`);
@@ -329,7 +330,11 @@ async function aplicar_cambios(ctx: KirletCtx, spec: TablaSpec, antes: CampoSpec
     campo.formula = formula_con_claves(spec, texto(body.formula), await otras_tablas(ctx, spec));
   }
   if (campo.tipo === "calculado") campo.formula ||= "0";
-  else campo.formula = null;
+  else if (!TIPOS_LLENADO_AUTOMATICO.has(campo.tipo)) campo.formula = null;
+  // Entero, número o dinero: con fórmula se llenan solos; con la fórmula vacía (o al cambiar de tipo) se capturan.
+  else if (!pedido && (("formula" in body && !texto(body.formula)) || (antes.tipo !== campo.tipo && !("formula" in body)) || campo.formula === "0")) {
+    campo.formula = null;
+  }
   if (campo.tipo === "entero") campo.decimales = 0;
   if (campo.tipo === "codigo") {
     const r = escaner_desde_formulario(spec.campos, campo, body);

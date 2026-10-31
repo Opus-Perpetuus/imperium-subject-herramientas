@@ -1,3 +1,4 @@
+import { es_calculado } from "./automatico.ts";
 import {
   calculados_en_orden,
   campo_de,
@@ -101,7 +102,7 @@ export function calcular_valores(
   const ambito = ambito_tabla(spec, resueltos, filas, contexto, id);
   // Las columnas calculadas de cada subtabla van antes: los calculados del registro las leen.
   for (const campo of spec.campos) {
-    if (campo.tipo !== "subtabla" || !campo.columnas?.some((c) => c.tipo === "calculado")) continue;
+    if (campo.tipo !== "subtabla" || !campo.columnas?.some((c) => es_calculado(c))) continue;
     const raw = resueltos[campo.clave];
     if (!raw) continue;
     resueltos[campo.clave] = calcular_subtabla(spec, campo, resueltos, contexto, ambito);
@@ -109,7 +110,7 @@ export function calcular_valores(
   for (const campo of calculados_en_orden(spec)) {
     const formula = campo.formula?.trim();
     if (!formula) continue;
-    resueltos[campo.clave] = presentar(evaluar(formula, ambito), decimales_de(campo));
+    resueltos[campo.clave] = presentar(evaluar(formula, ambito), campo.tipo === "entero" ? 0 : decimales_de(campo));
   }
   return resueltos;
 }
@@ -127,11 +128,11 @@ function calcular_subtabla(
   contexto: ContextoCalculo,
   padre: Ambito,
 ): string {
-  const calculadas = columnas_de(campo).filter((c) => c.tipo === "calculado" && c.formula?.trim());
+  const calculadas = columnas_de(campo).filter((c) => es_calculado(c) && c.formula?.trim());
   const ambitos = ambitos_subtabla(spec, campo, valores, contexto, padre);
   const filas = filas_de_subtabla(valores[campo.clave]).map((f, i) => {
     const out: FilaSubtabla = { ...f };
-    for (const c of calculadas) out[c.clave] = presentar(ambitos[i]!.resultado(c.clave), decimales_de(c));
+    for (const c of calculadas) out[c.clave] = presentar(ambitos[i]!.resultado(c.clave), c.tipo === "entero" ? 0 : decimales_de(c));
     return out;
   });
   return texto_de_subtabla(filas);
@@ -141,7 +142,7 @@ function calcular_subtabla(
 function base_de_filas(spec: TablaSpec, valores: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const c of spec.campos) {
-    if (c.tipo === "calculado" || c.tipo === "subtabla") continue;
+    if (es_calculado(c) || c.tipo === "subtabla") continue;
     const v = valores[c.clave];
     if (v !== undefined) out[c.clave] = v;
   }
@@ -172,7 +173,7 @@ function ambitos_subtabla(
     : { valor: (k) => valor_en(spec, valores, k, contexto, undefined), subtabla: subtabla_en(spec, valores, contexto) };
   const formulas = new Map(
     columnas_de(campo)
-      .filter((c) => c.tipo === "calculado")
+      .filter((c) => es_calculado(c))
       .map((c) => [c.clave, c.formula?.trim() ?? ""]),
   );
   const lista: AmbitoDeFila[] = [];
@@ -215,7 +216,7 @@ function subtabla_en(spec: TablaSpec, valores: Record<string, string>, contexto:
 /** Solo los calculados de un mapa ya resuelto (lo que se guarda en `calculados`). */
 export function calculados_de(spec: TablaSpec, valores: Record<string, string>): Record<string, string> {
   return Object.fromEntries(
-    spec.campos.filter((c) => c.tipo === "calculado").map((c) => [c.clave, valores[c.clave] ?? ""]),
+    spec.campos.filter((c) => es_calculado(c)).map((c) => [c.clave, valores[c.clave] ?? ""]),
   );
 }
 
