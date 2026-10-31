@@ -12,6 +12,7 @@ import {
   TIPO_AUTOMATICO,
   TOTALES,
   TOTAL_REGISTROS,
+  TIPOS_NUMERICOS,
   formula_con_etiquetas,
   opciones_numericas,
 } from "../../lib/formulas/disenio.ts";
@@ -41,7 +42,7 @@ import {
 } from "../../lib/formulas/reglas.ts";
 import { MODOS_REF_SUBTABLA, TIPOS_SUBCOLUMNA, columnas_de, spec_de_subtabla } from "../../lib/formulas/subtabla.ts";
 import { parsear_agregado } from "../../lib/formulas/motor.ts";
-import { COMPARADORES, HUECO, MAX_CONDICIONES, QUE_HACER, opciones_columnas } from "../../lib/formulas/constructor.ts";
+import { COMPARADORES, HUECO, MAX_CONDICIONES, QUE_HACER, UNIONES, opciones_columnas, opciones_origen, subtablas_de } from "../../lib/formulas/constructor.ts";
 import { columna_unica, plantilla_con_etiquetas } from "../../lib/formulas/plantilla.ts";
 import { plantillas } from "../../lib/formulas/plantillas.ts";
 import { filas_recalculadas, opciones_referencia, registros_de } from "./herr-tablas.flow.ts";
@@ -387,14 +388,59 @@ function ayuda_formula(spec: TablaSpec, extra = "", excepto?: string, otras: Tab
     "Solo las filas que cumplen: sumasi({Monto}, {Estado} = \"Pagado\"); también cuentasi, promediosi, minimosi, maximosi, buscarsi y unirsi.",
     "De otra tabla: tabla_suma(\"Ventas\", {Cantidad}, {Producto} = {actual:Nombre}) — dentro, {Columna} es de esa tabla y {actual:Columna} de este registro; también tabla_cuenta, tabla_promedio, tabla_minimo, tabla_maximo, tabla_buscar y tabla_unir.",
     "De un enlace: {Cliente.Teléfono}.",
-    spec.campos.some((c) => c.tipo === "subtabla")
-      ? "De una subtabla: {Productos} es cuántas filas tiene, {Productos.Importe} junta la columna (suma si son números), {Productos.ultima.Nombre} o {Productos.1.Nombre} una fila; " +
-        "sub_suma(\"Productos\", {Cantidad} * {Precio}, {Tipo} = \"Bebida\" o {Precio} > 100) — dentro, {Columna} es de cada fila y {actual:Columna} de este registro; también sub_cuenta, sub_promedio, sub_minimo, sub_maximo, sub_buscar y sub_unir."
-      : "",
+    ...subtablas_de(spec).map(ayuda_subtabla),
     tablas.length ? `Otras tablas: ${lista_corta(tablas, 8)}.` : "",
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+/**
+ * Lo que se puede escribir de UNA subtabla, con sus columnas de verdad:
+ * `{Productos}`, `{Productos.Cantidad}`, `{Productos.ultima.Cantidad}` y `sub_*`.
+ */
+export function ayuda_subtabla(sub: CampoSpec): string {
+  const cols = columnas_de(sub);
+  const n = sub.etiqueta;
+  const numerica = cols.find((c) => TIPOS_NUMERICOS.has(c.tipo)) ?? cols[0];
+  const otra = cols.find((c) => c !== numerica) ?? numerica;
+  const ej = numerica ? numerica.etiqueta : "Columna";
+  const cond = otra ? `{${otra.etiqueta}} = "X"` : `{Columna} = "X"`;
+  return [
+    `De la subtabla ${n}: {${n}} es cuántas filas tiene;`,
+    cols.length ? `sus columnas ${lista_corta(cols.map((c) => `{${n}.${c.etiqueta}}`), 12)} (los números se suman, los textos se juntan);` : "",
+    `una fila: {${n}.ultima.${ej}}, {${n}.primera.${ej}} o {${n}.1.${ej}};`,
+    `con condiciones: sub_suma("${n}", {${ej}}, ${cond} y ({${ej}} > 10 o vacio({${ej}})))` +
+      ` — dentro, {Columna} es de cada fila y {actual:Columna} de este registro; también sub_cuenta("${n}", ${cond}), sub_unir("${n}", {${otra?.etiqueta ?? "Columna"}}, ${cond}, " / "), sub_promedio, sub_minimo, sub_maximo y sub_buscar.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/** Las referencias de cada subtabla, a la vista (no solo en la ayuda): se copian tal cual a la fórmula. */
+function referencias_subtablas(spec: TablaSpec, excepto?: string): NoxUiNode[] {
+  const subs = subtablas_de(spec).filter((s) => s.clave !== excepto);
+  if (!subs.length) return [];
+  const bloque = (sub: CampoSpec) => {
+    const n = sub.etiqueta;
+    const cols = columnas_de(sub);
+    const ej = (cols.find((c) => TIPOS_NUMERICOS.has(c.tipo)) ?? cols[0])!.etiqueta;
+    return [
+      `**${n}**`,
+      `- \`{${n}}\` — cuántas filas tiene`,
+      ...cols.map((c) => `- \`{${n}.${c.etiqueta}}\` — ${TIPOS_NUMERICOS.has(c.tipo) ? "suma de" : "junta"} la columna ${c.etiqueta}`),
+      `- \`{${n}.ultima.${ej}}\`, \`{${n}.primera.${ej}}\`, \`{${n}.2.${ej}}\` — una fila`,
+      `- \`sub_suma("${n}", {${ej}}, condición)\`, \`sub_cuenta("${n}", condición)\`, \`sub_unir("${n}", {Columna}, condición, ", ")\` — solo las filas que cumplen; dentro, \`{Columna}\` es de cada fila`,
+    ].join("\n");
+  };
+  return [
+    titulo("Columnas de las subtablas"),
+    nodo("nox.markdown-view", {
+      content:
+        subs.map(bloque).join("\n\n") +
+        "\n\nLas condiciones se anidan con `y`, `o` y paréntesis: `{Tipo} = \"X\" y ({Precio} > 10 o {Urgente})`.",
+    }),
+  ];
 }
 
 function seccion_fijos(spec: TablaSpec): NoxUiNode[] {
@@ -912,6 +958,7 @@ function entradas_de_tipo(spec: TablaSpec, campo: CampoSpec, tablas: Map<string,
           placeholder: "{Precio} × {Cantidad}",
           help: ayuda_formula(spec, "", campo.clave, otras),
         }),
+        ...referencias_subtablas(spec, campo.clave),
         ...constructor_de_formula(spec, campo, otras),
         ...unidad("$, km, %…"),
         decimales,
@@ -1030,17 +1077,18 @@ function constructor_de_formula(spec: TablaSpec, campo: CampoSpec, otras: TablaS
         "Suma, cuenta o trae valores de los registros (de esta u otra tabla) que cumplan las condiciones. " +
         "Para comparar con este registro elige su columna en «…o con esta columna»: así se suman, por ejemplo, las ventas del producto de cada fila. " +
         `Lo armado reemplaza la fórmula de arriba; si la fórmula lleva \`${HUECO}\`, entra en ese lugar (por ejemplo \`{Precio} × ${HUECO}\`). ` +
-        "Para más condiciones o anidarlas (y dentro de o), edita después la fórmula.",
+        "Las columnas de las subtablas salen como «Subtabla … › Columna». " +
+        "Para más condiciones u otras formas de anidarlas, edita después la fórmula.",
     }),
     menu("ext_que", "Qué hacer", [{ value: "", label: "No usar" }, ...Object.entries(QUE_HACER).map(([value, label]) => ({ value, label }))], { value: "" }),
-    menu("ext_tabla", "De qué tabla", [{ value: spec.id, label: "Esta tabla" }, ...otras.filter((t) => t.id !== spec.id).map((t) => ({ value: t.id, label: t.name }))], {
+    menu("ext_tabla", "De qué tabla", opciones_origen(spec, otras), {
       value: spec.id,
+      ...(subtablas_de(spec).length
+        ? { help: "Elige una subtabla para sumar, contar o juntar solo SUS filas que cumplan las condiciones (sale sub_suma, sub_cuenta…)." }
+        : {}),
     }),
     menu("ext_columna", "Qué columna", [ninguna, ...columnas], { value: "", help: "De la tabla elegida. Para «Contar» no hace falta." }),
-    menu("ext_union", "Las condiciones se cumplen", [
-      { value: "y", label: "Todas (y)" },
-      { value: "o", label: "Al menos una (o)" },
-    ], { value: "y" }),
+    menu("ext_union", "Las condiciones se cumplen", Object.entries(UNIONES).map(([value, label]) => ({ value, label })), { value: "y" }),
     ...condiciones,
   ];
 }

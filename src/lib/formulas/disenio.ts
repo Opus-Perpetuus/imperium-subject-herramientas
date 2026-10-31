@@ -436,7 +436,11 @@ export function es_operacion(v: string): v is Operacion {
 export function operando(spec: TablaSpec, clave: string, numero?: number | null): string | null {
   if (numero != null && Number.isFinite(numero)) return String(numero);
   const existe = spec.campos.some((c) => c.clave === clave) || spec.constantes.some((c) => c.clave === clave);
-  return existe ? `{${clave}}` : null;
+  if (existe) return `{${clave}}`;
+  // `productos.cantidad`: la columna de una subtabla, sumada.
+  const i = clave.indexOf(".");
+  const sub = i > 0 ? spec.campos.find((c) => c.tipo === "subtabla" && c.clave === clave.slice(0, i)) : undefined;
+  return sub?.columnas?.some((c) => c.clave === clave.slice(i + 1)) ? `{${clave}}` : null;
 }
 
 /** Columnas y valores fijos que pueden entrar en una operación (sin la propia columna). */
@@ -446,6 +450,14 @@ export function opciones_numericas(spec: TablaSpec, excepto?: string): Array<{ v
       .filter((c) => c.clave !== excepto && TIPOS_NUMERICOS.has(c.tipo))
       .map((c) => ({ value: c.clave, label: c.etiqueta })),
     ...spec.constantes.map((c) => ({ value: c.clave, label: `${c.etiqueta} (valor fijo)` })),
+    ...spec.campos
+      .filter((s) => s.tipo === "subtabla" && s.clave !== excepto)
+      .flatMap((s) => [
+        { value: s.clave, label: `${s.etiqueta} (cuántas filas)` },
+        ...(s.columnas ?? [])
+          .filter((c) => TIPOS_NUMERICOS.has(c.tipo))
+          .map((c) => ({ value: `${s.clave}.${c.clave}`, label: `${s.etiqueta} › ${c.etiqueta} (suma de las filas)` })),
+      ]),
   ];
 }
 

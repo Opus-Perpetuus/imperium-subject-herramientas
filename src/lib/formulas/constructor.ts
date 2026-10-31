@@ -1,6 +1,7 @@
 import { texto } from "../comun.ts";
-import type { TablaSpec } from "./esquema.ts";
+import type { CampoSpec, TablaSpec } from "./esquema.ts";
 import { texto_a_numero } from "./motor.ts";
+import { columnas_de } from "./subtabla.ts";
 
 /**
  * El armador de fórmulas del diseñador: «sumar la Cantidad de Ventas cuyo
@@ -57,8 +58,29 @@ export type Pedido = {
   que: QueHacer;
   columna: string;
   condiciones: Condicion[];
-  union: "y" | "o";
+  union: Union;
 };
+
+/**
+ * Cómo se juntan las condiciones. Además de «todas» y «alguna», dos formas
+ * anidadas: «la 1 y (alguna de las demás)» y «la 1 o (todas las demás)».
+ */
+export const UNIONES = {
+  y: "Todas (y)",
+  o: "Al menos una (o)",
+  y_o: "La 1 y, además, al menos una de las demás: 1 y (2 o 3…)",
+  o_y: "La 1, o bien todas las demás: 1 o (2 y 3…)",
+} as const;
+
+export type Union = keyof typeof UNIONES;
+
+/** En «De qué tabla», una subtabla del propio registro: `sub:<clave>`. */
+export const PREFIJO_SUBTABLA = "sub:";
+
+/** Las subtablas del registro que se calcula: de ellas se suma, cuenta… con `sub_*`. */
+export function subtablas_de(spec: Pick<TablaSpec, "campos">): CampoSpec[] {
+  return spec.campos.filter((c) => c.tipo === "subtabla" && columnas_de(c).length > 0);
+}
 
 /** `tabla_id|clave` en los menús de columna: así una lista sirve para todas las tablas. */
 export function valor_columna(tabla_id: string, clave: string): string {
@@ -90,7 +112,7 @@ export function pedido_desde_formulario(body: Record<string, unknown>): Pedido |
     que: que as QueHacer,
     columna: texto(body.ext_columna),
     condiciones,
-    union: texto(body.ext_union) === "o" ? "o" : "y",
+    union: Object.hasOwn(UNIONES, texto(body.ext_union)) ? (texto(body.ext_union) as Union) : "y",
   };
 }
 
@@ -107,13 +129,20 @@ function literal(v: string): string {
 export function armar_formula(spec: TablaSpec, tablas: TablaSpec[], pedido: Pedido): { formula: string } | { error: string } {
   if (!Object.hasOwn(QUE_HACER, pedido.que)) return { error: `No sé hacer «${pedido.que}»` };
   const id_origen = pedido.tabla || spec.id;
-  const origen = id_origen === spec.id ? spec : tablas.find((t) => t.id === id_origen);
+  const sub = id_origen.startsWith(PREFIJO_SUBTABLA) ? subtablas_de(spec).find((c) => c.clave === id_origen.slice(PREFIJO_SUBTABLA.length)) : undefined;
+  if (id_origen.startsWith(PREFIJO_SUBTABLA) && !sub) return { error: "Esa subtabla ya no está en esta tabla" };
+  // De una subtabla solo valen sus columnas; las del registro se comparan con «…o con esta columna».
+  const origen: Pick<TablaSpec, "id" | "name" | "campos"> | undefined = sub
+    ? { id: id_origen, name: `la subtabla ${sub.etiqueta}`, campos: columnas_de(sub) }
+    : id_origen === spec.id
+      ? spec
+      : tablas.find((t) => t.id === id_origen);
   if (!origen) return { error: "Elige de qué tabla se toman los datos" };
   const de_origen = (v: string, que: string): string | { error: string } => {
     const c = partir_columna(v);
     if (!c) return { error: `Elige ${que}` };
     if (c.tabla !== origen.id) return { error: `${que[0]!.toUpperCase()}${que.slice(1)} tiene que ser de «${origen.name}»` };
-    if (c.clave !== "_id" && !origen.campos.some((x) => x.clave === c.clave)) return { error: `«${c.clave}» ya no existe en «${origen.name}»` };
+    if ((c.clave !== "_id" || sub) && !origen.campos.some((x) => x.clave === c.clave)) return { error: `«${c.clave}» ya no existe en «${origen.name}»` };
     return `{${c.clave}}`;
   };
   let valor: string | null = null;
@@ -146,8 +175,11 @@ export function armar_formula(spec: TablaSpec, tablas: TablaSpec[], pedido: Pedi
     }
     partes.push(c.op === "contiene" ? `contiene(${col}, ${otro})` : `${col} ${c.op === "=" ? "==" : c.op} ${otro}`);
   }
-  const union = pedido.union === "o" ? " o " : " y ";
-  const condicion = partes.length > 1 ? partes.map((p) => `(${p})`).join(union) : partes[0] ?? null;
+  const condicion = juntar(partes, pedido.union);
+  if (sub) {
+    const args = [JSON.stringify(sub.clave), ...(valor ? [valor] : []), ...(condicion ? [condicion] : [])];
+    return { formula: `sub_${pedido.que}(${args.join(", ")})` };
+  }
   if (origen.id === spec.id) {
     const f = { suma: "sumasi", cuenta: "cuentasi", promedio: "promediosi", minimo: "minimosi", maximo: "maximosi", buscar: "buscarsi", unir: "unirsi" }[pedido.que];
     const cond = condicion ?? "1";
@@ -157,12 +189,32 @@ export function armar_formula(spec: TablaSpec, tablas: TablaSpec[], pedido: Pedi
   return { formula: `tabla_${pedido.que}(${args.join(", ")})` };
 }
 
+function juntar(partes: string[], union: Union): string | null {
+  if (partes.length <= 1) return partes[0] ?? null;
+  const con = (ps: string[], u: "y" | "o") => ps.map((p) => `(${p})`).join(` ${u} `);
+  if (union === "y" || union === "o") return con(partes, union);
+  const [primera, ...demas] = partes as [string, ...string[]];
+  const resto = demas.length > 1 ? con(demas, union === "y_o" ? "o" : "y") : demas[0]!;
+  return `(${primera}) ${union === "y_o" ? "y" : "o"} (${resto})`;
+}
+
+/** «De qué tabla»: esta, cada subtabla del registro y las demás tablas. */
+export function opciones_origen(spec: TablaSpec, tablas: TablaSpec[]): Array<{ value: string; label: string }> {
+  return [
+    { value: spec.id, label: "Esta tabla" },
+    ...subtablas_de(spec).map((c) => ({ value: `${PREFIJO_SUBTABLA}${c.clave}`, label: `Subtabla ${c.etiqueta} (las filas de este registro)` })),
+    ...tablas.filter((t) => t.id !== spec.id).map((t) => ({ value: t.id, label: t.name })),
+  ];
+}
+
 /** Todas las columnas de todas las tablas para los menús: «Ventas › Cantidad». */
 export function opciones_columnas(spec: TablaSpec, tablas: TablaSpec[], excepto?: string): Array<{ value: string; label: string }> {
-  const todas = [spec, ...tablas.filter((t) => t.id !== spec.id)];
-  return todas.flatMap((t) =>
+  const de_tabla = (t: TablaSpec) =>
     t.campos
       .filter((c) => !(t.id === spec.id && c.clave === excepto))
-      .map((c) => ({ value: valor_columna(t.id, c.clave), label: `${t.id === spec.id ? "Esta tabla" : t.name} › ${c.etiqueta}` })),
+      .map((c) => ({ value: valor_columna(t.id, c.clave), label: `${t.id === spec.id ? "Esta tabla" : t.name} › ${c.etiqueta}` }));
+  const de_subtablas = subtablas_de(spec).flatMap((s) =>
+    columnas_de(s).map((c) => ({ value: valor_columna(`${PREFIJO_SUBTABLA}${s.clave}`, c.clave), label: `Subtabla ${s.etiqueta} › ${c.etiqueta}` })),
   );
+  return [...de_tabla(spec), ...de_subtablas, ...tablas.filter((t) => t.id !== spec.id).flatMap(de_tabla)];
 }

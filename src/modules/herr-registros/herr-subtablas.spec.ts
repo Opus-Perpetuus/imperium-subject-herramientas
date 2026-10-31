@@ -103,6 +103,22 @@ describe("subtablas", () => {
     const de_sub = await pagina(`/pages/herramientas.herr-tabla?id=${ventas}&modo=campo&campo=${items.clave}`);
     expect(nodos(de_sub, "nox.form").some((f) => (f.children ?? []).some((n) => n.props?.name === "subtabla"))).toBe(true);
     await pagina(`/pages/herramientas.herr-tabla?id=${ventas}&modo=campo&campo=${items.clave}.${importe.clave}`);
+    // El editor del cálculo del registro enseña las subcolumnas y el constructor arma `sub_suma` con ellas.
+    const editor_total = await pagina(`/pages/herramientas.herr-tabla?id=${ventas}&modo=campo&campo=${total.clave}`);
+    const menus = nodos(editor_total, "nox.input-menu");
+    const opciones = (name: string) => (menus.find((m) => m.props?.name === name)!.props!.options as { value: string; label: string }[]).map((o) => o.value);
+    expect(opciones("ext_tabla")).toContain(`sub:${items.clave}`);
+    expect(opciones("ext_c1_columna")).toContain(`sub:${items.clave}|${precio.clave}`);
+    expect(opciones("dato_a")).toContain(`${items.clave}.${precio.clave}`);
+    expect(nodos(editor_total, "nox.markdown-view").some((n) => String(n.props?.content).includes("{Artículos.ultima.Cantidad}"))).toBe(true);
+    const caros = await call("PATCH", `/herr-tablas/${ventas}/campos/${total.clave}`, {
+      ext_que: "suma", ext_tabla: `sub:${items.clave}`, ext_columna: `sub:${items.clave}|${importe.clave}`,
+      ext_c1_columna: `sub:${items.clave}|${precio.clave}`, ext_c1_op: ">", ext_c1_valor: "6",
+    });
+    expect(caros.status).toBe(200);
+    spec = (await call("GET", `/herr-tablas/${ventas}`)).data;
+    expect(spec.campos.find((c: { clave: string }) => c.clave === total.clave).formula).toBe(`sub_suma("${items.clave}", {${importe.clave}}, {${precio.clave}} > 6)`);
+    expect((await call("PATCH", `/herr-tablas/${ventas}/campos/${total.clave}`, { formula: "{Artículos.Importe}" })).status).toBe(200);
 
     // Capturar: el formulario trae la subtabla y al guardar se calcula fila por fila.
     const form = await pagina(`/pages/herramientas.herr-registro?tabla=${ventas}`);
