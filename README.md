@@ -67,6 +67,21 @@ prefijo `herr-`.
   datalist e impresos la pintan en línea, porque desde la APK un `<img>` a
   `/api/media` sale sin la cookie de sesión.
 
+## Fórmulas de la columna «Cálculo»
+
+Motor propio (`lib/formulas/motor.ts`): se parsea a un árbol y se evalúa; nunca se usa `eval`. Errores de sintaxis, funciones o tablas que no existen y anidación excesiva salen como `⚠ …` en la celda; el diseñador no deja guardar columnas o tablas inexistentes ni ciclos (`Ciclo de cálculo: A.x → B.y → A.x`, también entre tablas).
+
+- Operadores `+ − × ÷ ^ = != > >= < <=`, `y`/`o`/`no()` anidados sin límite con paréntesis; `si(cond, a, b)` anidable y perezoso; `+` con texto concatena.
+- Filas de la misma tabla: `sumasi`, `cuentasi`, `promediosi`, `minimosi`, `maximosi`, `buscarsi` (primer valor) y `unirsi` (textos unidos, separador opcional). Dentro, `{col}` es de cada fila y `{actual:col}` del registro que se calcula (`{actual:_id}` = su id).
+- Otra tabla: `tabla_suma("Tabla", {col}, cond?)`, `tabla_cuenta("Tabla", cond?)`, `tabla_promedio`, `tabla_minimo`, `tabla_maximo`, `tabla_buscar`, `tabla_unir("Tabla", {col}, cond?, sep?)`. Se escribe con el nombre; se guarda con el id (renombrar la tabla no rompe la fórmula).
+- Enlace: `{cliente.telefono}` lee la columna del registro enlazado (varios: suma números, une textos).
+
+Ejemplos: `sumasi({monto}, {estado} = "pagado" y {moto} = {actual:moto})` · `tabla_suma("Inventario", {cantidad}, ({categoria} = "Vino" o {categoria} = "Cerveza") y {almacen} = {actual:almacen})` · `si({total} > 100, "Cliente: " + {cliente.nombre}, "")`.
+
+En el diseñador (columna Cálculo → Editar), «Tomar de otra tabla o con condiciones» arma la fórmula eligiendo qué hacer, la tabla, la columna y hasta 4 condiciones (Todas/Al menos una) contra un valor o una columna de este registro; lo armado reemplaza la fórmula o entra en su `{?}`.
+
+**Recalcular.** Nada se empuja al guardar la tabla origen: cada vista (lista, buscar, totales, imprimir, cierre, vista previa, escaneo) recalcula en vivo y lee cada tabla externa una vez por petición, así el cambio en el origen se ve en la siguiente vista. Lo que no depende del registro (`tabla_*` sin `{actual:…}`) se calcula una vez por vista. Si la tabla no lee otras no hay consultas extra. Las cadenas de tablas se recalculan hasta 3 de distancia (`MAX_CADENA_TABLAS`); más allá, o en un ciclo, se usan los calculados guardados. Los `calculados` guardados de un registro (y el índice de búsqueda) se refrescan al guardar ese registro.
+
 ## Rutas propias (además del CRUD de cada módulo)
 
 | Ruta | Para qué |

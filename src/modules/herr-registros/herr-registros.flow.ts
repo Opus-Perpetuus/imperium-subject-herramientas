@@ -24,7 +24,7 @@ import { TIPOS_UNIDAD_POR_REGISTRO, spec_de_fila, type CampoSpec, type TablaSpec
 import { SUFIJO_CODIGO, metadata_de_codigo } from "../../lib/formulas/escaner.ts";
 import { MAX_FOTOS, lista_de, partir, unir } from "../../lib/formulas/fotos.ts";
 import { formatear as unir_multivalor } from "../../lib/formulas/multivalor.ts";
-import { objeto, registro_como_fila, registros_de, tabla_activa } from "../herr-tablas/herr-tablas.flow.ts";
+import { contexto_calculo, objeto, registro_como_fila, registros_de, tabla_activa } from "../herr-tablas/herr-tablas.flow.ts";
 
 /** Un valor capturado se guarda como texto; los compuestos del formulario se aplanan. */
 function como_texto(v: unknown): string {
@@ -231,7 +231,7 @@ export async function preparar_registro(
     .filter((r) => String(r.id) !== id)
     .map(registro_como_fila);
   filas.push({ id, valores });
-  const todos = calcular_valores(spec, valores, filas);
+  const todos = calcular_valores(spec, valores, filas, await contexto_calculo(ctx, spec), id);
   const calculados = calculados_de(spec, todos);
   const unidades = unidades_capturadas(spec, objeto(existing?.unidades), objeto(patch.unidades));
   const codigos = codigos_capturados(spec, valores, objeto(existing?.codigos), entrada_de(patch.codigos));

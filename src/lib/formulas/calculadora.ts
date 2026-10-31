@@ -3,14 +3,17 @@ import {
   campo_de,
   constante_de,
   decimales_de,
+  normalizar_nombre,
   type ConstanteTabla,
   type Registro,
   type ResumenTabla,
   type TablaSpec,
 } from "./esquema.ts";
+import { ids_referencia } from "./multivalor.ts";
 import {
   calcular_agregado,
   evaluar,
+  partir_enlace,
   parsear_agregado,
   parsear_nivel,
   texto_a_numero,
@@ -23,7 +26,50 @@ import {
 /**
  * Todo el cálculo de una tabla, sin estado: entra un esquema con registros y
  * sale texto ya formateado.
+ *
+ * Otras tablas (`tabla_suma("Ventas", …)`, `{cliente.telefono}`) llegan ya
+ * cargadas y recalculadas en `ContextoCalculo.externas`; aquí no se lee la base.
  */
+
+/** Otra tabla con sus filas ya recalculadas. */
+export type TablaCargada = { spec: TablaSpec; filas: Registro[] };
+
+/** Cómo encontrar otra tabla por el nombre (o id) que se escribió en la fórmula. */
+export type Externas = {
+  /** Por nombre o id tal como aparece en la fórmula; `{ error }` se ve en la celda. */
+  por_nombre(nombre: string): TablaCargada | { error: string };
+  /** Por id (el `tabla_ref_id` de un campo referencia); `null` si no se cargó. */
+  por_id(id: string): TablaCargada | null;
+};
+
+/**
+ * Lo que comparten todos los cálculos de una misma vista: las otras tablas y
+ * los resultados que no dependen del registro (una `tabla_suma` sin
+ * `{actual:…}` se calcula una vez por vista, no una por fila).
+ */
+export type ContextoCalculo = {
+  externas?: Externas;
+  compartido?: Map<object, Valor>;
+};
+
+const CONTEXTOS = new WeakMap<object, ContextoCalculo>();
+
+/**
+ * Recuerda con qué otras tablas se recalcularon estas filas, para que los
+ * resúmenes (que reciben solo las filas, a veces filtradas u ordenadas) usen las mismas.
+ */
+export function asociar_contexto<T extends Registro[]>(filas: T, contexto: ContextoCalculo): T {
+  CONTEXTOS.set(filas, contexto);
+  for (const f of filas) CONTEXTOS.set(f, contexto);
+  return filas;
+}
+
+export function contexto_de(filas: Registro[]): ContextoCalculo {
+  return CONTEXTOS.get(filas) ?? (filas[0] ? CONTEXTOS.get(filas[0]) : undefined) ?? {};
+}
+
+/** Ámbitos de fila y búsqueda por id de cada lista de filas; viven mientras viva la lista. */
+const AMBITOS = new WeakMap<Registro[], { filas: Ambito[]; por_id: Map<string, Registro> }>();
 
 /**
  * Evalúa los calculados de un registro en orden de dependencia; cada resultado
@@ -34,9 +80,11 @@ export function calcular_valores(
   spec: TablaSpec,
   capturados: Record<string, string>,
   filas: Registro[],
+  contexto: ContextoCalculo = {},
+  id?: string,
 ): Record<string, string> {
   const resueltos = { ...capturados };
-  const ambito = ambito_tabla(spec, resueltos, filas);
+  const ambito = ambito_tabla(spec, resueltos, filas, contexto, id);
   for (const campo of calculados_en_orden(spec)) {
     const formula = campo.formula?.trim();
     if (!formula) continue;
@@ -59,8 +107,9 @@ export function calculados_de(spec: TablaSpec, valores: Record<string, string>):
 export function valores_resumen(
   spec: TablaSpec,
   filas: Registro[],
+  contexto: ContextoCalculo = contexto_de(filas),
 ): { resumen: ResumenTabla; texto: string }[] {
-  const ambito = ambito_tabla(spec, {}, filas);
+  const ambito = ambito_tabla(spec, {}, filas, { ...contexto, compartido: new Map() });
   return spec.resumenes.map((resumen) => ({
     resumen,
     texto: presentar(evaluar(resumen.formula, ambito), decimales_de(resumen)),
@@ -72,9 +121,11 @@ function ambito_tabla(
   spec: TablaSpec,
   valores_registro: Record<string, string>,
   filas: Registro[],
+  contexto: ContextoCalculo,
+  id?: string,
 ): Ambito {
   const agregados = new Map<string, number>();
-  let ambitos_fila: Ambito[] | null = null;
+  const propia: TablaCargada = { spec, filas };
   return {
     valor(clave) {
       const agregado = parsear_agregado(clave);
@@ -89,27 +140,85 @@ function ambito_tabla(
         }
         return n;
       }
-      const constante = constante_de(spec, clave);
-      if (constante) return valor_constante(constante);
-      return valor_de(spec, valores_registro, clave);
+      return valor_en(spec, valores_registro, clave, contexto, id);
     },
     filas() {
-      ambitos_fila ??= filas.map((f) => ambito_fila(spec, f.valores));
-      return ambitos_fila;
+      return ambitos_de(propia, contexto).filas;
     },
+    tabla(nombre) {
+      if (nombre === spec.id || normalizar_nombre(nombre) === normalizar_nombre(spec.name)) {
+        return { filas: ambitos_de(propia, contexto).filas };
+      }
+      if (!contexto.externas) return { error: `No se pudo leer la tabla «${nombre}»` };
+      const t = contexto.externas.por_nombre(nombre);
+      return "error" in t ? t : { filas: ambitos_de(t, contexto).filas };
+    },
+    compartido: contexto.compartido,
   };
 }
 
-/** Un registro visto desde dentro: sus campos y los fijos, sin filas (evita el cuadrado). */
-function ambito_fila(spec: TablaSpec, valores: Record<string, string>): Ambito {
-  return {
-    valor(clave) {
-      const constante = constante_de(spec, clave);
-      if (constante) return valor_constante(constante);
-      return valor_de(spec, valores, clave);
-    },
-  };
+function ambitos_de(tabla: TablaCargada, contexto: ContextoCalculo): { filas: Ambito[]; por_id: Map<string, Registro> } {
+  let a = AMBITOS.get(tabla.filas);
+  if (!a) {
+    a = {
+      filas: tabla.filas.map((f) => ambito_fila(tabla.spec, f, contexto)),
+      por_id: new Map(tabla.filas.map((f) => [f.id, f])),
+    };
+    AMBITOS.set(tabla.filas, a);
+  }
+  return a;
 }
+
+/** Un registro visto desde dentro: sus campos y los fijos, sin filas (evita el cuadrado). */
+function ambito_fila(spec: TablaSpec, fila: Registro, contexto: ContextoCalculo): Ambito {
+  return { valor: (clave) => valor_en(spec, fila.valores, clave, contexto, fila.id) };
+}
+
+/** Un campo, un fijo, `_id` o `{referencia.columna}` del registro dado. */
+function valor_en(
+  spec: TablaSpec,
+  valores: Record<string, string>,
+  clave: string,
+  contexto: ContextoCalculo,
+  id: string | undefined,
+): Valor | undefined {
+  if (clave === "_id") return id ?? null;
+  const constante = constante_de(spec, clave);
+  if (constante) return valor_constante(constante);
+  const directo = valor_de(spec, valores, clave);
+  if (directo !== undefined) return directo;
+  const enlace = partir_enlace(clave);
+  return enlace ? valor_enlazado(spec, valores, enlace, contexto) : undefined;
+}
+
+/**
+ * `{cliente.telefono}`: la columna del registro al que apunta el campo
+ * referencia. Con varios enlazados, los números se suman y los textos se juntan.
+ */
+function valor_enlazado(
+  spec: TablaSpec,
+  valores: Record<string, string>,
+  enlace: { campo: string; columna: string },
+  contexto: ContextoCalculo,
+): Valor | undefined {
+  const campo = campo_de(spec, enlace.campo);
+  if (campo?.tipo !== "referencia" || !campo.tabla_ref_id) return undefined;
+  const ids = ids_referencia(valores[campo.clave] ?? "");
+  if (!ids.length) return null;
+  const destino = contexto.externas?.por_id(campo.tabla_ref_id);
+  if (!destino) return undefined;
+  const { por_id } = ambitos_de(destino, contexto);
+  const encontrados = ids
+    .map((id) => por_id.get(id))
+    .filter((f): f is Registro => !!f)
+    .map((f) => (enlace.columna === "_id" ? f.id : valor_de(destino.spec, f.valores, enlace.columna)))
+    .filter((v): v is Valor => v !== undefined);
+  if (!encontrados.length) return null;
+  if (encontrados.length === 1) return encontrados[0]!;
+  if (encontrados.every((v) => typeof v === "number")) return (encontrados as number[]).reduce((a, b) => a + b, 0);
+  return encontrados.map(a_texto).filter(Boolean).join(", ");
+}
+
 
 /** Un fijo entra como lo que parece: número si se lee como número, texto si no. */
 function valor_constante(constante: ConstanteTabla): Valor {
@@ -135,7 +244,7 @@ export function valor_de(
   valores: Record<string, string>,
   clave: string,
 ): Valor | undefined {
-  const raw = valores[clave];
+  const raw = Object.hasOwn(valores, clave) ? valores[clave] : undefined;
   if (raw === undefined) return undefined;
   if (raw === "") return null;
   if (raw.startsWith("⚠")) return undefined;
@@ -155,6 +264,8 @@ export function valor_de(
     case "opcion":
     case "geo":
       return raw;
+    case "referencia":
+      return ids_referencia(raw).join("|");
     default:
       return parsear_nivel(raw, campo?.capacidad ?? null) ?? texto_a_numero(raw) ?? raw;
   }

@@ -2,7 +2,7 @@ import { texto } from "../comun.ts";
 import { normalizar_escaner, type EscanerCampo } from "./escaner.ts";
 import { normalizar_escaneo, type EscaneoTabla } from "./escaneo.ts";
 import { normalizar_reglas, type ReglaEscaneo } from "./reglas.ts";
-import { ambito_sonda, claves_referenciadas, evaluar, parsear_agregado } from "./motor.ts";
+import { ambito_sonda, claves_referenciadas, evaluar, parsear_agregado, referencias } from "./motor.ts";
 
 /**
  * Esquema de una tabla personalizada: campos tipados, valores fijos y resúmenes.
@@ -189,8 +189,9 @@ export function constante_de(spec: TablaSpec, clave: string): ConstanteTabla | u
   return spec.constantes.find((c) => c.clave === clave);
 }
 
-/** ¿Esta clave significa algo en la tabla? Campo, valor fijo o agregado sobre un campo existente. */
+/** ¿Esta clave significa algo en la tabla? Campo, valor fijo, `_id` o agregado sobre un campo existente. */
 export function resuelve_clave(spec: TablaSpec, clave: string): boolean {
+  if (clave === "_id") return true;
   const agregado = parsear_agregado(clave);
   if (agregado) return campo_de(spec, agregado.campo) !== undefined;
   return campo_de(spec, clave) !== undefined || constante_de(spec, clave) !== undefined;
@@ -320,13 +321,136 @@ export function spec_de_fila(fila: Record<string, unknown>): TablaSpec {
 
 const CLAVE = /^[a-z][a-z0-9_]*$/;
 
-function errores_formula(spec: TablaSpec, formula: string, donde: string): string[] {
+/** Nombres de tabla sin mayúsculas, acentos ni espacios de sobra. */
+export function normalizar_nombre(nombre: string): string {
+  return nombre.normalize("NFD").replace(/\p{M}/gu, "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/**
+ * La tabla que nombra una fórmula: primero por id, luego por nombre. Dos tablas
+ * con el mismo nombre obligan a usar el id.
+ */
+export function buscar_tabla(tablas: TablaSpec[], nombre: string): TablaSpec | { error: string } {
+  const por_id = tablas.find((t) => t.id === nombre);
+  if (por_id) return por_id;
+  const n = normalizar_nombre(nombre);
+  const mismas = tablas.filter((t) => normalizar_nombre(t.name) === n);
+  if (mismas.length === 1) return mismas[0]!;
+  if (mismas.length > 1) return { error: `Hay ${mismas.length} tablas «${nombre}»; usa su id: ${mismas.map((t) => t.id).join(", ")}` };
+  return { error: `No existe la tabla «${nombre}»` };
+}
+
+/**
+ * Errores de una fórmula. Con `otras` (todas las tablas) también revisa las
+ * columnas de otras tablas y de los enlaces; sin ellas solo las propias.
+ */
+export function errores_formula(spec: TablaSpec, formula: string, donde: string, otras?: TablaSpec[]): string[] {
   const errores: string[] = [];
-  for (const ref of claves_referenciadas(formula)) {
+  const refs = referencias(formula);
+  for (const ref of refs.propias) {
     if (!resuelve_clave(spec, ref)) errores.push(`«${donde}»: «${ref}» no existe`);
+  }
+  const revisar_enlaces = (en: TablaSpec, enlaces: { campo: string; columna: string }[]) => {
+    for (const { campo, columna } of enlaces) {
+      const c = campo_de(en, campo);
+      if (!c) continue;
+      if (c.tipo !== "referencia" || !c.tabla_ref_id) {
+        errores.push(`«${donde}»: «${campo}» no es un enlace a otra tabla; no se puede leer «${campo}.${columna}»`);
+        continue;
+      }
+      if (!otras) continue;
+      const destino = c.tabla_ref_id === spec.id ? spec : otras.find((t) => t.id === c.tabla_ref_id);
+      if (!destino) errores.push(`«${donde}»: la tabla enlazada en «${campo}» ya no existe`);
+      else if (!resuelve_clave(destino, columna)) errores.push(`«${donde}»: «${columna}» no existe en «${destino.name}»`);
+    }
+  };
+  revisar_enlaces(spec, refs.enlaces);
+  if (otras) {
+    const todas = otras.some((t) => t.id === spec.id) ? otras : [spec, ...otras];
+    for (const [nombre, claves] of refs.tablas) {
+      const t = buscar_tabla(todas, nombre);
+      if ("error" in t) {
+        errores.push(`«${donde}»: ${t.error}`);
+        continue;
+      }
+      for (const clave of claves) {
+        if (!resuelve_clave(t, clave)) errores.push(`«${donde}»: «${clave}» no existe en «${t.name}»`);
+      }
+      revisar_enlaces(t, refs.enlaces_tablas.get(nombre) ?? []);
+    }
   }
   const r = evaluar(formula, ambito_sonda());
   if (!r.ok) errores.push(`«${donde}»: ${r.error}`);
+  return errores;
+}
+
+/**
+ * Ciclos entre calculados: `A.total` lee `B.precio` que lee `A.total`. Cuenta lo
+ * que se lee del registro mismo, de otras tablas (`tabla_*`) y de los enlaces
+ * (`{cliente.saldo}`); no lo que un `sumasi` lee de las filas de su propia tabla,
+ * que usa los valores guardados y no puede girar en redondo.
+ */
+export function ciclos_de_calculo(spec: TablaSpec, otras: TablaSpec[] = []): string[] {
+  const tablas = new Map<string, TablaSpec>([...otras.map((t) => [t.id, t] as const), [spec.id, spec]]);
+  const lista_tablas = [...tablas.values()];
+  const nodo = (t: TablaSpec, clave: string) => `${t.id}\u0000${clave}`;
+  const nombre_de = (id_nodo: string) => {
+    const [tid, clave] = id_nodo.split("\u0000") as [string, string];
+    const t = tablas.get(tid)!;
+    return `${t.name}.${campo_de(t, clave)?.etiqueta || clave}`;
+  };
+  const deps = new Map<string, string[]>();
+  const dependencias = (t: TablaSpec, clave: string): string[] => {
+    const id = nodo(t, clave);
+    const ya = deps.get(id);
+    if (ya) return ya;
+    const out: string[] = [];
+    deps.set(id, out);
+    const formula = campo_de(t, clave)?.formula ?? "";
+    const refs = referencias(formula);
+    const calculado = (en: TablaSpec, c: string) => campo_de(en, c)?.tipo === "calculado";
+    const enlazar = (en: TablaSpec, enlaces: { campo: string; columna: string }[]) => {
+      for (const { campo, columna } of enlaces) {
+        const destino = tablas.get(campo_de(en, campo)?.tabla_ref_id ?? "");
+        if (destino && calculado(destino, columna)) out.push(nodo(destino, columna));
+      }
+    };
+    for (const c of refs.directas) if (calculado(t, c)) out.push(nodo(t, c));
+    enlazar(t, refs.enlaces);
+    for (const [nombre, claves] of refs.tablas) {
+      const otra = buscar_tabla(lista_tablas, nombre);
+      if ("error" in otra || otra.id === t.id) continue;
+      for (const c of claves) if (calculado(otra, c)) out.push(nodo(otra, c));
+      enlazar(otra, refs.enlaces_tablas.get(nombre) ?? []);
+    }
+    return out;
+  };
+  const errores: string[] = [];
+  const vistos = new Set<string>();
+  const camino: string[] = [];
+  const en_camino = new Set<string>();
+  const visitar = (t: TablaSpec | undefined, id: string) => {
+    if (en_camino.has(id)) {
+      const ciclo = [...camino.slice(camino.indexOf(id)), id].map(nombre_de).join(" → ");
+      errores.push(`Ciclo de cálculo: ${ciclo}. Quita una de esas referencias.`);
+      return;
+    }
+    if (vistos.has(id) || !t) return;
+    vistos.add(id);
+    camino.push(id);
+    en_camino.add(id);
+    const clave = id.split("\u0000")[1]!;
+    for (const dep of dependencias(t, clave)) {
+      if (errores.length) break;
+      visitar(tablas.get(dep.split("\u0000")[0]!), dep);
+    }
+    camino.pop();
+    en_camino.delete(id);
+  };
+  for (const c of spec.campos) {
+    if (c.tipo !== "calculado" || errores.length) continue;
+    visitar(spec, nodo(spec, c.clave));
+  }
   return errores;
 }
 
@@ -335,7 +459,7 @@ function errores_formula(spec: TablaSpec, formula: string, donde: string): strin
  * valores fijos comparten espacio; los resúmenes tienen el suyo), tipos
  * desconocidos, calculados sin fórmula y referencias rotas.
  */
-export function validar_esquema(spec: TablaSpec): string[] {
+export function validar_esquema(spec: TablaSpec, otras?: TablaSpec[]): string[] {
   const errores: string[] = [];
   const revisar_clave = (clave: string, donde: string, vistas: Set<string>) => {
     if (!CLAVE.test(clave)) errores.push(`${donde}: clave inválida «${clave}»`);
@@ -350,7 +474,7 @@ export function validar_esquema(spec: TablaSpec): string[] {
     }
     if (campo.tipo === "calculado") {
       if (!campo.formula) errores.push(`«${campo.clave}»: falta la fórmula`);
-      else errores.push(...errores_formula(spec, campo.formula, campo.clave));
+      else errores.push(...errores_formula(spec, campo.formula, campo.clave, otras));
     }
     if (campo.unidad_de) {
       const ref = campo_de(spec, campo.unidad_de.split(":")[0] ?? "");
@@ -362,8 +486,9 @@ export function validar_esquema(spec: TablaSpec): string[] {
   for (const r of spec.resumenes) {
     revisar_clave(r.clave, "Resumen", vistas_resumen);
     if (!r.formula) errores.push(`«${r.clave}»: falta la fórmula`);
-    else errores.push(...errores_formula(spec, r.formula, r.clave));
+    else errores.push(...errores_formula(spec, r.formula, r.clave, otras));
   }
+  errores.push(...ciclos_de_calculo(spec, otras));
   const vistas_cierre = new Set<string>();
   for (const campo of spec.campos_cierre ?? []) {
     revisar_clave(campo.clave, "Dato del cierre", vistas_cierre);

@@ -103,7 +103,7 @@ export async function aplicar_reglas(ctx: KirletCtx, spec: TablaSpec, abierto: A
         omitir("la tabla de origen ya no está");
         continue;
       }
-      const fila = registro_por_codigo(ospec, filas_recalculadas(ospec, await registros_de(ctx, ospec.id)), codigo);
+      const fila = registro_por_codigo(ospec, await filas_recalculadas(ctx, ospec, await registros_de(ctx, ospec.id)), codigo);
       if (!fila) continue; // el código no es de esa tabla: la regla no aplica
       origen = { spec: ospec, id: fila.id, valores: fila.valores };
     }
@@ -224,7 +224,7 @@ export async function agregar_por_codigo(
   const destino = await ctx.data.findOne("herr_tablas", { id: campo!.tabla_ref_id! });
   if (!destino || destino.is_active === false) falla(404, `La tabla a la que apunta «${campo!.etiqueta}» ya no está`, "not_found");
   const dspec = spec_de_fila(destino!);
-  const hallado = registro_por_codigo(dspec, filas_recalculadas(dspec, await registros_de(ctx, dspec.id)), codigo);
+  const hallado = registro_por_codigo(dspec, await filas_recalculadas(ctx, dspec, await registros_de(ctx, dspec.id)), codigo);
   if (!hallado) falla(404, `Ningún registro de «${dspec.name}» tiene el código «${codigo}»`, "not_found");
   const ids = parsear(formatear(actuales));
   const ya = ids.includes(hallado!.id);

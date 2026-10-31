@@ -6,13 +6,24 @@ import {
   type KirletCtx,
   type NoxUiNode,
 } from "@opus-perpetuus/imperium-core-kit";
-import { LIMITE_FILAS, campo_busqueda, es_foto_guardada, falla, fila_o_404, texto } from "../../lib/comun.ts";
+import { LIMITE_FILAS, campo_busqueda, es_foto_guardada, falla, fila_o_404, filas_de, texto } from "../../lib/comun.ts";
 import { NO_INDEXABLES, buscar, construir_indice } from "../../lib/formulas/busqueda.ts";
-import { calcular_valores, formatear, numero_de, valores_resumen } from "../../lib/formulas/calculadora.ts";
+import {
+  asociar_contexto,
+  calcular_valores,
+  contexto_de,
+  formatear,
+  numero_de,
+  valores_resumen,
+  type ContextoCalculo,
+  type TablaCargada,
+} from "../../lib/formulas/calculadora.ts";
 import {
   PARTES_REF,
   SIN_FOTO,
   TIPOS_FOTO,
+  buscar_tabla,
+  campo_de,
   decimales_de,
   spec_de_fila,
   type CampoSpec,
@@ -21,10 +32,11 @@ import {
 } from "../../lib/formulas/esquema.ts";
 import { MAX_FOTOS, cuantas, cuantas_son, lista_de, partir } from "../../lib/formulas/fotos.ts";
 import { codigos_con_notas, codigos_de, formato_regenerado } from "../../lib/formulas/escaner.ts";
-import { parsear } from "../../lib/formulas/multivalor.ts";
+import { ids_referencia, parsear } from "../../lib/formulas/multivalor.ts";
 import {
   TIPOS_AGREGADO,
   calcular_agregado,
+  referencias,
   texto_a_numero,
   type TipoAgregado,
 } from "../../lib/formulas/motor.ts";
@@ -97,25 +109,131 @@ export function registro_como_fila(row: DomainRow): Registro {
  * en `calculados` son de cuando se capturó cada una: un `{suma:pagado}` de la
  * primera fila no sabe de las que llegaron después.
  */
-export function filas_recalculadas(spec: TablaSpec, registros: DomainRow[]): Registro[] {
-  const base = registros.map(registro_como_fila);
-  return base.map((f, i) => ({ ...f, valores: calcular_valores(spec, objeto(registros[i]!.valores), base) }));
+export async function filas_recalculadas(ctx: Datos, spec: TablaSpec, registros: DomainRow[]): Promise<Registro[]> {
+  return recalcular(spec, registros, await contexto_calculo(ctx, spec));
 }
+
+/** Como `filas_recalculadas` con las otras tablas ya cargadas. */
+export function recalcular(spec: TablaSpec, registros: DomainRow[], contexto: ContextoCalculo = {}): Registro[] {
+  const base = registros.map(registro_como_fila);
+  // Un solo `compartido` por vista: lo que no depende del registro se calcula una vez.
+  const comun: ContextoCalculo = { ...contexto, compartido: new Map() };
+  const filas = base.map((f, i) => ({ ...f, valores: calcular_valores(spec, objeto(registros[i]!.valores), base, comun, f.id) }));
+  return asociar_contexto(filas, contexto);
+}
+
+// #region Otras tablas en las fórmulas
+
+/**
+ * Cuántas tablas de distancia se recalculan: A lee B que lee C… Más allá se
+ * usan los calculados guardados de cada registro.
+ */
+export const MAX_CADENA_TABLAS = 3;
+
+type CacheTablas = {
+  todas?: Promise<TablaSpec[]>;
+  cargadas: Map<string, Promise<TablaCargada | null>>;
+};
+
+/** Las tablas (por nombre escrito) y los enlaces (por id) que leen las fórmulas de `spec`. */
+function lo_que_lee(spec: TablaSpec): { nombres: Set<string>; enlaces: Set<string> } {
+  const nombres = new Set<string>();
+  const enlaces = new Set<string>();
+  const formulas = [
+    ...spec.campos.filter((c) => c.tipo === "calculado").map((c) => c.formula ?? ""),
+    ...spec.resumenes.map((r) => r.formula),
+  ];
+  for (const f of formulas) {
+    if (!f.includes("tabla_") && !f.includes(".")) continue;
+    const refs = referencias(f);
+    for (const n of refs.tablas.keys()) nombres.add(n);
+    for (const e of refs.enlaces) {
+      const id = campo_de(spec, e.campo)?.tabla_ref_id;
+      if (id) enlaces.add(id);
+    }
+  }
+  return { nombres, enlaces };
+}
+
+/**
+ * Carga y recalcula las otras tablas que nombran las fórmulas de `spec`.
+ *
+ * Estrategia de recálculo: nada se recalcula al guardar en la tabla origen;
+ * cada vista (lista, búsqueda, totales, impresión, cierre) relee y recalcula al
+ * abrirse, así un cambio en «Ventas» se ve la siguiente vez que se abre la
+ * tabla que la suma. Para que no pese:
+ * - una tabla sin `tabla_*` ni enlaces `{campo.columna}` no lee nada más;
+ * - cada tabla se lee una vez por petición (caché por id) aunque la nombren varias fórmulas;
+ * - lo que no depende del registro (sin `{actual:…}`) se calcula una vez por vista;
+ * - los ciclos entre tablas (A lee B que lee A) y las cadenas de más de
+ *   `MAX_CADENA_TABLAS` usan los calculados guardados en vez de recalcular,
+ *   así nunca hay recursión infinita. El diseñador además rechaza los ciclos
+ *   entre columnas al guardar.
+ */
+export async function contexto_calculo(
+  ctx: Datos,
+  spec: TablaSpec,
+  cadena: string[] = [],
+  cache: CacheTablas = { cargadas: new Map() },
+): Promise<ContextoCalculo> {
+  const { nombres, enlaces } = lo_que_lee(spec);
+  if (!nombres.size && !enlaces.size) return {};
+  cache.todas ??= filas_de(ctx, "herr_tablas", { is_active: true }).then((fs) => fs.map(spec_de_fila));
+  // La versión de `spec` que llega manda: puede ser la que se está diseñando.
+  const todas = [spec, ...(await cache.todas).filter((t) => t.id !== spec.id)];
+  const ids = new Set(enlaces);
+  for (const nombre of nombres) {
+    const t = buscar_tabla(todas, nombre);
+    if ("error" in t) continue;
+    ids.add(t.id);
+    // Enlaces leídos dentro de otra tabla: `tabla_suma("Ventas", {producto.precio})`.
+    for (const formula of [...spec.campos.map((c) => c.formula ?? ""), ...spec.resumenes.map((r) => r.formula)]) {
+      for (const e of referencias(formula).enlaces_tablas.get(nombre) ?? []) {
+        const destino = campo_de(t, e.campo)?.tabla_ref_id;
+        if (destino) ids.add(destino);
+      }
+    }
+  }
+  const cargar = (id: string): Promise<TablaCargada | null> => {
+    const t = todas.find((x) => x.id === id);
+    if (!t) return Promise.resolve(null);
+    const guardada = id === spec.id || cadena.includes(id) || cadena.length >= MAX_CADENA_TABLAS;
+    const llave = `${id}|${guardada ? "guardada" : "recalculada"}`;
+    let p = cache.cargadas.get(llave);
+    if (!p) {
+      p = (async () => {
+        const registros = await registros_de(ctx, id);
+        if (guardada) return { spec: t, filas: registros.map(registro_como_fila) };
+        const sub = await contexto_calculo(ctx, t, [...cadena, spec.id], cache);
+        return { spec: t, filas: recalcular(t, registros, sub) };
+      })();
+      cache.cargadas.set(llave, p);
+    }
+    return p;
+  };
+  const cargadas = new Map<string, TablaCargada>();
+  for (const id of ids) {
+    const c = await cargar(id);
+    if (c) cargadas.set(id, c);
+  }
+  return {
+    externas: {
+      por_nombre(nombre) {
+        const t = buscar_tabla(todas, nombre);
+        if ("error" in t) return t;
+        return cargadas.get(t.id) ?? { error: `No se pudo leer la tabla «${nombre}»` };
+      },
+      por_id: (id) => cargadas.get(id) ?? null,
+    },
+  };
+}
+
+// #endregion
 
 const NUMERICOS = new Set(["numero", "dinero", "entero", "calculado"]);
 
 /** Ids de un campo referencia. Hay filas con la opción entera del datalist en JSON (`{"_id":…}`): valen por su id. */
-export function ids_referencia(raw: string): string[] {
-  if (raw.startsWith("{")) {
-    try {
-      const id = texto((JSON.parse(raw) as { _id?: unknown })._id);
-      if (id) return [id];
-    } catch {
-      // No era una opción en JSON: se lee como cualquier otro valor.
-    }
-  }
-  return parsear(raw);
-}
+export { ids_referencia };
 
 /**
  * El valor de un campo como se lee en la lista: números con sus decimales y
@@ -405,7 +523,8 @@ export function columnas_de_lista(spec: TablaSpec): CampoSpec[] {
 
 /** Lo que enseña «Ver tabla» (y lo que se imprime): las filas en su orden, las columnas de la lista y cómo se presenta cada fila. */
 export async function vista_de_tabla(data: KirletCtx["data"], spec: TablaSpec) {
-  const filas = ordenar(spec, filas_recalculadas(spec, await registros_de({ data }, spec.id)));
+  const recalculadas = await filas_recalculadas({ data }, spec, await registros_de({ data }, spec.id));
+  const filas = asociar_contexto(ordenar(spec, recalculadas), contexto_de(recalculadas));
   const presentacion = presentacion_de(await enlaces_de(data, spec));
   return { filas, etiquetas: presentacion.etiquetas, columnas: columnas_de_lista(spec), presentacion };
 }
@@ -545,7 +664,7 @@ export const herr_tablas_flow = define_routes({
 
   "GET /herr-tablas/:id/resumen": async (ctx) => {
     const spec = spec_de_fila(await tabla_activa(ctx, ctx.params.id));
-    const filas = filas_recalculadas(spec, await registros_de(ctx, spec.id));
+    const filas = await filas_recalculadas(ctx, spec, await registros_de(ctx, spec.id));
     const agregados: Record<string, Record<TipoAgregado, number>> = {};
     for (const campo of spec.campos) {
       if (!AGREGABLES.has(campo.tipo)) continue;
@@ -571,7 +690,7 @@ export const herr_tablas_flow = define_routes({
     const registros = await registros_de(ctx, spec.id);
     const presentacion = presentacion_de(await enlaces_de(ctx.data, spec));
     const por_registro = new Map(registros.map((r) => [String(r.id), r]));
-    const data = coincidencias(spec, filas_recalculadas(spec, registros), presentacion, texto(body.q)).map(
+    const data = coincidencias(spec, await filas_recalculadas(ctx, spec, registros), presentacion, texto(body.q)).map(
       (id) => por_registro.get(id)!,
     );
     return { data, total_elementos: data.length };

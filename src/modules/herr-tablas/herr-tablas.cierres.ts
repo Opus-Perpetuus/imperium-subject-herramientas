@@ -211,7 +211,7 @@ export async function pagina_cerrar(data: Datos, spec: TablaSpec): Promise<NoxPa
     hijos.push(nodo("nox.empty", { text: "No hay registros que cerrar", description: "Captura alguno y vuelve." }), volver);
     return pagina(ID_TABLA, `Hacer cierre · ${spec.name}`, hijos);
   }
-  const filas = filas_recalculadas(spec, registros);
+  const filas = await filas_recalculadas({ data }, spec, registros);
   const n = filas.length;
   hijos.push(
     nodo("nox.markdown-view", {
@@ -472,7 +472,7 @@ export async function pagina_comparar(data: Datos, spec: TablaSpec, params: URLS
     fechas.push(texto(cab.fecha));
   }
   if (actual) {
-    const filas = filas_recalculadas(spec, await registros_de({ data }, spec.id));
+    const filas = await filas_recalculadas({ data }, spec, await registros_de({ data }, spec.id));
     periodos.push({
       titulo: "Lo actual",
       filas,
@@ -558,7 +558,7 @@ export const herr_tablas_cierres = define_routes({
     const datos = datos_de_cierre(spec, body ?? {});
     const registros = await registros_de(ctx, spec.id);
     if (!registros.length) falla(409, "No hay registros que cerrar", "conflict");
-    const filas = filas_recalculadas(spec, registros);
+    const filas = await filas_recalculadas(ctx, spec, registros);
     const cerrado_at = now_iso();
     const resumen = Object.fromEntries(valores_resumen(spec, filas).map((r) => [r.resumen.clave, r.texto]));
     const resumen_archivo = Object.fromEntries(

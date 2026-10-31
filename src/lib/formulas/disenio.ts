@@ -1,6 +1,6 @@
 import { clave_desde_etiqueta, normalizar, texto } from "../comun.ts";
-import { parsear_agregado, TIPOS_AGREGADO, type TipoAgregado } from "./motor.ts";
-import type { CampoSpec, ParteRef, ResumenTabla, TablaSpec, TipoCampo } from "./esquema.ts";
+import { mapear_referencias, parsear_agregado, PREFIJO_ACTUAL, TIPOS_AGREGADO, type TipoAgregado } from "./motor.ts";
+import { buscar_tabla, type CampoSpec, type ParteRef, type ResumenTabla, type TablaSpec, type TipoCampo } from "./esquema.ts";
 
 /**
  * Diseñador de tablas para quien no programa: tipos con nombre de todos los
@@ -254,8 +254,6 @@ export function necesita_ajustes(campo: CampoSpec): boolean {
 
 // #region Fórmulas con nombres visibles
 
-const LLAVE = /\{([^{}"]+)\}/g;
-
 /** Aplica `fn` solo fuera de los textos entre comillas. */
 function fuera_de_comillas(formula: string, fn: (parte: string) => string): string {
   return formula
@@ -264,34 +262,107 @@ function fuera_de_comillas(formula: string, fn: (parte: string) => string): stri
     .join('"');
 }
 
-function traducir_llaves(formula: string, resolver: (nombre: string) => string): string {
-  return fuera_de_comillas(formula, (parte) =>
-    parte.replace(LLAVE, (_todo, dentro: string) => {
-      const agregado = parsear_agregado(dentro);
-      return agregado ? `{${agregado.tipo}:${resolver(agregado.campo)}}` : `{${resolver(dentro.trim())}}`;
-    }),
-  );
+/**
+ * Traduce cada `{…}` con el diccionario de SU tabla: la propia, la de un
+ * `tabla_suma("Ventas", …)` que la envuelve o la de un enlace `{Cliente.Teléfono}`.
+ */
+function traducir_llaves(
+  spec: TablaSpec,
+  otras: TablaSpec[],
+  formula: string,
+  traducir: (en: TablaSpec, nombre: string) => string | null,
+  partir: (en: TablaSpec, nombre: string) => Array<[string, string]>,
+  nombre_tabla: (t: TablaSpec) => string,
+): string {
+  const todas = otras.some((t) => t.id === spec.id) ? otras : [spec, ...otras];
+  const enlazada = (en: TablaSpec, campo: string): TablaSpec | null => {
+    const c = en.campos.find((x) => x.clave === campo);
+    if (c?.tipo !== "referencia" || !c.tabla_ref_id) return null;
+    return todas.find((t) => t.id === c.tabla_ref_id) ?? null;
+  };
+  const una = (en: TablaSpec, dentro: string): string => {
+    const agregado = parsear_agregado(dentro);
+    if (agregado) return `${agregado.tipo}:${traducir(en, agregado.campo) ?? agregado.campo}`;
+    const directa = traducir(en, dentro.trim());
+    if (directa !== null) return directa;
+    for (const [izq, der] of partir(en, dentro.trim())) {
+      const campo = traducir(en, izq);
+      const destino = campo === null ? null : enlazada(en, campo);
+      if (destino) return `${campo}.${traducir(destino, der) ?? der}`;
+    }
+    return dentro.trim();
+  };
+  return mapear_referencias(formula, (dentro, tabla) => {
+    if (dentro.toLowerCase().startsWith(PREFIJO_ACTUAL)) return `{${PREFIJO_ACTUAL}${una(spec, dentro.slice(PREFIJO_ACTUAL.length))}}`;
+    if (tabla === null) return `{${una(spec, dentro)}}`;
+    const otra = buscar_tabla(todas, tabla);
+    return "error" in otra ? `{${dentro}}` : `{${una(otra, dentro)}}`;
+  }, (tabla) => {
+    const otra = buscar_tabla(todas, tabla);
+    return "error" in otra ? tabla : nombre_tabla(otra);
+  });
+}
+
+/** `Cliente.Teléfono` → cada forma de partirlo por un punto (las etiquetas pueden llevar puntos). */
+function partes_por_punto(nombre: string): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  for (let i = nombre.indexOf("."); i > 0; i = nombre.indexOf(".", i + 1)) {
+    out.push([nombre.slice(0, i).trim(), nombre.slice(i + 1).trim()]);
+  }
+  return out;
 }
 
 /**
  * `{Precio} × {Cantidad}` → `{precio} * {cantidad}`. Acepta el nombre visible
  * (sin importar mayúsculas ni acentos) o la clave; lo que no reconoce lo deja
- * igual para que la validación diga qué nombre no existe.
+ * igual para que la validación diga qué nombre no existe. Con `otras` también
+ * traduce las columnas de otras tablas y de los enlaces.
  */
-export function formula_con_claves(spec: TablaSpec, entrada: string): string {
-  const por_nombre = new Map<string, string>();
-  for (const c of [...spec.campos, ...spec.constantes]) {
-    por_nombre.set(normalizar(c.etiqueta), c.clave);
-    por_nombre.set(c.clave, c.clave);
-  }
+export function formula_con_claves(spec: TablaSpec, entrada: string, otras: TablaSpec[] = []): string {
+  const diccionarios = new Map<TablaSpec, Map<string, string>>();
+  const traducir = (en: TablaSpec, nombre: string): string | null => {
+    let por_nombre = diccionarios.get(en);
+    if (!por_nombre) {
+      por_nombre = new Map<string, string>([["_id", "_id"]]);
+      for (const c of [...en.campos, ...en.constantes]) {
+        por_nombre.set(normalizar(c.etiqueta), c.clave);
+        por_nombre.set(c.clave, c.clave);
+      }
+      diccionarios.set(en, por_nombre);
+    }
+    return por_nombre.get(nombre) ?? por_nombre.get(normalizar(nombre)) ?? null;
+  };
   const con_signos = fuera_de_comillas(texto(entrada), (p) => p.replace(/×/g, "*").replace(/÷/g, "/"));
-  return traducir_llaves(con_signos, (nombre) => por_nombre.get(nombre) ?? por_nombre.get(normalizar(nombre)) ?? nombre);
+  // Se guarda el id de la otra tabla: renombrarla no rompe la fórmula.
+  return traducir_llaves(spec, otras, con_signos, traducir, (_en, nombre) => partes_por_punto(nombre), (t) => t.id);
 }
 
 /** La inversa, para enseñar una fórmula guardada: `{suma:pagado}` → `{suma:Abono}`. */
-export function formula_con_etiquetas(spec: TablaSpec, formula: string): string {
-  const etiquetas = new Map([...spec.campos, ...spec.constantes].map((c) => [c.clave, c.etiqueta]));
-  return traducir_llaves(texto(formula), (clave) => etiquetas.get(clave) ?? clave);
+export function formula_con_etiquetas(spec: TablaSpec, formula: string, otras: TablaSpec[] = []): string {
+  const traducir = (en: TablaSpec, clave: string): string | null =>
+    [...en.campos, ...en.constantes].find((c) => c.clave === clave)?.etiqueta ?? (clave === "_id" ? "_id" : null);
+  const partir = (clave: string): Array<[string, string]> => {
+    const i = clave.indexOf(".");
+    return i > 0 ? [[clave.slice(0, i), clave.slice(i + 1)]] : [];
+  };
+  // De clave a etiqueta el enlace se traduce aquí: el campo se busca por clave y se enseña su etiqueta.
+  const todas = otras.some((t) => t.id === spec.id) ? otras : [spec, ...otras];
+  const por_clave = (en: TablaSpec, nombre: string): string | null => {
+    const directa = traducir(en, nombre);
+    if (directa !== null) return directa;
+    for (const [campo, columna] of partir(nombre)) {
+      const c = en.campos.find((x) => x.clave === campo);
+      const destino = c?.tipo === "referencia" ? todas.find((t) => t.id === c.tabla_ref_id) : undefined;
+      if (c && destino) return `${c.etiqueta}.${traducir(destino, columna) ?? columna}`;
+    }
+    return null;
+  };
+  // Con dos tablas del mismo nombre se queda el id, que es lo único que no es ambiguo.
+  const nombre_unico = (t: TablaSpec) => {
+    const r = buscar_tabla(todas, t.name);
+    return "error" in r || r.id !== t.id ? t.id : t.name;
+  };
+  return traducir_llaves(spec, otras, texto(formula), por_clave, () => [], nombre_unico);
 }
 
 /** Mensajes de validación con los nombres que ve la persona, no las claves. */

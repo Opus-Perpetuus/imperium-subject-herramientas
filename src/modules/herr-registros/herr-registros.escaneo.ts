@@ -35,7 +35,7 @@ export async function resolver_escaneo(data: KirletDataClient, spec: TablaSpec, 
       return { ...nada, aviso: `La tabla a la que apunta «${md(campo.etiqueta)}» ya no está.` };
     }
     const dspec = spec_de_fila(destino);
-    const hallado = registro_por_codigo(dspec, filas_recalculadas(dspec, await registros_de({ data }, dspec.id)), codigo);
+    const hallado = registro_por_codigo(dspec, await filas_recalculadas({ data }, dspec, await registros_de({ data }, dspec.id)), codigo);
     if (!hallado) {
       return { ...nada, aviso: `Ningún registro de «${md(dspec.name)}» tiene el código «${md(codigo)}»: elige uno a mano en «${md(campo.etiqueta)}».` };
     }

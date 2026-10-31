@@ -30,6 +30,7 @@ import { ESCANER_VACIO, FORMATOS_ESCANER, MOSTRAR_ESCANER, TIPOS_DESTINO_ESCANER
 import { ACCIONES_ESCANEO, TIPOS_COLUMNA_ESCANEO, columna_de_escaneo } from "../../lib/formulas/escaneo.ts";
 import { ACCIONES_REGLA, DESTINOS_REGLA, MAX_REGLAS, TIPOS_CANTIDAD, TIPOS_CODIGO_REGLA, tabla_destino_de, type DestinoRegla, type ReglaEscaneo } from "../../lib/formulas/reglas.ts";
 import { parsear_agregado } from "../../lib/formulas/motor.ts";
+import { COMPARADORES, HUECO, MAX_CONDICIONES, QUE_HACER, opciones_columnas } from "../../lib/formulas/constructor.ts";
 import { columna_unica, plantilla_con_etiquetas } from "../../lib/formulas/plantilla.ts";
 import { plantillas } from "../../lib/formulas/plantillas.ts";
 import { filas_recalculadas, opciones_referencia, registros_de } from "./herr-tablas.flow.ts";
@@ -205,7 +206,7 @@ function describir_tipo(campo: CampoSpec, spec: TablaSpec): string {
 function detalle_columna(spec: TablaSpec, campo: CampoSpec, tablas: Map<string, TablaSpec>): Array<{ label: string; value: string }> {
   const items = [{ label: "Tipo", value: describir_tipo(campo, spec) }];
   if (campo.tipo === "calculado") {
-    items.push({ label: "Cálculo", value: campo.formula === "0" ? "Sin configurar: toca Editar" : formula_con_etiquetas(spec, campo.formula ?? "") });
+    items.push({ label: "Cálculo", value: campo.formula === "0" ? "Sin configurar: toca Editar" : formula_con_etiquetas(spec, campo.formula ?? "", [...tablas.values()]) });
   }
   if (campo.tipo === "opcion") {
     items.push({ label: "Opciones", value: campo.opciones?.length ? campo.opciones.join(" · ") : "Sin opciones: toca Editar" });
@@ -280,21 +281,22 @@ const QUE_CALCULA: Record<keyof typeof TOTALES, string> = {
 };
 
 /** «Suma de «Monto»» si es un total guiado; la fórmula con nombres si no. */
-function describir_total(spec: TablaSpec, r: ResumenTabla): string {
+function describir_total(spec: TablaSpec, r: ResumenTabla, otras: TablaSpec[] = []): string {
   const solo = /^\{([^{}]+)\}$/.exec(r.formula.trim());
   const agregado = solo ? parsear_agregado(solo[1]!) : null;
   const campo = agregado ? spec.campos.find((c) => c.clave === agregado.campo) : undefined;
   if (agregado && campo) return `${QUE_CALCULA[agregado.tipo]} «${campo.etiqueta}»`;
-  return r.formula.trim() === TOTAL_REGISTROS.formula ? TOTAL_REGISTROS.nombre : formula_con_etiquetas(spec, r.formula);
+  return r.formula.trim() === TOTAL_REGISTROS.formula ? TOTAL_REGISTROS.nombre : formula_con_etiquetas(spec, r.formula, otras);
 }
 
 async function seccion_totales(data: Datos, spec: TablaSpec): Promise<NoxUiNode[]> {
   const base = `api://herr-tablas/${spec.id}/resumenes`;
+  const otras = [...(await tablas_por_id(data)).values()];
   const out: NoxUiNode[] = [
     nodo("nox.markdown-view", { content: "Cifras de toda la tabla que se ven encima de la lista: cuánto llevas gastado, el promedio, el más alto…" }),
   ];
   if (spec.resumenes.length) {
-    const filas = filas_recalculadas(spec, await registros_de({ data }, spec.id));
+    const filas = await filas_recalculadas({ data }, spec, await registros_de({ data }, spec.id));
     out.push(
       nodo("nox.stats", {
         text: "Así se ven hoy",
@@ -307,7 +309,7 @@ async function seccion_totales(data: Datos, spec: TablaSpec): Promise<NoxUiNode[
     );
   }
   const celdas: NoxUiNode[] = spec.resumenes.map((r) =>
-    nodo("nox.detail", { text: r.etiqueta, items: [{ label: "Qué calcula", value: describir_total(spec, r) }] }, [
+    nodo("nox.detail", { text: r.etiqueta, items: [{ label: "Qué calcula", value: describir_total(spec, r, otras) }] }, [
       boton("Quitar", {
         method: "DELETE",
         action: `${base}/${r.clave}`,
@@ -342,7 +344,7 @@ async function seccion_totales(data: Datos, spec: TablaSpec): Promise<NoxUiNode[
           label: "Fórmula",
           placeholder: "{Deuda a saldar} - {suma:Abono}",
           required: true,
-          help: ayuda_formula(spec, "Para una columna entera usa {suma:Nombre}, {promedio:Nombre}, {minimo:Nombre}, {maximo:Nombre} o {cuenta:Nombre}."),
+          help: ayuda_formula(spec, "Para una columna entera usa {suma:Nombre}, {promedio:Nombre}, {minimo:Nombre}, {maximo:Nombre} o {cuenta:Nombre}.", undefined, otras),
         }),
         boton("Agregar total", { icon: "fa-plus" }),
       ]),
@@ -351,13 +353,18 @@ async function seccion_totales(data: Datos, spec: TablaSpec): Promise<NoxUiNode[
   return out;
 }
 
-function ayuda_formula(spec: TablaSpec, extra = "", excepto?: string): string {
+function ayuda_formula(spec: TablaSpec, extra = "", excepto?: string, otras: TablaSpec[] = []): string {
   const nombres = [...spec.campos.filter((c) => c.clave !== excepto), ...spec.constantes].map((c) => `{${c.etiqueta}}`);
+  const tablas = otras.filter((t) => t.id !== spec.id).map((t) => `"${t.name}"`);
   return [
     "Escribe los nombres entre llaves y opera con + − × ÷.",
     nombres.length ? `Puedes usar: ${lista_corta(nombres, 12)}.` : "",
     extra,
-    "Condiciones: si({Estado} = \"Pagado\", {Monto}, 0).",
+    "Condiciones (anídalas con y / o y paréntesis): si({Estado} = \"Pagado\" y ({Moto} = \"Italika\" o {Monto} > 100), {Monto}, 0).",
+    "Solo las filas que cumplen: sumasi({Monto}, {Estado} = \"Pagado\"); también cuentasi, promediosi, minimosi, maximosi, buscarsi y unirsi.",
+    "De otra tabla: tabla_suma(\"Ventas\", {Cantidad}, {Producto} = {actual:Nombre}) — dentro, {Columna} es de esa tabla y {actual:Columna} de este registro; también tabla_cuenta, tabla_promedio, tabla_minimo, tabla_maximo, tabla_buscar y tabla_unir.",
+    "De un enlace: {Cliente.Teléfono}.",
+    tablas.length ? `Otras tablas: ${lista_corta(tablas, 8)}.` : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -802,7 +809,8 @@ function entradas_de_tipo(spec: TablaSpec, campo: CampoSpec, tablas: Map<string,
       ];
     case "calculado": {
       const datos = opciones_numericas(spec, campo.clave);
-      const formula = campo.formula && campo.formula !== "0" ? formula_con_etiquetas(spec, campo.formula) : "";
+      const otras = [...tablas.values()];
+      const formula = campo.formula && campo.formula !== "0" ? formula_con_etiquetas(spec, campo.formula, otras) : "";
       return [
         menu(
           "operacion",
@@ -821,8 +829,9 @@ function entradas_de_tipo(spec: TablaSpec, campo: CampoSpec, tablas: Map<string,
           label: "Fórmula",
           value: formula,
           placeholder: "{Precio} × {Cantidad}",
-          help: ayuda_formula(spec, "", campo.clave),
+          help: ayuda_formula(spec, "", campo.clave, otras),
         }),
+        ...constructor_de_formula(spec, campo, otras),
         ...unidad("$, km, %…"),
         decimales,
       ];
@@ -892,6 +901,49 @@ function entradas_de_tipo(spec: TablaSpec, campo: CampoSpec, tablas: Map<string,
   }
 }
 
+/**
+ * «Tomar de otra tabla o con condiciones»: arma `tabla_suma(…)` o `sumasi(…)`
+ * sin escribirlos. Lo armado reemplaza la fórmula (o entra en su `{?}`); para
+ * anidar más se edita la fórmula que queda.
+ */
+function constructor_de_formula(spec: TablaSpec, campo: CampoSpec, otras: TablaSpec[]): NoxUiNode[] {
+  const columnas = opciones_columnas(spec, otras, campo.clave);
+  const propias = [
+    { value: "_id", label: "Este registro (para comparar con un enlace hacia esta tabla)" },
+    ...[...spec.campos.filter((c) => c.clave !== campo.clave), ...spec.constantes].map((c) => ({ value: c.clave, label: c.etiqueta })),
+  ];
+  const ninguna = { value: "", label: "—" };
+  const condiciones: NoxUiNode[] = [];
+  for (let n = 1; n <= MAX_CONDICIONES; n++) {
+    condiciones.push(
+      menu(`ext_c${n}_columna`, `Condición ${n}: la columna`, [ninguna, ...columnas], { value: "" }),
+      menu(`ext_c${n}_op`, `Condición ${n}: comparación`, Object.entries(COMPARADORES).map(([value, label]) => ({ value, label })), { value: "=" }),
+      nodo("nox.input-text", { name: `ext_c${n}_valor`, label: `Condición ${n}: con este valor`, placeholder: "Ej.: Pagado, 100" }),
+      menu(`ext_c${n}_actual`, `Condición ${n}: …o con esta columna de este registro`, [ninguna, ...propias], { value: "" }),
+    );
+  }
+  return [
+    titulo("Tomar de otra tabla o con condiciones (opcional)"),
+    nodo("nox.markdown-view", {
+      content:
+        "Suma, cuenta o trae valores de los registros (de esta u otra tabla) que cumplan las condiciones. " +
+        "Para comparar con este registro elige su columna en «…o con esta columna»: así se suman, por ejemplo, las ventas del producto de cada fila. " +
+        `Lo armado reemplaza la fórmula de arriba; si la fórmula lleva \`${HUECO}\`, entra en ese lugar (por ejemplo \`{Precio} × ${HUECO}\`). ` +
+        "Para más condiciones o anidarlas (y dentro de o), edita después la fórmula.",
+    }),
+    menu("ext_que", "Qué hacer", [{ value: "", label: "No usar" }, ...Object.entries(QUE_HACER).map(([value, label]) => ({ value, label }))], { value: "" }),
+    menu("ext_tabla", "De qué tabla", [{ value: spec.id, label: "Esta tabla" }, ...otras.filter((t) => t.id !== spec.id).map((t) => ({ value: t.id, label: t.name }))], {
+      value: spec.id,
+    }),
+    menu("ext_columna", "Qué columna", [ninguna, ...columnas], { value: "", help: "De la tabla elegida. Para «Contar» no hace falta." }),
+    menu("ext_union", "Las condiciones se cumplen", [
+      { value: "y", label: "Todas (y)" },
+      { value: "o", label: "Al menos una (o)" },
+    ], { value: "y" }),
+    ...condiciones,
+  ];
+}
+
 /** Cualquier valor que no sea una operación deja mandar la fórmula escrita; este además se ve elegido. */
 const ESCRITA = "escrita";
 
@@ -900,7 +952,7 @@ const CON_VALOR_INICIAL = new Set(["texto", "numero", "dinero", "entero", "opcio
 /** Lo que da el cálculo con el último registro: se ve si la fórmula hace lo que se quería. */
 async function vista_previa(data: Datos, spec: TablaSpec, campo: CampoSpec): Promise<NoxUiNode | null> {
   if (campo.tipo !== "calculado" || !campo.formula || campo.formula === "0") return null;
-  const filas = filas_recalculadas(spec, await registros_de({ data }, spec.id));
+  const filas = await filas_recalculadas({ data }, spec, await registros_de({ data }, spec.id));
   const ultima = filas.reduce<(typeof filas)[number] | null>(
     (a, f) => (!a || texto(f.created_at) >= texto(a.created_at) ? f : a),
     null,

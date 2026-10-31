@@ -20,3 +20,16 @@ export function alternar(raw: string | null | undefined, valor: string): string 
     actuales.includes(valor) ? actuales.filter((v) => v !== valor) : [...actuales, valor],
   );
 }
+
+/** Los ids de un campo referencia: varios separados por `|`, o la opción guardada en JSON. */
+export function ids_referencia(raw: string): string[] {
+  if (raw.startsWith("{")) {
+    try {
+      const id = (JSON.parse(raw) as { _id?: unknown })._id;
+      if (id !== undefined && id !== null && String(id).trim()) return [String(id).trim()];
+    } catch {
+      // No era una opción en JSON: se lee como cualquier otro valor.
+    }
+  }
+  return parsear(raw);
+}

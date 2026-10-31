@@ -35,6 +35,8 @@ import {
   TIPOS_CAMPO,
   TIPOS_FOTO,
   TIPOS_UNIDAD_POR_REGISTRO,
+  buscar_tabla,
+  campo_de,
   spec_de_fila,
   validar_esquema,
   type CampoSpec,
@@ -44,7 +46,8 @@ import {
 import { escaner_desde_formulario } from "../../lib/formulas/escaner.ts";
 import { escaneo_desde_formulario } from "../../lib/formulas/escaneo.ts";
 import { MAX_REGLAS, regla_desde_formulario, regla_usa } from "../../lib/formulas/reglas.ts";
-import { claves_referenciadas, parsear_agregado } from "../../lib/formulas/motor.ts";
+import { claves_referenciadas, parsear_agregado, referencias } from "../../lib/formulas/motor.ts";
+import { HUECO, armar_formula, pedido_desde_formulario } from "../../lib/formulas/constructor.ts";
 import { plantilla_con_claves } from "../../lib/formulas/plantilla.ts";
 import { tabla_activa } from "./herr-tablas.flow.ts";
 
@@ -88,7 +91,7 @@ export function preparar_tabla(ctx: KirletCtx, patch: DomainRow, existing: Domai
  * CRUD genérico en sus propios hooks.
  */
 async function guardar(ctx: KirletCtx, existing: DomainRow, spec: TablaSpec, extra: DomainRow = {}): Promise<DomainRow> {
-  const errores = validar_esquema(spec);
+  const errores = validar_esquema(spec, await otras_tablas(ctx, spec));
   if (errores.length) falla(400, mensajes_legibles(spec, errores), "validation_error");
   const patch = preparar_tabla(
     ctx,
@@ -97,6 +100,43 @@ async function guardar(ctx: KirletCtx, existing: DomainRow, spec: TablaSpec, ext
   );
   const cambio = { ...patch, updated_at: now_iso() };
   return (await ctx.data.update("herr_tablas", { id: String(existing.id) }, cambio)) ?? { ...existing, ...cambio };
+}
+
+/** Las demás tablas activas: las fórmulas pueden leerlas con `tabla_*` o por un enlace. */
+export async function otras_tablas(ctx: Pick<KirletCtx, "data">, spec: TablaSpec): Promise<TablaSpec[]> {
+  return (await filas_de(ctx, "herr_tablas", { is_active: true }))
+    .filter((f) => String(f.id) !== spec.id)
+    .map(spec_de_fila);
+}
+
+/**
+ * Lo que de otras tablas lee la columna `clave` de `spec`: sus fórmulas con
+ * `tabla_*("Esta tabla", {clave})` o con un enlace `{campo.clave}`.
+ */
+function usos_en_otras(spec: TablaSpec, otras: TablaSpec[], clave: string): string[] {
+  const todas = [spec, ...otras];
+  const out: string[] = [];
+  for (const otra of otras) {
+    const formulas = [
+      ...otra.campos.filter((c) => c.tipo === "calculado").map((c) => ({ etiqueta: c.etiqueta, formula: c.formula ?? "" })),
+      ...otra.resumenes.map((r) => ({ etiqueta: r.etiqueta, formula: r.formula })),
+    ];
+    for (const { etiqueta, formula } of formulas) {
+      const refs = referencias(formula);
+      const por_tabla = [...refs.tablas].some(([nombre, claves]) => {
+        const t = buscar_tabla(todas, nombre);
+        return !("error" in t) && t.id === spec.id && [...claves].some((c) => c === clave || parsear_agregado(c)?.campo === clave);
+      });
+      const por_enlace = refs.enlaces.some((e) => e.columna === clave && campo_de(otra, e.campo)?.tabla_ref_id === spec.id);
+      if (por_tabla || por_enlace) out.push(`«${otra.name} › ${etiqueta}»`);
+    }
+  }
+  return out;
+}
+
+async function exigir_sin_uso_en_otras(ctx: KirletCtx, spec: TablaSpec, clave: string, etiqueta: string): Promise<void> {
+  const usan = usos_en_otras(spec, await otras_tablas(ctx, spec), clave);
+  if (usan.length) falla(409, `«${etiqueta}» se usa en ${usan.join(", ")}: cambia o quita eso primero`, "conflict");
 }
 
 async function esquema(ctx: KirletCtx): Promise<{ fila: DomainRow; spec: TablaSpec }> {
@@ -202,14 +242,22 @@ async function aplicar_cambios(ctx: KirletCtx, spec: TablaSpec, antes: CampoSpec
     campo.tabla_ref_id = tabla_ref;
   }
   const op = texto(body.operacion);
-  if (es_operacion(op)) {
+  const pedido = pedido_desde_formulario(body);
+  if (pedido) {
+    const otras = await otras_tablas(ctx, spec);
+    const r = armar_formula(spec, otras, pedido);
+    if ("error" in r) falla(400, r.error, "validation_error");
+    const escrita = texto(body.formula);
+    // `{Precio} * {?}`: lo armado entra en el hueco; sin hueco, es la fórmula entera.
+    campo.formula = escrita.includes(HUECO) ? formula_con_claves(spec, escrita, otras).replace(HUECO, r.formula) : r.formula;
+  } else if (es_operacion(op)) {
     const a = operando(spec, texto(body.dato_a));
     const b = operando(spec, texto(body.dato_b), numero(body.numero_b));
     if (!a || !b) falla(400, "Elige los dos datos de la operación (o escribe un número para B)", "validation_error");
     campo.formula = OPERACIONES[op].armar(a, b);
     if (op === "porcentaje" && !campo.unidad) campo.unidad = "%";
   } else if (texto(body.formula)) {
-    campo.formula = formula_con_claves(spec, texto(body.formula));
+    campo.formula = formula_con_claves(spec, texto(body.formula), await otras_tablas(ctx, spec));
   }
   if (campo.tipo === "calculado") campo.formula ||= "0";
   else campo.formula = null;
@@ -361,6 +409,7 @@ export const herr_tablas_disenio = define_routes({
     const { fila, spec } = await esquema(ctx);
     const campo = spec.campos[indice_de(spec.campos, ctx.params.clave, "La columna")]!;
     exigir_sin_uso(spec, campo.clave, campo.etiqueta);
+    await exigir_sin_uso_en_otras(ctx, spec, campo.clave, campo.etiqueta);
     const campos = spec.campos.filter((c) => c.clave !== campo.clave);
     const extra = {
       ...(spec.orden_campo === campo.clave ? { orden_campo: null } : {}),
@@ -449,6 +498,7 @@ export const herr_tablas_disenio = define_routes({
     const { fila, spec } = await esquema(ctx);
     const constante = spec.constantes[indice_de(spec.constantes, ctx.params.clave, "El valor fijo")]!;
     exigir_sin_uso(spec, constante.clave, constante.etiqueta);
+    await exigir_sin_uso_en_otras(ctx, spec, constante.clave, constante.etiqueta);
     const constantes = spec.constantes.filter((c) => c.clave !== constante.clave);
     const guardada = await guardar(ctx, fila, { ...spec, constantes });
     return { data: siguiente(guardada, "disenar"), message: `Valor fijo «${constante.etiqueta}» quitado` };
@@ -468,7 +518,7 @@ export const herr_tablas_disenio = define_routes({
     let unidad: string | null = null;
     let decimales = 2;
     if (texto(body.formula)) {
-      formula = formula_con_claves(spec, texto(body.formula));
+      formula = formula_con_claves(spec, texto(body.formula), await otras_tablas(ctx, spec));
       if (!etiqueta) falla(400, "Ponle nombre al total", "validation_error");
     } else if (tipo === TOTAL_REGISTROS.valor) {
       formula = TOTAL_REGISTROS.formula;
