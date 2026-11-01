@@ -58,8 +58,8 @@ export function nodo_entrada(
   registro_id?: string,
   todas?: Map<string, Map<string, OpcionRef>>,
 ): NoxUiNode {
-  // Con unidad por registro o tomada de un enlace, la de la columna no es la de todos.
-  const unidad_fija = campo.unidad && !campo.unidad_por_registro && !campo.unidad_de ? campo.unidad : null;
+  // Con unidad por registro o tomada de un enlace o de otra columna, la de la columna no es la de todos.
+  const unidad_fija = campo.unidad && !campo.unidad_por_registro && !campo.unidad_de && !campo.unidad_columna ? campo.unidad : null;
   const base = {
     name: campo.clave,
     label: unidad_fija ? `${campo.etiqueta} (${unidad_fija})` : campo.etiqueta,

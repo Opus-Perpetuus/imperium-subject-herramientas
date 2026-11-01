@@ -187,6 +187,20 @@ async function guardar_fotos(
   return { urls, minis };
 }
 
+/**
+ * En 0.17.2 un entero, número o dinero podía llenarse solo y su valor quedaba
+ * en `calculados`. Ahora se captura: si el registro se guarda sin mandarlo, se
+ * queda con ese valor en vez de perderlo.
+ */
+function conservar_llenados_solos(spec: TablaSpec, valores: Record<string, string>, existing: DomainRow | null): void {
+  if (!existing) return;
+  const viejos = objeto(existing.calculados);
+  for (const c of spec.campos) {
+    if (es_calculado(c) || c.tipo === "subtabla" || c.clave in valores) continue;
+    if (texto(viejos[c.clave])) valores[c.clave] = viejos[c.clave]!;
+  }
+}
+
 /** Texto de presentación: el primer campo `en_resumen` con valor. */
 function nombre_de(spec: TablaSpec, valores: Record<string, string>): string {
   const campo = spec.campos.find((c) => c.en_resumen && c.tipo !== "subtabla" && texto(valores[c.clave]));
@@ -208,6 +222,7 @@ export async function preparar_registro(
   const tabla_id = texto(patch.tabla_id ?? existing?.tabla_id);
   const spec = spec_de_fila(await tabla_activa(ctx, tabla_id));
   const valores = valores_capturados(spec, patch.valores ?? existing?.valores);
+  conservar_llenados_solos(spec, valores, existing);
   const id = texto(patch.id ?? existing?.id);
   const antes = objeto(existing?.valores);
   const miniaturas_previas = objeto(existing?.miniaturas);

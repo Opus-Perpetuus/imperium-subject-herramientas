@@ -87,8 +87,10 @@ export function contexto_de(filas: Registro[]): ContextoCalculo {
 const AMBITOS = new WeakMap<Registro[], { filas: Ambito[]; por_id: Map<string, Registro> }>();
 
 /**
- * Evalúa los calculados de un registro en orden de dependencia; cada resultado
- * se inyecta en el mapa para que la siguiente fórmula lo encuentre listo.
+ * Evalúa los calculados de un registro. Cada uno se calcula la primera vez que
+ * alguien lo lee (otro calculado del registro o una columna de sus subtablas),
+ * así el orden sale de las dependencias; el resultado queda ya presentado en
+ * el mapa. Un ciclo lo rechaza la validación; aquí solo da un error en la celda.
  * `filas` son todos los registros de la tabla (agregados y funciones por fila).
  */
 export function calcular_valores(
@@ -99,7 +101,28 @@ export function calcular_valores(
   id?: string,
 ): Record<string, string> {
   const resueltos = { ...capturados };
-  const ambito = ambito_tabla(spec, resueltos, filas, contexto, id);
+  const formulas = new Map(
+    spec.campos.filter((c) => es_calculado(c) && c.formula?.trim()).map((c) => [c.clave, c]),
+  );
+  for (const k of formulas.keys()) delete resueltos[k];
+  const en_curso = new Set<string>();
+  const perezosos: Perezosos = {
+    has: (clave) => formulas.has(clave),
+    valor(clave) {
+      if (!Object.hasOwn(resueltos, clave)) {
+        const campo = formulas.get(clave)!;
+        if (en_curso.has(clave)) return undefined;
+        en_curso.add(clave);
+        const r = evaluar(campo.formula!.trim(), ambito);
+        en_curso.delete(clave);
+        resueltos[clave] = Object.hasOwn(resueltos, clave)
+          ? resueltos[clave]!
+          : presentar(r, decimales_de(campo));
+      }
+      return valor_de(spec, resueltos, clave);
+    },
+  };
+  const ambito = ambito_tabla(spec, resueltos, filas, contexto, id, perezosos);
   // Las columnas calculadas de cada subtabla van antes: los calculados del registro las leen.
   for (const campo of spec.campos) {
     if (campo.tipo !== "subtabla" || !campo.columnas?.some((c) => es_calculado(c))) continue;
@@ -107,13 +130,12 @@ export function calcular_valores(
     if (!raw) continue;
     resueltos[campo.clave] = calcular_subtabla(spec, campo, resueltos, contexto, ambito);
   }
-  for (const campo of calculados_en_orden(spec)) {
-    const formula = campo.formula?.trim();
-    if (!formula) continue;
-    resueltos[campo.clave] = presentar(evaluar(formula, ambito), campo.tipo === "entero" ? 0 : decimales_de(campo));
-  }
+  for (const campo of calculados_en_orden(spec)) if (formulas.has(campo.clave)) perezosos.valor(campo.clave);
   return resueltos;
 }
+
+/** Los calculados del registro que se evalúan al leerlos. */
+type Perezosos = { has(clave: string): boolean; valor(clave: string): Valor | undefined };
 
 /**
  * Las columnas calculadas de una subtabla, fila por fila, ya presentadas para
@@ -132,7 +154,7 @@ function calcular_subtabla(
   const ambitos = ambitos_subtabla(spec, campo, valores, contexto, padre);
   const filas = filas_de_subtabla(valores[campo.clave]).map((f, i) => {
     const out: FilaSubtabla = { ...f };
-    for (const c of calculadas) out[c.clave] = presentar(ambitos[i]!.resultado(c.clave), c.tipo === "entero" ? 0 : decimales_de(c));
+    for (const c of calculadas) out[c.clave] = presentar(ambitos[i]!.resultado(c.clave), decimales_de(c));
     return out;
   });
   return texto_de_subtabla(filas);
@@ -171,6 +193,8 @@ function ambitos_subtabla(
   const raiz: Ambito = padre
     ? { ...padre, compartido: undefined }
     : { valor: (k) => valor_en(spec, valores, k, contexto, undefined), subtabla: subtabla_en(spec, valores, contexto) };
+  // Un calculado del registro (`{Total}` en una columna) se lee del registro, ya calculado o al vuelo.
+  const del_registro = new Set(spec.campos.filter((c) => es_calculado(c)).map((c) => c.clave));
   const formulas = new Map(
     columnas_de(campo)
       .filter((c) => es_calculado(c))
@@ -183,7 +207,10 @@ function ambitos_subtabla(
     const hechos = new Map<string, Resultado>();
     const ambito: AmbitoDeFila = {
       valor(clave) {
-        if (!formulas.has(clave)) return valor_en(sspec, vivos, clave, contexto, f._id);
+        if (!formulas.has(clave)) {
+          if (del_registro.has(clave)) return raiz.valor(clave);
+          return valor_en(sspec, vivos, clave, contexto, f._id);
+        }
         const r = ambito.resultado(clave);
         return r.ok ? r.valor : undefined;
       },
@@ -206,10 +233,10 @@ function ambitos_subtabla(
 }
 
 /** `sub_*("nombre", …)`: las filas de esa subtabla del registro; `null` si no es una. */
-function subtabla_en(spec: TablaSpec, valores: Record<string, string>, contexto: ContextoCalculo) {
+function subtabla_en(spec: TablaSpec, valores: Record<string, string>, contexto: ContextoCalculo, padre?: () => Ambito) {
   return (nombre: string): Ambito[] | null => {
     const campo = subtabla_de(spec, nombre);
-    return campo ? ambitos_subtabla(spec, campo, valores, contexto) : null;
+    return campo ? ambitos_subtabla(spec, campo, valores, contexto, padre?.()) : null;
   };
 }
 
@@ -243,11 +270,13 @@ function ambito_tabla(
   filas: Registro[],
   contexto: ContextoCalculo,
   id?: string,
+  perezosos?: Perezosos,
 ): Ambito {
   const agregados = new Map<string, number>();
   const propia: TablaCargada = { spec, filas };
-  return {
+  const ambito: Ambito = {
     valor(clave) {
+      if (perezosos?.has(clave)) return perezosos.valor(clave);
       const agregado = parsear_agregado(clave);
       if (agregado) {
         let n = agregados.get(clave);
@@ -273,9 +302,10 @@ function ambito_tabla(
       const t = contexto.externas.por_nombre(nombre);
       return "error" in t ? t : { filas: ambitos_de(t, contexto).filas };
     },
-    subtabla: subtabla_en(spec, valores_registro, contexto),
+    subtabla: subtabla_en(spec, valores_registro, contexto, perezosos ? () => ambito : undefined),
     compartido: contexto.compartido,
   };
+  return ambito;
 }
 
 function ambitos_de(tabla: TablaCargada, contexto: ContextoCalculo): { filas: Ambito[]; por_id: Map<string, Registro> } {

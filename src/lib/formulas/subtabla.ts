@@ -100,8 +100,8 @@ export function normalizar_filas(
 
 /**
  * El esquema con que se calcula una fila: sus columnas y, detrás, las columnas
- * capturadas del registro (para `{x}` que no es de la fila) y sus valores fijos.
- * Los calculados del registro no entran: se calculan después de la subtabla.
+ * del registro (para `{x}` que no es de la fila, también sus cálculos) y sus
+ * valores fijos. Un cálculo del registro se lee ya calculado o al vuelo.
  */
 export function spec_de_subtabla(spec: TablaSpec, campo: CampoSpec): TablaSpec {
   const columnas = columnas_de(campo);
@@ -111,7 +111,7 @@ export function spec_de_subtabla(spec: TablaSpec, campo: CampoSpec): TablaSpec {
     name: `${spec.name} › ${campo.etiqueta}`,
     campos: [
       ...columnas,
-      ...spec.campos.filter((c) => !es_calculado(c) && c.tipo !== "subtabla" && !propias.has(c.clave)),
+      ...spec.campos.filter((c) => c.tipo !== "subtabla" && !propias.has(c.clave)),
     ],
     constantes: spec.constantes,
     resumenes: [],

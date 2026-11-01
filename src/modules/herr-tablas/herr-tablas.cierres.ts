@@ -160,7 +160,7 @@ function presentacion_archivo(etiquetas: Etiquetas, vivos: Enlaces): Presentacio
 function unidades_de_fila(spec: TablaSpec, fila: Registro, enlaces: Enlaces): Record<string, string> {
   const out: Record<string, string> = {};
   for (const campo of spec.campos) {
-    if (!campo.unidad_de && !campo.unidad_por_registro) continue;
+    if (!campo.unidad_de && !campo.unidad_por_registro && !campo.unidad_columna) continue;
     const unidad = unidad_en_fila(campo, fila, enlaces);
     if (unidad) out[campo.clave] = unidad;
   }

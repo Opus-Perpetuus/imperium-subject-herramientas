@@ -22,6 +22,8 @@ import {
   SIN_FOTO,
   TIPOS_CAMPO_CIERRE,
   TIPOS_FOTO,
+  TIPOS_FUENTE_UNIDAD,
+  TIPOS_UNIDAD_DE_COLUMNA,
   TIPOS_UNIDAD_POR_REGISTRO,
   spec_de_fila,
   type CampoSpec,
@@ -43,7 +45,7 @@ import {
 } from "../../lib/formulas/reglas.ts";
 import { MODOS_REF_SUBTABLA, TIPOS_SUBCOLUMNA, columnas_de, spec_de_subtabla } from "../../lib/formulas/subtabla.ts";
 import { parsear_agregado } from "../../lib/formulas/motor.ts";
-import { COMPARADORES, HUECO, MAX_CONDICIONES, QUE_HACER, UNIONES, opciones_columnas, opciones_origen, subtablas_de } from "../../lib/formulas/constructor.ts";
+import { COMPARADORES, HUECO, MAX_CONDICIONES, QUE_HACER, UNIONES, opciones_columnas, opciones_enlace, opciones_origen, subtablas_de } from "../../lib/formulas/constructor.ts";
 import { columna_unica, plantilla_con_etiquetas } from "../../lib/formulas/plantilla.ts";
 import { plantillas } from "../../lib/formulas/plantillas.ts";
 import { filas_recalculadas, opciones_referencia, registros_de } from "./herr-tablas.flow.ts";
@@ -416,35 +418,6 @@ export function ayuda_subtabla(sub: CampoSpec): string {
   ]
     .filter(Boolean)
     .join(" ");
-}
-
-/**
- * Entero, número o dinero que se llenan solos: contar las filas de una
- * subtabla (con condiciones sobre sus columnas), sumar una columna de otra
- * tabla… Es el mismo constructor y la misma fórmula que un «Cálculo»; la
- * columna sigue siendo de su tipo. Vacía, se captura a mano.
- */
-function llenado_automatico(spec: TablaSpec, campo: CampoSpec, otras: TablaSpec[]): NoxUiNode[] {
-  const formula = es_calculado(campo) ? formula_con_etiquetas(spec, campo.formula ?? "", otras) : "";
-  const ejemplo = subtablas_de(spec)[0];
-  return [
-    titulo("Llenar solo (opcional)"),
-    nodo("nox.markdown-view", {
-      content:
-        "Si eliges abajo qué contar o sumar (o escribes la fórmula), esta columna ya no se captura: se llena sola cada vez, " +
-        (ejemplo ? `por ejemplo con cuántas filas de «${ejemplo.etiqueta}» cumplen unas condiciones. ` : "por ejemplo con cuántos registros de otra tabla cumplen unas condiciones. ") +
-        "Para volver a capturarla a mano, borra la fórmula y guarda.",
-    }),
-    nodo("nox.input-text", {
-      name: "formula",
-      label: "Fórmula",
-      value: formula,
-      placeholder: ejemplo ? `sub_cuenta("${ejemplo.etiqueta}", {Columna} = "X")` : "tabla_cuenta(\"Ventas\", {Estado} = \"Pagado\")",
-      help: ayuda_formula(spec, "", campo.clave, otras),
-    }),
-    ...referencias_subtablas(spec, campo.clave),
-    ...constructor_de_formula(spec, campo, otras),
-  ];
 }
 
 /** Las referencias de cada subtabla, a la vista (no solo en la ayuda): se copian tal cual a la fórmula. */
@@ -887,6 +860,8 @@ function numero_o_vacio(n: number | null | undefined): number | "" {
 const UNIDAD_FIJA = "fija";
 const UNIDAD_REGISTRO = "registro";
 const UNIDAD_ENLACE = "enlace:";
+/** «La que diga su columna X»: una columna de texto u opción de la misma tabla (o de la misma fila de la subtabla). */
+const UNIDAD_COLUMNA = "columna:";
 
 /** Columnas de la tabla enlazada que pueden dar una unidad: un número con unidad o un texto como «Unidad». */
 function fuentes_de_unidad(destino: TablaSpec): CampoSpec[] {
@@ -907,6 +882,12 @@ function menu_fuente_unidad(spec: TablaSpec, campo: CampoSpec, tablas: Map<strin
   if (TIPOS_UNIDAD_POR_REGISTRO.has(campo.tipo)) {
     opciones.push({ value: UNIDAD_REGISTRO, label: "Cada registro escribe la suya (kg, L, piezas…)" });
   }
+  if (TIPOS_UNIDAD_DE_COLUMNA.has(campo.tipo)) {
+    for (const c of spec.campos) {
+      if (c.clave === campo.clave || !TIPOS_FUENTE_UNIDAD.has(c.tipo)) continue;
+      opciones.push({ value: `${UNIDAD_COLUMNA}${c.clave}`, label: `La que diga la columna «${c.etiqueta}» de esta tabla` });
+    }
+  }
   for (const ref of spec.campos) {
     const destino = ref.tipo === "referencia" && ref.tabla_ref_id ? tablas.get(ref.tabla_ref_id) : undefined;
     if (!destino) continue;
@@ -918,7 +899,13 @@ function menu_fuente_unidad(spec: TablaSpec, campo: CampoSpec, tablas: Map<strin
     }
   }
   if (opciones.length === 1) return null;
-  const actual = campo.unidad_de ? `${UNIDAD_ENLACE}${campo.unidad_de}` : campo.unidad_por_registro ? UNIDAD_REGISTRO : UNIDAD_FIJA;
+  const actual = campo.unidad_columna
+    ? `${UNIDAD_COLUMNA}${campo.unidad_columna}`
+    : campo.unidad_de
+      ? `${UNIDAD_ENLACE}${campo.unidad_de}`
+      : campo.unidad_por_registro
+        ? UNIDAD_REGISTRO
+        : UNIDAD_FIJA;
   return menu("unidad_fuente", "¿De dónde sale la unidad?", opciones, {
     value: opciones.some((o) => o.value === actual) ? actual : UNIDAD_FIJA,
     help: "Si cambia de un registro a otro, la de arriba es la que se propone o la que queda cuando falta.",
@@ -995,15 +982,11 @@ function entradas_de_tipo(spec: TablaSpec, campo: CampoSpec, tablas: Map<string,
       ];
     }
     case "numero":
-      return [...unidad("km, L, kg…"), decimales, ...llenado_automatico(spec, campo, [...tablas.values()])];
+      return [...unidad("km, L, kg…"), decimales];
     case "dinero":
-      return [
-        nodo("nox.input-text", { name: "unidad", label: "Unidad (opcional)", placeholder: "$", value: campo.unidad ?? "" }),
-        decimales,
-        ...llenado_automatico(spec, campo, [...tablas.values()]),
-      ];
+      return [nodo("nox.input-text", { name: "unidad", label: "Unidad (opcional)", placeholder: "$", value: campo.unidad ?? "" }), decimales];
     case "entero":
-      return [...unidad("piezas, personas…"), ...llenado_automatico(spec, campo, [...tablas.values()])];
+      return unidad("piezas, personas…");
     case "codigo": {
       const e = campo.escaner ?? ESCANER_VACIO;
       const destinos = spec.campos.filter((c) => c.clave !== campo.clave && TIPOS_DESTINO_ESCANER.has(c.tipo));
@@ -1090,6 +1073,7 @@ function menus_ref_subtabla(campo: CampoSpec, tablas: Map<string, TablaSpec>): N
  */
 function constructor_de_formula(spec: TablaSpec, campo: CampoSpec, otras: TablaSpec[]): NoxUiNode[] {
   const columnas = opciones_columnas(spec, otras, campo.clave);
+  const enlaces = opciones_enlace(spec, otras);
   const propias = [
     { value: "_id", label: "Este registro (para comparar con un enlace hacia esta tabla)" },
     ...[...spec.campos.filter((c) => c.clave !== campo.clave), ...spec.constantes].map((c) => ({ value: c.clave, label: c.etiqueta })),
@@ -1111,7 +1095,10 @@ function constructor_de_formula(spec: TablaSpec, campo: CampoSpec, otras: TablaS
         "Suma, cuenta o trae valores de los registros (de esta u otra tabla) que cumplan las condiciones. " +
         "Para comparar con este registro elige su columna en «…o con esta columna»: así se suman, por ejemplo, las ventas del producto de cada fila. " +
         `Lo armado reemplaza la fórmula de arriba; si la fórmula lleva \`${HUECO}\`, entra en ese lugar (por ejemplo \`{Precio} × ${HUECO}\`). ` +
-        "Las columnas de las subtablas salen como «Subtabla … › Columna». " +
+        "Las columnas de las subtablas salen como «Subtabla … › Columna»; las de la subtabla de otra tabla, como «Tabla › Subtabla › Columna» " +
+        "(se toman las filas de todos sus registros). " +
+        "Para tomar solo de los registros hijos (los que enlazan a este), elige su enlace en «Solo los que enlazan a este registro». " +
+        "Un cálculo puede usar otros cálculos: de este registro, de sus subtablas, de la tabla padre (por su enlace) o de las hijas y sus subtablas. " +
         "Para más condiciones u otras formas de anidarlas, edita después la fórmula.",
     }),
     menu("ext_que", "Qué hacer", [{ value: "", label: "No usar" }, ...Object.entries(QUE_HACER).map(([value, label]) => ({ value, label }))], { value: "" }),
@@ -1122,6 +1109,14 @@ function constructor_de_formula(spec: TablaSpec, campo: CampoSpec, otras: TablaS
         : {}),
     }),
     menu("ext_columna", "Qué columna", [ninguna, ...columnas], { value: "", help: "De la tabla elegida. Para «Contar» no hace falta." }),
+    ...(enlaces.length
+      ? [
+          menu("ext_enlace", "Solo los que enlazan a este registro", [{ value: "", label: "Todos los registros" }, ...enlaces], {
+            value: "",
+            help: "Por ejemplo, de «Pedidos» solo los que en su columna «Cliente» tienen a este cliente.",
+          }),
+        ]
+      : []),
     menu("ext_union", "Las condiciones se cumplen", Object.entries(UNIONES).map(([value, label]) => ({ value, label })), { value: "y" }),
     ...condiciones,
   ];
@@ -1143,7 +1138,8 @@ async function vista_previa(data: Datos, spec: TablaSpec, campo: CampoSpec): Pro
   if (!ultima) {
     return nodo("nox.alert", { text: "Vista previa", description: "Captura un registro para ver qué da este cálculo." });
   }
-  const valor = con_unidad(ultima.valores[campo.clave] ?? "", campo.unidad) || "vacío";
+  const unidad = campo.unidad_columna ? ultima.valores[campo.unidad_columna] || campo.unidad : campo.unidad;
+  const valor = con_unidad(ultima.valores[campo.clave] ?? "", unidad) || "vacío";
   return nodo("nox.detail", { text: "Vista previa", items: [{ label: "Con el último registro da", value: valor, emphasis: true }] });
 }
 

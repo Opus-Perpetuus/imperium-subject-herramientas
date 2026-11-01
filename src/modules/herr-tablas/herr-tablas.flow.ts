@@ -26,6 +26,8 @@ import {
   buscar_tabla,
   campo_de,
   decimales_de,
+  formulas_de_calculo,
+  lee_calculados_de_filas,
   spec_de_fila,
   type CampoSpec,
   type Registro,
@@ -37,6 +39,7 @@ import { ids_referencia, parsear } from "../../lib/formulas/multivalor.ts";
 import {
   TIPOS_AGREGADO,
   calcular_agregado,
+  partir_enlace,
   referencias,
   texto_a_numero,
   type TipoAgregado,
@@ -120,7 +123,13 @@ export function recalcular(spec: TablaSpec, registros: DomainRow[], contexto: Co
   const base = registros.map(registro_como_fila);
   // Un solo `compartido` por vista: lo que no depende del registro se calcula una vez.
   const comun: ContextoCalculo = { ...contexto, compartido: new Map() };
-  const filas = base.map((f, i) => ({ ...f, valores: calcular_valores(spec, objeto(registros[i]!.valores), base, comun, f.id) }));
+  let filas = base.map((f, i) => ({ ...f, valores: calcular_valores(spec, objeto(registros[i]!.valores), base, comun, f.id) }));
+  // Un cálculo que lee los calculados de las demás filas los ve ya recalculados, no los guardados.
+  if (lee_calculados_de_filas(spec)) {
+    const primera = filas;
+    const otra: ContextoCalculo = { ...contexto, compartido: new Map() };
+    filas = primera.map((f, i) => ({ ...f, valores: calcular_valores(spec, objeto(registros[i]!.valores), primera, otra, f.id) }));
+  }
   return asociar_contexto(filas, contexto);
 }
 
@@ -137,27 +146,29 @@ type CacheTablas = {
   cargadas: Map<string, Promise<TablaCargada | null>>;
 };
 
-/** Las tablas (por nombre escrito) y los enlaces (por id) que leen las fórmulas de `spec`. */
+/**
+ * Las tablas (por nombre escrito) y los enlaces (por id) que leen las fórmulas
+ * de `spec`: las del registro, sus resúmenes y las columnas de sus subtablas,
+ * también los enlaces de las filas que recorre un `sub_*`.
+ */
 function lo_que_lee(spec: TablaSpec): { nombres: Set<string>; enlaces: Set<string> } {
   const nombres = new Set<string>();
   const enlaces = new Set<string>();
-  // Los cálculos de cada fila de una subtabla se leen contra sus columnas (y las del registro).
-  const formulas: Array<[TablaSpec, string]> = [
-    ...spec.campos.filter((c) => es_calculado(c)).map((c): [TablaSpec, string] => [spec, c.formula ?? ""]),
-    ...spec.resumenes.map((r): [TablaSpec, string] => [spec, r.formula]),
-    ...spec.campos
-      .filter((c) => c.tipo === "subtabla")
-      .flatMap((sub) => {
-        const en = spec_de_subtabla(spec, sub);
-        return columnas_de(sub)
-          .filter((c) => es_calculado(c))
-          .map((c): [TablaSpec, string] => [en, c.formula ?? ""]);
-      }),
-  ];
-  for (const [en, f] of formulas) {
+  const formulas = [...formulas_de_calculo(spec), ...spec.resumenes.map((r) => ({ en: spec, formula: r.formula }))];
+  for (const { en, formula: f } of formulas) {
     if (!f.includes("tabla_") && !f.includes(".")) continue;
     const refs = referencias(f);
     for (const n of refs.tablas.keys()) nombres.add(n);
+    for (const n of refs.subtablas_tablas.keys()) nombres.add(n);
+    const de_subtablas = [...refs.subtablas].flatMap(([nombre, claves]) => {
+      const sub = en.campos.find((c) => c.tipo === "subtabla" && (c.clave === nombre || c.etiqueta === nombre));
+      return [...claves].flatMap((k) => {
+        const e = partir_enlace(k);
+        const c = e && sub ? columnas_de(sub).find((x) => x.clave === e.campo) : undefined;
+        return c?.tabla_ref_id ? [c.tabla_ref_id] : [];
+      });
+    });
+    for (const id of de_subtablas) enlaces.add(id);
     for (const e of refs.enlaces) {
       const id = campo_de(en, e.campo)?.tabla_ref_id;
       if (id) enlaces.add(id);
@@ -197,11 +208,22 @@ export async function contexto_calculo(
     const t = buscar_tabla(todas, nombre);
     if ("error" in t) continue;
     ids.add(t.id);
-    // Enlaces leídos dentro de otra tabla: `tabla_suma("Ventas", {producto.precio})`.
-    for (const formula of [...spec.campos.map((c) => c.formula ?? ""), ...spec.resumenes.map((r) => r.formula)]) {
-      for (const e of referencias(formula).enlaces_tablas.get(nombre) ?? []) {
+    // Enlaces leídos dentro de otra tabla: `tabla_suma("Ventas", {producto.precio})`,
+    // también desde las filas de su subtabla: `tabla_suma("Ventas", sub_suma("Partidas", {producto.precio}))`.
+    const formulas = [...formulas_de_calculo(spec).map((x) => x.formula), ...spec.resumenes.map((r) => r.formula)];
+    for (const formula of formulas) {
+      const refs = referencias(formula);
+      for (const e of refs.enlaces_tablas.get(nombre) ?? []) {
         const destino = campo_de(t, e.campo)?.tabla_ref_id;
         if (destino) ids.add(destino);
+      }
+      for (const [sub_nombre, claves] of refs.subtablas_tablas.get(nombre) ?? []) {
+        const sub = t.campos.find((c) => c.tipo === "subtabla" && (c.clave === sub_nombre || c.etiqueta === sub_nombre));
+        for (const k of claves) {
+          const e = partir_enlace(k);
+          const destino = e && sub ? columnas_de(sub).find((x) => x.clave === e.campo)?.tabla_ref_id : undefined;
+          if (destino) ids.add(destino);
+        }
       }
     }
   }
@@ -266,7 +288,18 @@ export function valor_presentado(
     const sub_etiquetas: Etiquetas = new Map(
       columnas_de(campo).map((c) => [c.clave, etiquetas.get(`${campo.clave}.${c.clave}`) ?? new Map()]),
     );
-    return resumen_subtabla(campo, filas_de_subtabla(raw), (c, v) => valor_presentado(c, v, sub_etiquetas));
+    // Cada celda ya presentada con la unidad de su fila (la que diga otra columna de la fila, si la toma de ahí).
+    const filas = filas_de_subtabla(raw).map((f) => {
+      const out = { ...f };
+      for (const c of columnas_de(campo)) {
+        const v = f[c.clave];
+        if (typeof v !== "string") continue;
+        const unidad = c.unidad_columna ? parsear(f[c.unidad_columna] ?? "").join(" · ") || c.unidad : c.unidad;
+        out[c.clave] = valor_presentado(c, v, sub_etiquetas, unidad);
+      }
+      return out;
+    });
+    return resumen_subtabla(campo, filas, (_c, v) => v);
   }
   if (campo.tipo === "referencia") {
     const de = etiquetas.get(campo.clave);
@@ -447,11 +480,13 @@ export async function etiquetas_referencia(data: KirletCtx["data"], spec: TablaS
 const UNIDAD_DE_NUMERO = new Set(["numero", "entero", "dinero", "calculado", "nivel"]);
 
 /**
- * La unidad de una columna en una fila: la del registro que elige su enlace
+ * La unidad de una columna en una fila: la que dice otra columna de la fila
+ * (`unidad_columna`, p. ej. «Unidad»: kg), la del registro que elige su enlace
  * (`unidad_de`), la que se escribió al capturar (`unidad_por_registro`) o la
  * de la columna. Sin dato de dónde sacarla, la de la columna.
  */
 export function unidad_en_fila(campo: CampoSpec, fila: Registro, enlaces: Enlaces): string | null {
+  if (campo.unidad_columna) return parsear(fila.valores[campo.unidad_columna]).join(" · ") || campo.unidad || null;
   if (campo.unidad_de) {
     const [ref = "", fuente = ""] = campo.unidad_de.split(":");
     const enlace = enlaces.get(ref);

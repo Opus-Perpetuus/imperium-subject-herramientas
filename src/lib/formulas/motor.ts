@@ -248,6 +248,8 @@ export type Referencias = {
   enlaces_tablas: Map<string, { campo: string; columna: string }[]>;
   /** Subtabla propia (como se escribió en `sub_*`) → columnas suyas que se leen. */
   subtablas: Map<string, Set<string>>;
+  /** `tabla_suma("T", sub_suma("S", {c}))`: otra tabla → su subtabla → columnas que se leen. */
+  subtablas_tablas: Map<string, Map<string, Set<string>>>;
 };
 
 /**
@@ -255,7 +257,22 @@ export type Referencias = {
  * léxico que `mapear_referencias`, así que también sirve con fórmulas a medio escribir.
  */
 export function referencias(formula: string): Referencias {
-  const r: Referencias = { propias: new Set(), directas: new Set(), tablas: new Map(), enlaces: [], enlaces_tablas: new Map(), subtablas: new Map() };
+  const r: Referencias = {
+    propias: new Set(),
+    directas: new Set(),
+    tablas: new Map(),
+    enlaces: [],
+    enlaces_tablas: new Map(),
+    subtablas: new Map(),
+    subtablas_tablas: new Map(),
+  };
+  const sub_de_tabla = (tabla: string, sub: string): Set<string> => {
+    let subs = r.subtablas_tablas.get(tabla);
+    if (!subs) r.subtablas_tablas.set(tabla, (subs = new Map()));
+    let claves = subs.get(sub);
+    if (!claves) subs.set(sub, (claves = new Set()));
+    return claves;
+  };
   mapear_referencias(
     formula,
     (clave, tabla, en_filas, sub) => {
@@ -269,6 +286,8 @@ export function referencias(formula: string): Referencias {
         let claves = r.subtablas.get(sub);
         if (!claves) r.subtablas.set(sub, (claves = new Set()));
         claves.add(limpia);
+      } else {
+        sub_de_tabla(tabla, sub).add(limpia);
       }
       return `{${clave}}`;
     }
@@ -300,6 +319,8 @@ export function referencias(formula: string): Referencias {
         r.propias.add(nombre);
         r.directas.add(nombre);
         if (!r.subtablas.has(nombre)) r.subtablas.set(nombre, new Set());
+      } else if (tipo === "sub" && tabla !== null) {
+        sub_de_tabla(tabla, nombre);
       }
       return nombre;
     },

@@ -59,6 +59,11 @@ export type Pedido = {
   columna: string;
   condiciones: Condicion[];
   union: Union;
+  /**
+   * `tabla_id|clave` de un enlace de la tabla de origen que apunta a esta:
+   * solo cuentan los registros que enlazan al que se calcula (los hijos).
+   */
+  enlace?: string;
 };
 
 /**
@@ -76,6 +81,16 @@ export type Union = keyof typeof UNIONES;
 
 /** En «De qué tabla», una subtabla del propio registro: `sub:<clave>`. */
 export const PREFIJO_SUBTABLA = "sub:";
+
+/** En «De qué tabla», la subtabla de otra tabla (las filas de todos sus registros): `hija:<tabla_id>:<clave>`. */
+export const PREFIJO_HIJA = "hija:";
+
+function partir_hija(v: string): { tabla: string; sub: string } | null {
+  if (!v.startsWith(PREFIJO_HIJA)) return null;
+  const resto = v.slice(PREFIJO_HIJA.length);
+  const i = resto.lastIndexOf(":");
+  return i > 0 ? { tabla: resto.slice(0, i), sub: resto.slice(i + 1) } : null;
+}
 
 /** Las subtablas del registro que se calcula: de ellas se suma, cuenta… con `sub_*`. */
 export function subtablas_de(spec: Pick<TablaSpec, "campos">): CampoSpec[] {
@@ -113,6 +128,7 @@ export function pedido_desde_formulario(body: Record<string, unknown>): Pedido |
     columna: texto(body.ext_columna),
     condiciones,
     union: Object.hasOwn(UNIONES, texto(body.ext_union)) ? (texto(body.ext_union) as Union) : "y",
+    enlace: texto(body.ext_enlace),
   };
 }
 
@@ -131,20 +147,42 @@ export function armar_formula(spec: TablaSpec, tablas: TablaSpec[], pedido: Pedi
   const id_origen = pedido.tabla || spec.id;
   const sub = id_origen.startsWith(PREFIJO_SUBTABLA) ? subtablas_de(spec).find((c) => c.clave === id_origen.slice(PREFIJO_SUBTABLA.length)) : undefined;
   if (id_origen.startsWith(PREFIJO_SUBTABLA) && !sub) return { error: "Esa subtabla ya no está en esta tabla" };
+  // La subtabla de otra tabla: sus filas, en todos los registros de esa tabla.
+  const ruta_hija = partir_hija(id_origen);
+  const tabla_hija = ruta_hija ? (ruta_hija.tabla === spec.id ? spec : tablas.find((t) => t.id === ruta_hija.tabla)) : undefined;
+  const sub_hija = tabla_hija ? subtablas_de(tabla_hija).find((c) => c.clave === ruta_hija!.sub) : undefined;
+  if (ruta_hija && !sub_hija) return { error: "Esa subtabla ya no está en esa tabla" };
   // De una subtabla solo valen sus columnas; las del registro se comparan con «…o con esta columna».
   const origen: Pick<TablaSpec, "id" | "name" | "campos"> | undefined = sub
     ? { id: id_origen, name: `la subtabla ${sub.etiqueta}`, campos: columnas_de(sub) }
-    : id_origen === spec.id
-      ? spec
-      : tablas.find((t) => t.id === id_origen);
+    : sub_hija
+      ? { id: id_origen, name: `${tabla_hija!.name} › ${sub_hija.etiqueta}`, campos: columnas_de(sub_hija) }
+      : id_origen === spec.id
+        ? spec
+        : tablas.find((t) => t.id === id_origen);
   if (!origen) return { error: "Elige de qué tabla se toman los datos" };
   const de_origen = (v: string, que: string): string | { error: string } => {
     const c = partir_columna(v);
     if (!c) return { error: `Elige ${que}` };
-    if (c.tabla !== origen.id) return { error: `${que[0]!.toUpperCase()}${que.slice(1)} tiene que ser de «${origen.name}»` };
-    if ((c.clave !== "_id" || sub) && !origen.campos.some((x) => x.clave === c.clave)) return { error: `«${c.clave}» ya no existe en «${origen.name}»` };
+    // Desde una fila de la subtabla de otra tabla también se ven las columnas de su registro.
+    const en = c.tabla === origen.id ? origen : tabla_hija && c.tabla === tabla_hija.id ? tabla_hija : null;
+    if (!en) return { error: `${que[0]!.toUpperCase()}${que.slice(1)} tiene que ser de «${origen.name}»` };
+    if ((c.clave !== "_id" || en === origen && (sub || sub_hija)) && !en.campos.some((x) => x.clave === c.clave)) {
+      return { error: `«${c.clave}» ya no existe en «${en.name}»` };
+    }
     return `{${c.clave}}`;
   };
+  // «Solo los que enlazan a este registro»: un enlace de la tabla de origen que apunta aquí.
+  const tabla_de_enlace = tabla_hija ?? (sub ? undefined : origen);
+  let filtro_enlace: string | null = null;
+  if (pedido.enlace) {
+    const e = partir_columna(pedido.enlace);
+    const c = e && tabla_de_enlace && e.tabla === tabla_de_enlace.id ? tabla_de_enlace.campos.find((x) => x.clave === e.clave) : undefined;
+    if (!c || c.tipo !== "referencia" || c.tabla_ref_id !== spec.id) {
+      return { error: `Elige un enlace de «${tabla_de_enlace?.name ?? origen.name}» que apunte a esta tabla` };
+    }
+    filtro_enlace = c.multiple || c.ref_subtabla ? `contiene({${c.clave}}, {actual:_id})` : `{${c.clave}} == {actual:_id}`;
+  }
   let valor: string | null = null;
   if (pedido.que !== "cuenta") {
     const v = de_origen(pedido.columna, "la columna que se toma");
@@ -176,17 +214,39 @@ export function armar_formula(spec: TablaSpec, tablas: TablaSpec[], pedido: Pedi
     partes.push(c.op === "contiene" ? `contiene(${col}, ${otro})` : `${col} ${c.op === "=" ? "==" : c.op} ${otro}`);
   }
   const condicion = juntar(partes, pedido.union);
+  if (sub_hija) return { formula: de_hija(tabla_hija!.id, sub_hija.clave, pedido.que, valor, condicion, filtro_enlace) };
   if (sub) {
     const args = [JSON.stringify(sub.clave), ...(valor ? [valor] : []), ...(condicion ? [condicion] : [])];
     return { formula: `sub_${pedido.que}(${args.join(", ")})` };
   }
+  const filtro = juntar([condicion, filtro_enlace].filter((x): x is string => !!x), "y");
   if (origen.id === spec.id) {
     const f = { suma: "sumasi", cuenta: "cuentasi", promedio: "promediosi", minimo: "minimosi", maximo: "maximosi", buscar: "buscarsi", unir: "unirsi" }[pedido.que];
-    const cond = condicion ?? "1";
+    const cond = filtro ?? "1";
     return { formula: pedido.que === "cuenta" ? `${f}(${cond})` : `${f}(${valor}, ${cond})` };
   }
-  const args = [JSON.stringify(origen.id), ...(valor ? [valor] : []), ...(condicion ? [condicion] : [])];
+  const args = [JSON.stringify(origen.id), ...(valor ? [valor] : []), ...(filtro ? [filtro] : [])];
   return { formula: `tabla_${pedido.que}(${args.join(", ")})` };
+}
+
+/**
+ * Las filas de la subtabla `sub` en todos los registros de la tabla `tabla`
+ * (o solo en los que enlazan aquí): un `sub_*` por registro dentro de un `tabla_*`.
+ * Suma y cuenta se suman; el promedio es suma entre cuenta; lo demás toma
+ * los registros que tienen al menos una fila que cumple.
+ */
+function de_hija(tabla: string, sub: string, que: QueHacer, valor: string | null, condicion: string | null, enlace: string | null): string {
+  const t = JSON.stringify(tabla);
+  const s = JSON.stringify(sub);
+  const cond = condicion ? `, ${condicion}` : "";
+  const fuera = enlace ? `, ${enlace}` : "";
+  const cuenta = `tabla_suma(${t}, sub_cuenta(${s}${cond})${fuera})`;
+  const suma = `tabla_suma(${t}, sub_suma(${s}, ${valor}${cond})${fuera})`;
+  if (que === "cuenta") return cuenta;
+  if (que === "suma") return suma;
+  if (que === "promedio") return `si(${cuenta} > 0, ${suma} / ${cuenta}, 0)`;
+  const con_filas = juntar([`sub_cuenta(${s}${cond}) > 0`, ...(enlace ? [enlace] : [])], "y");
+  return `tabla_${que}(${t}, sub_${que}(${s}, ${valor}${cond}), ${con_filas})`;
 }
 
 function juntar(partes: string[], union: Union): string | null {
@@ -198,13 +258,27 @@ function juntar(partes: string[], union: Union): string | null {
   return `(${primera}) ${union === "y_o" ? "y" : "o"} (${resto})`;
 }
 
-/** «De qué tabla»: esta, cada subtabla del registro y las demás tablas. */
+/** «De qué tabla»: esta, cada subtabla del registro, las demás tablas y sus subtablas. */
 export function opciones_origen(spec: TablaSpec, tablas: TablaSpec[]): Array<{ value: string; label: string }> {
+  const otras = tablas.filter((t) => t.id !== spec.id);
   return [
     { value: spec.id, label: "Esta tabla" },
     ...subtablas_de(spec).map((c) => ({ value: `${PREFIJO_SUBTABLA}${c.clave}`, label: `Subtabla ${c.etiqueta} (las filas de este registro)` })),
-    ...tablas.filter((t) => t.id !== spec.id).map((t) => ({ value: t.id, label: t.name })),
+    ...otras.map((t) => ({ value: t.id, label: t.name })),
+    ...otras.flatMap((t) =>
+      subtablas_de(t).map((c) => ({ value: `${PREFIJO_HIJA}${t.id}:${c.clave}`, label: `${t.name} › subtabla ${c.etiqueta} (las filas de sus registros)` })),
+    ),
   ];
+}
+
+/** «Solo los que enlazan a este registro»: los enlaces de otras tablas (o de esta) que apuntan aquí. */
+export function opciones_enlace(spec: TablaSpec, tablas: TablaSpec[]): Array<{ value: string; label: string }> {
+  const todas = [spec, ...tablas.filter((t) => t.id !== spec.id)];
+  return todas.flatMap((t) =>
+    t.campos
+      .filter((c) => c.tipo === "referencia" && c.tabla_ref_id === spec.id)
+      .map((c) => ({ value: valor_columna(t.id, c.clave), label: `${t.id === spec.id ? "Esta tabla" : t.name} › ${c.etiqueta}` })),
+  );
 }
 
 /** Todas las columnas de todas las tablas para los menús: «Ventas › Cantidad». */
@@ -216,5 +290,11 @@ export function opciones_columnas(spec: TablaSpec, tablas: TablaSpec[], excepto?
   const de_subtablas = subtablas_de(spec).flatMap((s) =>
     columnas_de(s).map((c) => ({ value: valor_columna(`${PREFIJO_SUBTABLA}${s.clave}`, c.clave), label: `Subtabla ${s.etiqueta} › ${c.etiqueta}` })),
   );
-  return [...de_tabla(spec), ...de_subtablas, ...tablas.filter((t) => t.id !== spec.id).flatMap(de_tabla)];
+  const otras = tablas.filter((t) => t.id !== spec.id);
+  const de_hijas = otras.flatMap((t) =>
+    subtablas_de(t).flatMap((s) =>
+      columnas_de(s).map((c) => ({ value: valor_columna(`${PREFIJO_HIJA}${t.id}:${s.clave}`, c.clave), label: `${t.name} › ${s.etiqueta} › ${c.etiqueta}` })),
+    ),
+  );
+  return [...de_tabla(spec), ...de_subtablas, ...otras.flatMap(de_tabla), ...de_hijas];
 }

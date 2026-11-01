@@ -1,4 +1,4 @@
-import { TIPOS_LLENADO_AUTOMATICO, es_calculado } from "../../lib/formulas/automatico.ts";
+import { es_calculado } from "../../lib/formulas/automatico.ts";
 import {
   define_routes,
   new_id,
@@ -36,6 +36,8 @@ import {
   SIN_FOTO,
   TIPOS_CAMPO,
   TIPOS_FOTO,
+  TIPOS_FUENTE_UNIDAD,
+  TIPOS_UNIDAD_DE_COLUMNA,
   TIPOS_UNIDAD_POR_REGISTRO,
   buscar_tabla,
   campo_de,
@@ -203,6 +205,7 @@ function exigir_sin_uso_en_subtabla(spec: TablaSpec, sub: CampoSpec, col: CampoS
   };
   const usan = [
     ...(sub.columnas ?? []).filter((c) => c.clave !== col.clave && es_calculado(c) && usa(c.formula, col.clave)),
+    ...(sub.columnas ?? []).filter((c) => c.unidad_columna === col.clave),
     ...spec.campos.filter((c) => es_calculado(c) && lee(c.formula)),
     ...spec.resumenes.filter((r) => lee(r.formula)),
   ].map((x) => `«${x.etiqueta}»`);
@@ -238,7 +241,13 @@ export async function quitar_reglas_que_usan(ctx: KirletCtx, tabla_id: string, c
 function exigir_sin_uso(spec: TablaSpec, clave: string, etiqueta: string): void {
   const usan = [
     ...spec.campos.filter((c) => c.clave !== clave && es_calculado(c) && usa(c.formula, clave)),
-    ...spec.campos.filter((c) => unidad_de_enlace(c, clave)),
+    ...spec.campos.filter((c) => unidad_de_enlace(c, clave) || c.unidad_columna === clave),
+    // Una columna calculada de una subtabla también lee lo del registro (`{Total}`, `{actual:Folio}`).
+    ...spec.campos.flatMap((s) =>
+      s.tipo === "subtabla" && !(s.columnas ?? []).some((c) => c.clave === clave)
+        ? (s.columnas ?? []).filter((c) => es_calculado(c) && usa(c.formula, clave))
+        : [],
+    ),
     ...spec.resumenes.filter((r) => usa(r.formula, clave)),
   ].map((x) => `«${x.etiqueta}»`);
   if (usan.length) falla(409, `«${etiqueta}» se usa en ${usan.join(", ")}: cambia o quita eso primero`, "conflict");
@@ -266,6 +275,13 @@ async function aplicar_cambios(ctx: KirletCtx, spec: TablaSpec, antes: CampoSpec
     const fuente = texto(body.unidad_fuente);
     campo.unidad_por_registro = fuente === "registro";
     campo.unidad_de = fuente.startsWith("enlace:") ? fuente.slice("enlace:".length) : null;
+    campo.unidad_columna = fuente.startsWith("columna:") ? fuente.slice("columna:".length) : null;
+    if (campo.unidad_columna) {
+      const origen = spec.campos.find((c) => c.clave === campo.unidad_columna && c.clave !== campo.clave);
+      if (!origen || !TIPOS_FUENTE_UNIDAD.has(origen.tipo)) {
+        falla(400, "Elige de nuevo de dónde sale la unidad: esa columna ya no está o no es de texto", "validation_error");
+      }
+    }
     if (campo.unidad_de) {
       const [ref = "", origen = ""] = campo.unidad_de.split(":");
       const enlace = spec.campos.find((c) => c.clave === ref && c.tipo === "referencia" && c.tabla_ref_id);
@@ -329,12 +345,9 @@ async function aplicar_cambios(ctx: KirletCtx, spec: TablaSpec, antes: CampoSpec
   } else if (texto(body.formula)) {
     campo.formula = formula_con_claves(spec, texto(body.formula), await otras_tablas(ctx, spec));
   }
+  // Solo un «Cálculo» lleva fórmula; entero, número y dinero se capturan siempre.
   if (campo.tipo === "calculado") campo.formula ||= "0";
-  else if (!TIPOS_LLENADO_AUTOMATICO.has(campo.tipo)) campo.formula = null;
-  // Entero, número o dinero: con fórmula se llenan solos; con la fórmula vacía (o al cambiar de tipo) se capturan.
-  else if (!pedido && (("formula" in body && !texto(body.formula)) || (antes.tipo !== campo.tipo && !("formula" in body)) || campo.formula === "0")) {
-    campo.formula = null;
-  }
+  else campo.formula = null;
   if (campo.tipo === "entero") campo.decimales = 0;
   if (campo.tipo === "codigo") {
     const r = escaner_desde_formulario(spec.campos, campo, body);
@@ -343,13 +356,21 @@ async function aplicar_cambios(ctx: KirletCtx, spec: TablaSpec, antes: CampoSpec
   } else campo.escaner = null;
   if (!TIPOS_UNIDAD_POR_REGISTRO.has(campo.tipo)) campo.unidad_por_registro = false;
   if (!["numero", "entero", "calculado"].includes(campo.tipo)) campo.unidad_de = null;
+  if (!TIPOS_UNIDAD_DE_COLUMNA.has(campo.tipo)) campo.unidad_columna = null;
   return campo;
 }
 
 /** Las columnas cuya unidad salía de un enlace que cambió de tabla o dejó de serlo vuelven a su unidad fija. */
 function sin_unidad_de(campos: CampoSpec[], antes: CampoSpec, despues: CampoSpec): CampoSpec[] {
   const sigue = despues.tipo === "referencia" && despues.tabla_ref_id === antes.tabla_ref_id;
-  return sigue ? campos : campos.map((c) => (unidad_de_enlace(c, antes.clave) ? { ...c, unidad_de: null } : c));
+  const sigue_texto = TIPOS_FUENTE_UNIDAD.has(despues.tipo);
+  return campos.map((c) => {
+    let out = c;
+    if (!sigue && unidad_de_enlace(c, antes.clave)) out = { ...out, unidad_de: null };
+    // La columna que daba la unidad dejó de ser de texto: vuelve la unidad fija.
+    if (!sigue_texto && c.unidad_columna === antes.clave) out = { ...out, unidad_columna: null };
+    return out;
+  });
 }
 
 export const herr_tablas_disenio = define_routes({
@@ -439,7 +460,7 @@ export const herr_tablas_disenio = define_routes({
       const body = await ctx.body<Record<string, unknown>>();
       const campo = await aplicar_cambios(ctx, lugar.en, antes, body);
       exigir_subcolumna(campo.tipo);
-      const columnas = lugar.campos.toSpliced(lugar.i, 1);
+      const columnas = sin_unidad_de(lugar.campos.toSpliced(lugar.i, 1), antes, campo);
       const posicion = numero(body.posicion);
       columnas.splice(posicion === null ? lugar.i : Math.min(columnas.length, Math.max(0, Math.round(posicion))), 0, campo);
       const guardada = await guardar(ctx, fila, lugar.con(columnas));
@@ -455,7 +476,7 @@ export const herr_tablas_disenio = define_routes({
     const campo = await aplicar_cambios(ctx, spec, antes, body);
     const campos = sin_unidad_de(spec.campos.toSpliced(i, 1), antes, campo);
     // Sumar kilos con litros no da kilos: los totales de una columna que pasa a unidad variable se quedan sin ella.
-    const variable = (c: CampoSpec) => c.unidad_por_registro || !!c.unidad_de;
+    const variable = (c: CampoSpec) => c.unidad_por_registro || !!c.unidad_de || !!c.unidad_columna;
     const resumenes =
       variable(campo) && !variable(antes)
         ? spec.resumenes.map((r) => (usa(r.formula, campo.clave) ? { ...r, unidad: null } : r))
@@ -659,7 +680,7 @@ export const herr_tablas_disenio = define_routes({
       etiqueta ||= nombre_total(tipo, campo);
       const cuenta = tipo === "cuenta" || campo.tipo === "booleano";
       // Sumar kilos con litros no da kilos: con unidad distinta por registro el total va sin unidad.
-      unidad = cuenta || campo.unidad_por_registro || campo.unidad_de ? null : (campo.unidad ?? null);
+      unidad = cuenta || campo.unidad_por_registro || campo.unidad_de || campo.unidad_columna ? null : (campo.unidad ?? null);
       decimales = cuenta || campo.tipo === "entero" ? 0 : (campo.decimales ?? 2);
     } else {
       falla(400, "Elige qué calcular y de qué columna", "validation_error");

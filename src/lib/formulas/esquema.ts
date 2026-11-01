@@ -7,12 +7,13 @@ import {
   MAX_COLUMNAS_SUBTABLA,
   TIPOS_SUBCOLUMNA,
   columna_de,
+  columnas_de,
   partir_ruta,
   spec_de_subtabla,
   subtabla_de,
   type ModoRefSubtabla,
 } from "./subtabla.ts";
-import { ambito_sonda, claves_referenciadas, evaluar, parsear_agregado, referencias } from "./motor.ts";
+import { ambito_sonda, claves_referenciadas, evaluar, parsear_agregado, partir_enlace, referencias } from "./motor.ts";
 
 /**
  * Esquema de una tabla personalizada: campos tipados, valores fijos y resúmenes.
@@ -87,6 +88,12 @@ export type CampoSpec = {
    * el texto de una columna como «Unidad»). Gana a `unidad_por_registro`.
    */
   unidad_de?: string | null;
+  /**
+   * Solo entero, número y cálculo: la unidad es lo que dice en cada registro la
+   * columna `unidad_columna` de la misma tabla (por ejemplo «Unidad»: kg, L,
+   * piezas). Gana a `unidad_de` y a `unidad_por_registro`; vacía, vale `unidad`.
+   */
+  unidad_columna?: string | null;
   decimales?: number;
   /** Si aparece en la fila resumida de la lista. */
   en_resumen?: boolean;
@@ -121,6 +128,12 @@ export type CampoSpec = {
 export const SIN_FOTO = "-";
 
 export const TIPOS_FOTO: ReadonlySet<TipoCampo> = new Set(["foto", "fotos"]);
+
+/** Los tipos cuya unidad puede salir de otra columna de la misma tabla (`unidad_columna`). */
+export const TIPOS_UNIDAD_DE_COLUMNA: ReadonlySet<TipoCampo> = new Set(["numero", "entero", "calculado"]);
+
+/** Las columnas que pueden dar la unidad: lo que en cada registro dice «kg», «L», «piezas»… */
+export const TIPOS_FUENTE_UNIDAD: ReadonlySet<TipoCampo> = new Set(["texto", "opcion", "codigo"]);
 
 /** Los tipos que pueden llevar una unidad distinta en cada registro. */
 export const TIPOS_UNIDAD_POR_REGISTRO: ReadonlySet<TipoCampo> = new Set(["numero", "entero"]);
@@ -272,7 +285,8 @@ function normalizar_campo(x: Record<string, unknown>): CampoSpec {
     requerido: x.requerido === true,
     valor_por_defecto: texto_o_null(x.valor_por_defecto),
     opciones: Array.isArray(x.opciones) ? x.opciones.map(texto).filter(Boolean) : [],
-    formula: texto_o_null(x.formula),
+    // Solo un «Cálculo» lleva fórmula. Un entero, número o dinero con una (0.17.2) vuelve a capturarse.
+    formula: tipo === "calculado" ? texto_o_null(x.formula) : null,
     unidad: texto_o_null(x.unidad),
     decimales: entero(x.decimales, DECIMALES),
     en_resumen: x.en_resumen === true,
@@ -286,6 +300,7 @@ function normalizar_campo(x: Record<string, unknown>): CampoSpec {
     multiple: x.multiple === true,
     unidad_por_registro: x.unidad_por_registro === true,
     unidad_de: texto_o_null(x.unidad_de),
+    ...(TIPOS_UNIDAD_DE_COLUMNA.has(tipo) && texto(x.unidad_columna) ? { unidad_columna: texto(x.unidad_columna) } : {}),
     ref_foto: texto_o_null(x.ref_foto),
     ref_foto_en_tabla: x.ref_foto_en_tabla === true,
     ...(x.ref_escaner === true ? { ref_escaner: true } : {}),
@@ -405,20 +420,21 @@ export function errores_formula(spec: TablaSpec, formula: string, donde: string,
     }
   };
   revisar_enlaces(spec, refs.enlaces);
-  for (const [nombre, claves] of refs.subtablas) {
-    const sub = subtabla_de(spec, nombre);
+  const revisar_subtabla = (en: TablaSpec, nombre: string, claves: Set<string>, de = "") => {
+    const sub = subtabla_de(en, nombre);
     if (!sub) {
-      errores.push(`«${donde}»: «${nombre}» no es una subtabla de esta tabla`);
-      continue;
+      errores.push(`«${donde}»: «${nombre}» no es una subtabla ${de ? de.trim() : "de esta tabla"}`);
+      return;
     }
-    const sspec = spec_de_subtabla(spec, sub);
+    const sspec = spec_de_subtabla(en, sub);
     for (const clave of claves) {
       const enlace = clave.includes(".") ? clave.slice(0, clave.indexOf(".")) : clave;
       if (clave !== "_id" && !resuelve_clave(sspec, clave) && !resuelve_clave(sspec, enlace)) {
-        errores.push(`«${donde}»: «${clave}» no es una columna de la subtabla «${sub.etiqueta}»`);
+        errores.push(`«${donde}»: «${clave}» no es una columna de la subtabla «${sub.etiqueta}»${de}`);
       }
     }
-  }
+  };
+  for (const [nombre, claves] of refs.subtablas) revisar_subtabla(spec, nombre, claves);
   if (otras) {
     const todas = otras.some((t) => t.id === spec.id) ? otras : [spec, ...otras];
     for (const [nombre, claves] of refs.tablas) {
@@ -431,6 +447,15 @@ export function errores_formula(spec: TablaSpec, formula: string, donde: string,
         if (!resuelve_clave(t, clave)) errores.push(`«${donde}»: «${clave}» no existe en «${t.name}»`);
       }
       revisar_enlaces(t, refs.enlaces_tablas.get(nombre) ?? []);
+    }
+    // `tabla_suma("Pedidos", sub_suma("Partidas", {Cantidad}))`: la subtabla y sus columnas, en esa otra tabla.
+    for (const [nombre, subs] of refs.subtablas_tablas) {
+      const t = buscar_tabla(todas, nombre);
+      if ("error" in t) {
+        if (!refs.tablas.has(nombre)) errores.push(`«${donde}»: ${t.error}`);
+        continue;
+      }
+      for (const [sub_nombre, claves] of subs) revisar_subtabla(t, sub_nombre, claves, ` de «${t.name}»`);
     }
   }
   const r = evaluar(formula, ambito_sonda());
@@ -452,43 +477,106 @@ function resuelve_en_destino(destino: TablaSpec, enlace: CampoSpec, columna: str
 }
 
 /**
- * Ciclos entre calculados: `A.total` lee `B.precio` que lee `A.total`. Cuenta lo
- * que se lee del registro mismo, de otras tablas (`tabla_*`) y de los enlaces
- * (`{cliente.saldo}`); no lo que un `sumasi` lee de las filas de su propia tabla,
- * que usa los valores guardados y no puede girar en redondo.
+ * Ciclos entre calculados: `A.total` lee `B.precio` que lee `A.total`. Cada
+ * calculado del registro y cada columna calculada de una subtabla es un nodo;
+ * cuenta lo que se lee del registro mismo, de sus subtablas (`{Partidas.Importe}`,
+ * `sub_*`), de la fila desde una columna (`{Total}` del registro), de otras
+ * tablas (`tabla_*`, también sus subtablas con un `sub_*` adentro) y de los
+ * enlaces (`{cliente.saldo}`). No cuenta lo que un `sumasi` o un `tabla_*` lee
+ * de las filas de su propia tabla: se calcula con una pasada aparte y no gira en redondo.
  */
 export function ciclos_de_calculo(spec: TablaSpec, otras: TablaSpec[] = []): string[] {
   const tablas = new Map<string, TablaSpec>([...otras.map((t) => [t.id, t] as const), [spec.id, spec]]);
   const lista_tablas = [...tablas.values()];
-  const nodo = (t: TablaSpec, clave: string) => `${t.id}\u0000${clave}`;
-  const nombre_de = (id_nodo: string) => {
-    const [tid, clave] = id_nodo.split("\u0000") as [string, string];
-    const t = tablas.get(tid)!;
-    return `${t.name}.${campo_de(t, clave)?.etiqueta || clave}`;
+  const SEP = "\u0000";
+  const nodo = (t: TablaSpec, clave: string) => `${t.id}${SEP}${clave}`;
+  const partir_nodo = (id: string) => {
+    const [tid, clave] = id.split(SEP) as [string, string];
+    const punto = clave.indexOf(".");
+    return { t: tablas.get(tid), clave, sub: punto > 0 ? clave.slice(0, punto) : null, col: punto > 0 ? clave.slice(punto + 1) : clave };
+  };
+  const nombre_de = (id: string) => {
+    const { t, sub, col, clave } = partir_nodo(id);
+    if (!t) return clave;
+    if (sub === null) return `${t.name}.${campo_de(t, clave)?.etiqueta || clave}`;
+    const s = campo_de(t, sub);
+    return `${t.name}.${s?.etiqueta || sub} › ${(s && columna_de(s, col)?.etiqueta) || col}`;
+  };
+  /** El nodo de `clave` leída en la tabla `t` (desde una fila de `sub`, si la hay), o nada si no es calculada. */
+  const calculado_en = (t: TablaSpec, sub: CampoSpec | null, clave: string): string | null => {
+    const col = sub ? columna_de(sub, clave) : undefined;
+    if (col) return es_calculado(col) ? nodo(t, `${sub!.clave}.${col.clave}`) : null;
+    return es_calculado(campo_de(t, clave)) ? nodo(t, clave) : null;
+  };
+  /** `{subtabla.columna}` o `{subtabla.2.columna}` de `t`. */
+  const columna_de_sub = (t: TablaSpec, sub: CampoSpec, ruta: string): string | null => {
+    const col = columna_de(sub, partir_ruta(ruta).column);
+    return col && es_calculado(col) ? nodo(t, `${sub.clave}.${col.clave}`) : null;
   };
   const deps = new Map<string, string[]>();
-  const dependencias = (t: TablaSpec, clave: string): string[] => {
-    const id = nodo(t, clave);
+  const dependencias = (id: string): string[] => {
     const ya = deps.get(id);
     if (ya) return ya;
     const out: string[] = [];
     deps.set(id, out);
-    const formula = campo_de(t, clave)?.formula ?? "";
-    const refs = referencias(formula);
-    const calculado = (en: TablaSpec, c: string) => es_calculado(campo_de(en, c));
-    const enlazar = (en: TablaSpec, enlaces: { campo: string; columna: string }[]) => {
-      for (const { campo, columna } of enlaces) {
-        const destino = tablas.get(campo_de(en, campo)?.tabla_ref_id ?? "");
-        if (destino && calculado(destino, columna)) out.push(nodo(destino, columna));
+    const { t, sub: sub_clave, col } = partir_nodo(id);
+    if (!t) return out;
+    const sub = sub_clave === null ? null : (campo_de(t, sub_clave) ?? null);
+    const campo = sub ? columna_de(sub, col) : campo_de(t, col);
+    const refs = referencias(campo?.formula ?? "");
+    const poner = (n: string | null) => {
+      if (n) out.push(n);
+    };
+    const enlazar = (en: TablaSpec, desde: CampoSpec | null, enlaces: { campo: string; columna: string }[]) => {
+      for (const { campo: c, columna } of enlaces) {
+        const fuente = (desde ? columna_de(desde, c) : undefined) ?? campo_de(en, c);
+        if (fuente?.tipo === "subtabla") {
+          poner(columna_de_sub(en, fuente, columna));
+          continue;
+        }
+        const destino = tablas.get(fuente?.tabla_ref_id ?? "");
+        if (!destino) continue;
+        const punto = columna.indexOf(".");
+        const sub_directa = punto > 0 ? campo_de(destino, columna.slice(0, punto)) : undefined;
+        if (sub_directa?.tipo === "subtabla") {
+          poner(columna_de_sub(destino, sub_directa, columna.slice(punto + 1)));
+          continue;
+        }
+        const propia = calculado_en(destino, null, columna);
+        if (propia || campo_de(destino, columna)) {
+          poner(propia);
+          continue;
+        }
+        const elegida = fuente?.ref_subtabla ? campo_de(destino, fuente.ref_subtabla) : undefined;
+        if (elegida?.tipo === "subtabla") poner(columna_de_sub(destino, elegida, columna));
       }
     };
-    for (const c of refs.directas) if (calculado(t, c)) out.push(nodo(t, c));
-    enlazar(t, refs.enlaces);
+    const leer_subtablas = (en: TablaSpec, subs: Map<string, Set<string>>) => {
+      for (const [nombre, claves] of subs) {
+        const s = subtabla_de(en, nombre);
+        if (!s) continue;
+        const enlaces: { campo: string; columna: string }[] = [];
+        for (const k of claves) {
+          const e = partir_enlace(k);
+          if (e) enlaces.push(e);
+          else poner(calculado_en(en, s, k));
+        }
+        enlazar(en, s, enlaces);
+      }
+    };
+    for (const c of refs.directas) poner(calculado_en(t, sub, c));
+    enlazar(t, sub, refs.enlaces);
+    leer_subtablas(t, refs.subtablas);
     for (const [nombre, claves] of refs.tablas) {
       const otra = buscar_tabla(lista_tablas, nombre);
       if ("error" in otra || otra.id === t.id) continue;
-      for (const c of claves) if (calculado(otra, c)) out.push(nodo(otra, c));
-      enlazar(otra, refs.enlaces_tablas.get(nombre) ?? []);
+      for (const c of claves) poner(calculado_en(otra, null, c));
+      enlazar(otra, null, refs.enlaces_tablas.get(nombre) ?? []);
+    }
+    for (const [nombre, subs] of refs.subtablas_tablas) {
+      const otra = buscar_tabla(lista_tablas, nombre);
+      if ("error" in otra || otra.id === t.id) continue;
+      leer_subtablas(otra, subs);
     }
     return out;
   };
@@ -496,29 +584,61 @@ export function ciclos_de_calculo(spec: TablaSpec, otras: TablaSpec[] = []): str
   const vistos = new Set<string>();
   const camino: string[] = [];
   const en_camino = new Set<string>();
-  const visitar = (t: TablaSpec | undefined, id: string) => {
+  const visitar = (id: string) => {
+    if (errores.length) return;
     if (en_camino.has(id)) {
       const ciclo = [...camino.slice(camino.indexOf(id)), id].map(nombre_de).join(" → ");
       errores.push(`Ciclo de cálculo: ${ciclo}. Quita una de esas referencias.`);
       return;
     }
-    if (vistos.has(id) || !t) return;
+    if (vistos.has(id)) return;
     vistos.add(id);
     camino.push(id);
     en_camino.add(id);
-    const clave = id.split("\u0000")[1]!;
-    for (const dep of dependencias(t, clave)) {
-      if (errores.length) break;
-      visitar(tablas.get(dep.split("\u0000")[0]!), dep);
-    }
+    for (const dep of dependencias(id)) visitar(dep);
     camino.pop();
     en_camino.delete(id);
   };
   for (const c of spec.campos) {
-    if (!es_calculado(c) || errores.length) continue;
-    visitar(spec, nodo(spec, c.clave));
+    if (es_calculado(c)) visitar(nodo(spec, c.clave));
+    if (c.tipo === "subtabla") for (const col of columnas_de(c)) if (es_calculado(col)) visitar(nodo(spec, `${c.clave}.${col.clave}`));
   }
   return errores;
+}
+
+/**
+ * Las fórmulas de la tabla con el esquema contra el que se leen: los
+ * calculados del registro y las columnas calculadas de sus subtablas.
+ */
+export function formulas_de_calculo(spec: TablaSpec): Array<{ en: TablaSpec; formula: string }> {
+  const out: Array<{ en: TablaSpec; formula: string }> = [];
+  for (const c of spec.campos) {
+    if (es_calculado(c) && c.formula) out.push({ en: spec, formula: c.formula });
+    if (c.tipo !== "subtabla") continue;
+    const sspec = spec_de_subtabla(spec, c);
+    for (const col of columnas_de(c)) if (es_calculado(col) && col.formula) out.push({ en: sspec, formula: col.formula });
+  }
+  return out;
+}
+
+/**
+ * ¿Algún cálculo lee los calculados de las demás filas de su propia tabla
+ * (`{suma:total}`, `sumasi(…{total}…)`, `tabla_suma("Esta tabla", {total})`)?
+ * Entonces la vista hace una segunda pasada con los de la primera ya listos.
+ */
+export function lee_calculados_de_filas(spec: TablaSpec): boolean {
+  const calculado = (clave: string) => {
+    const agregado = parsear_agregado(clave);
+    const c = campo_de(spec, agregado ? agregado.campo : clave);
+    return es_calculado(c) || (c?.tipo === "subtabla" && columnas_de(c).some((x) => es_calculado(x)));
+  };
+  const es_propia = (nombre: string) => nombre === spec.id || normalizar_nombre(nombre) === normalizar_nombre(spec.name);
+  return formulas_de_calculo(spec).some(({ formula }) => {
+    const refs = referencias(formula);
+    if ([...refs.propias].some((k) => !refs.directas.has(k) && calculado(k))) return true;
+    for (const [nombre, claves] of refs.tablas) if (es_propia(nombre) && [...claves].some(calculado)) return true;
+    return [...refs.subtablas_tablas.keys()].some(es_propia);
+  });
 }
 
 /**
@@ -542,6 +662,12 @@ export function validar_esquema(spec: TablaSpec, otras?: TablaSpec[]): string[] 
     if (es_calculado(campo)) {
       if (!campo.formula) errores.push(`«${campo.clave}»: falta la fórmula`);
       else errores.push(...errores_formula(spec, campo.formula, campo.clave, otras));
+    }
+    if (campo.unidad_columna) {
+      const fuente = campo_de(spec, campo.unidad_columna);
+      if (!fuente || !TIPOS_FUENTE_UNIDAD.has(fuente.tipo)) {
+        errores.push(`«${campo.etiqueta}»: su unidad sale de una columna que ya no existe o no es de texto`);
+      }
     }
     if (campo.unidad_de) {
       const ref = campo_de(spec, campo.unidad_de.split(":")[0] ?? "");
@@ -586,12 +712,17 @@ function errores_subtabla(spec: TablaSpec, campo: CampoSpec, otras?: TablaSpec[]
     else if (vistas.has(c.clave)) errores.push(`${donde}: clave repetida «${c.clave}»`);
     vistas.add(c.clave);
     if (!TIPOS_SUBCOLUMNA.has(c.tipo)) errores.push(`${donde}: una columna no puede ser de tipo «${c.tipo}»`);
+    if (c.unidad_columna) {
+      const fuente = campo_de(sspec, c.unidad_columna);
+      if (!fuente || !TIPOS_FUENTE_UNIDAD.has(fuente.tipo)) {
+        errores.push(`${donde}: la unidad de «${c.etiqueta}» sale de una columna que ya no existe o no es de texto`);
+      }
+    }
     if (es_calculado(c)) {
       if (!c.formula) errores.push(`${donde}: «${c.clave}» no tiene fórmula`);
       else errores.push(...errores_formula(sspec, c.formula, `${campo.etiqueta} › ${c.etiqueta}`, otras));
     }
   }
-  if (!errores.length) errores.push(...ciclos_de_calculo(sspec).map((e) => `${donde}: ${e}`));
   return errores;
 }
 
