@@ -277,7 +277,7 @@ describe("cálculos que usan otros cálculos", () => {
     expect(por("piezas").formula).toBe(`tabla_suma("${pedidos}", sub_cuenta("partidas", {tipo} == "X"), {cliente} == {actual:_id})`);
     // El diseñador lo enseña con nombres.
     const visto = await pagina(`/pages/herramientas.herr-tabla?id=${clientes}&modo=campo&campo=comprado`);
-    expect(nodos(visto, "nox.input-text").find((n) => n.props?.name === "formula")!.props!.value).toBe(
+    expect(nodos(visto, "nox.input-code-editor").find((n) => n.props?.name === "formula")!.props!.value).toBe(
       'tabla_suma("Pedidos", sub_suma("Partidas", {Importe}), {Cliente} == {actual:_id})',
     );
 

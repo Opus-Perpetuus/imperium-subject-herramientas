@@ -169,7 +169,7 @@ describe("subtablas", () => {
     const opciones = (name: string) => (menus.find((m) => m.props?.name === name)!.props!.options as { value: string; label: string }[]);
     expect(opciones("ext_tabla").map((o) => o.value)).toEqual(expect.arrayContaining(["sub:partidas", pagos]));
     expect(opciones("ext_c1_columna")).toContainEqual({ value: "sub:partidas|tipo", label: "Subtabla Partidas › Tipo" });
-    expect(nodos(editor, "nox.input-text").some((n) => n.props?.name === "formula")).toBe(true);
+    expect(nodos(editor, "nox.input-code-editor").some((n) => n.props?.name === "formula")).toBe(true);
 
     // Contar las filas con Tipo = X y (Precio > 10 o Cantidad ≥ 5); otro entero suma.
     const contar = await call("PATCH", `/herr-tablas/${pedidos}/campos/piezas_x`, {

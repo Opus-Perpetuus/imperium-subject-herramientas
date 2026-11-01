@@ -8,9 +8,13 @@ import {
 } from "@opus-perpetuus/imperium-core-kit";
 import { campo_busqueda, con_defecto, filas_de, normalizar, sin_vacios, texto } from "../../lib/comun.ts";
 import { ACCIONES_DESCONOCIDOS, AMBITOS, ORIGENES, REGLAS_POR_DEFECTO } from "../../lib/telefono/decision.ts";
+import { una_linea } from "../../lib/formulas/plantilla.ts";
 import { herr_telefono_flow, nombre_llamada } from "./herr-telefono.flow.ts";
 import { herr_telefono_pages } from "./herr-telefono.pages.ts";
 import { herr_telefono_tables } from "./herr-telefono.tables.ts";
+
+/** Una plantilla de locución es de un renglón; vacía, la de siempre. */
+const plantilla_con_defecto = (defecto: string) => (v: unknown) => con_defecto(defecto)(typeof v === "string" ? una_linea(v).trim() : v);
 
 const MODOS = ["seleccionado", "rechazado"] as const;
 const DECISIONES = ["contestada", "rechazada", "silenciada", "permitida"] as const;
@@ -76,12 +80,12 @@ const perfiles = define_crud({
     },
     retardo_s: { type: "number", normalize: con_defecto(PERFIL_POR_DEFECTO.retardo_s) },
     anuncio_activo: { type: "boolean", normalize: con_defecto(PERFIL_POR_DEFECTO.anuncio_activo) },
-    anuncio_plantilla: { type: "string", normalize: con_defecto(PERFIL_POR_DEFECTO.anuncio_plantilla) },
+    anuncio_plantilla: { type: "string", normalize: plantilla_con_defecto(PERFIL_POR_DEFECTO.anuncio_plantilla) },
     anuncio_repeticiones: { type: "number", normalize: con_defecto(PERFIL_POR_DEFECTO.anuncio_repeticiones) },
     anunciar_desconocidos: { type: "boolean", normalize: con_defecto(PERFIL_POR_DEFECTO.anunciar_desconocidos) },
     anuncio_idioma: { type: "string" },
     whatsapp_activo: { type: "boolean", normalize: con_defecto(PERFIL_POR_DEFECTO.whatsapp_activo) },
-    whatsapp_plantilla: { type: "string", normalize: con_defecto(PERFIL_POR_DEFECTO.whatsapp_plantilla) },
+    whatsapp_plantilla: { type: "string", normalize: plantilla_con_defecto(PERFIL_POR_DEFECTO.whatsapp_plantilla) },
     conduciendo_activo: { type: "boolean", normalize: con_defecto(PERFIL_POR_DEFECTO.conduciendo_activo) },
     es_activa: { type: "boolean", normalize: con_defecto(PERFIL_POR_DEFECTO.es_activa) },
   },

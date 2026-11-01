@@ -1,3 +1,4 @@
+import { una_linea } from "./plantilla.ts";
 import { booleano, texto } from "../comun.ts";
 import type { CampoSpec } from "./esquema.ts";
 
@@ -156,7 +157,7 @@ export function escaner_desde_formulario(
     e.destino = destino;
   }
   if ("escaner_plantilla" in body) {
-    const plantilla = texto(body.escaner_plantilla);
+    const plantilla = una_linea(texto(body.escaner_plantilla), "");
     const problema = plantilla_valida(plantilla);
     if (problema) return { error: problema };
     e.plantilla = plantilla || null;

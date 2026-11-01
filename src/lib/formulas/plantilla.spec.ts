@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { TablaSpec } from "./esquema.ts";
-import { columna_unica, plantilla_con_claves, plantilla_con_etiquetas, rellenar_plantilla } from "./plantilla.ts";
+import { columna_unica, plantilla_con_claves, plantilla_con_etiquetas, rellenar_plantilla, una_linea } from "./plantilla.ts";
 
 const clientes: TablaSpec = {
   id: "t",
@@ -58,5 +58,12 @@ describe("rellenar una plantilla", () => {
     ["", ""],
   ])("«%s» → «%s»", (plantilla, esperado) => {
     expect(rellenar_plantilla(plantilla, valores)).toBe(esperado);
+  });
+});
+
+describe("plantillas de un renglón", () => {
+  test("un Enter pegado en el editor se vuelve espacio", () => {
+    expect(una_linea("{Nombre}\n · Tel. {Teléfono}\r\n")).toBe("{Nombre} · Tel. {Teléfono} ");
+    expect(una_linea("https://x.mx/?c=\n{valor}", "")).toBe("https://x.mx/?c={valor}");
   });
 });

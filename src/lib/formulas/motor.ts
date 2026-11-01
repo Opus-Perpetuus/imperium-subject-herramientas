@@ -517,6 +517,10 @@ const FUNCIONES: Record<string, [number, number]> = {
   vacio: [1, 1], empty: [1, 1],
 };
 
+/** Las funciones simples y las que recorren esta tabla (con sus alias en inglés), para el autocompletado. */
+export const NOMBRES_FUNCIONES_SIMPLES = Object.keys(FUNCIONES);
+export const NOMBRES_FUNCIONES_FILA = Object.keys(FUNCIONES_FILA);
+
 const es_digito = (c: string) => c >= "0" && c <= "9";
 const es_letra = (c: string) => /\p{L}/u.test(c);
 const es_letra_o_digito = (c: string) => /[\p{L}\p{N}_]/u.test(c);

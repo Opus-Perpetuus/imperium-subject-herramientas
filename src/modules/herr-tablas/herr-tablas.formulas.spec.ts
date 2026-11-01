@@ -117,7 +117,7 @@ describe("cálculo con otras tablas", () => {
     await call("PATCH", `/herr-tablas/${ventas}`, { name: "Salidas" });
     expect(await columna(productos, "nombre", "vendido")).toMatchObject({ Vino: "11.00" });
     const editor = await pagina(`/pages/herramientas.herr-tabla?id=${productos}&modo=campo&campo=vendido`);
-    const area = nodos(editor, "nox.input-textarea").find((n) => n.props?.name === "formula") ?? nodos(editor, "nox.input-text").find((n) => n.props?.name === "formula");
+    const area = nodos(editor, "nox.input-code-editor").find((n) => n.props?.name === "formula");
     expect(String(area?.props?.value)).toStartWith('tabla_suma("Salidas", {Cantidad}');
     const menu = (name: string) => nodos(editor, "nox.input-menu").find((n) => n.props?.name === name)?.props?.options as unknown[];
     expect(menu("ext_c1_actual")).toContainEqual({ value: "_id", label: "Este registro (para comparar con un enlace hacia esta tabla)" });

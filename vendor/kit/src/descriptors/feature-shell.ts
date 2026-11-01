@@ -1,5 +1,6 @@
 //   #region FEATURE SHELL DESCRIPTOR
 
+import type { CodeCompletionCatalog } from "./code-completions.js";
 import type {
   NoxPageDescriptor,
   NoxUiValidationIssue,
@@ -211,6 +212,8 @@ export type FeatureShellFieldDescriptor = {
   code_editor_max_lines?: number;
   /** `input-code-editor`: autocompletado de plantillas de impresión. */
   code_editor_completion_kind?: "dsl" | "zpl";
+  /** `input-code-editor`: autocompletado y documentación del lenguaje de la app. */
+  code_editor_completions?: CodeCompletionCatalog;
   /** `input-date-range`. */
   date_range_placeholder?: string;
   date_range_show_quick_presets?: boolean;

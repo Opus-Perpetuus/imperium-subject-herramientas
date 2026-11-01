@@ -1,5 +1,6 @@
+import { CATALOGO_URL_ESCANER, catalogo_formula, catalogo_plantilla } from "../../lib/formulas/autocompletado.ts";
 import { es_calculado } from "../../lib/formulas/automatico.ts";
-import type { DomainRow, KirletCtx, KirletIdentity, NoxPageDescriptor, NoxUiNode } from "@opus-perpetuus/imperium-core-kit";
+import type { CodeCompletionCatalog, DomainRow, KirletCtx, KirletIdentity, NoxPageDescriptor, NoxUiNode } from "@opus-perpetuus/imperium-core-kit";
 import { filas_de, puede, texto } from "../../lib/comun.ts";
 import { valores_resumen } from "../../lib/formulas/calculadora.ts";
 import {
@@ -366,13 +367,16 @@ async function seccion_totales(data: Datos, spec: TablaSpec): Promise<NoxUiNode[
     nodo("nox.card", { title: "Total con fórmula" }, [
       nodo("nox.form", { method: "POST", action: base }, [
         nodo("nox.input-text", { name: "etiqueta", label: "Nombre", placeholder: "Ej.: Lo que falta", required: true }),
-        nodo("nox.input-text", {
-          name: "formula",
-          label: "Fórmula",
-          placeholder: "{Deuda a saldar} - {suma:Abono}",
-          required: true,
-          help: ayuda_formula(spec, "Para una columna entera usa {suma:Nombre}, {promedio:Nombre}, {minimo:Nombre}, {maximo:Nombre} o {cuenta:Nombre}.", undefined, otras),
-        }),
+        editor_formula(
+          {
+            name: "formula",
+            label: "Fórmula",
+            placeholder: "{Deuda a saldar} - {suma:Abono}",
+            required: true,
+            help: AYUDA_EDITOR + " Para una columna entera usa {suma:Nombre}, {promedio:Nombre}, {minimo:Nombre}, {maximo:Nombre} o {cuenta:Nombre}.",
+          },
+          catalogo_formula(spec, otras, { total: true }),
+        ),
         boton("Agregar total", { icon: "fa-plus" }),
       ]),
     ]),
@@ -380,22 +384,21 @@ async function seccion_totales(data: Datos, spec: TablaSpec): Promise<NoxUiNode[
   return out;
 }
 
-function ayuda_formula(spec: TablaSpec, extra = "", excepto?: string, otras: TablaSpec[] = []): string {
-  const nombres = [...spec.campos.filter((c) => c.clave !== excepto), ...spec.constantes].map((c) => `{${c.etiqueta}}`);
-  const tablas = otras.filter((t) => t.id !== spec.id).map((t) => `"${t.name}"`);
-  return [
-    "Escribe los nombres entre llaves y opera con + − × ÷.",
-    nombres.length ? `Puedes usar: ${lista_corta(nombres, 12)}.` : "",
-    extra,
-    "Condiciones (anídalas con y / o y paréntesis): si({Estado} = \"Pagado\" y ({Moto} = \"Italika\" o {Monto} > 100), {Monto}, 0).",
-    "Solo las filas que cumplen: sumasi({Monto}, {Estado} = \"Pagado\"); también cuentasi, promediosi, minimosi, maximosi, buscarsi y unirsi.",
-    "De otra tabla: tabla_suma(\"Ventas\", {Cantidad}, {Producto} = {actual:Nombre}) — dentro, {Columna} es de esa tabla y {actual:Columna} de este registro; también tabla_cuenta, tabla_promedio, tabla_minimo, tabla_maximo, tabla_buscar y tabla_unir.",
-    "De un enlace: {Cliente.Teléfono}.",
-    ...subtablas_de(spec).map(ayuda_subtabla),
-    tablas.length ? `Otras tablas: ${lista_corta(tablas, 8)}.` : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+const AYUDA_EDITOR = "Escribe { para elegir una columna o empieza a escribir para ver las funciones; pasa el cursor sobre algo para ver qué es. Abajo está la ayuda completa.";
+
+/** Un campo de fórmula o plantilla: el editor de código con autocompletado y su documentación. */
+function editor_formula(
+  props: Record<string, unknown>,
+  catalogo: CodeCompletionCatalog,
+  lineas: { min: number; max: number } = { min: 2, max: 12 },
+): NoxUiNode {
+  return nodo("nox.input-code-editor", {
+    ...props,
+    code_editor_language: "plaintext",
+    code_editor_min_lines: lineas.min,
+    code_editor_max_lines: lineas.max,
+    code_editor_completions: catalogo,
+  });
 }
 
 /**
@@ -912,7 +915,7 @@ function menu_fuente_unidad(spec: TablaSpec, campo: CampoSpec, tablas: Map<strin
   });
 }
 
-function entradas_de_tipo(spec: TablaSpec, campo: CampoSpec, tablas: Map<string, TablaSpec>): NoxUiNode[] {
+function entradas_de_tipo(spec: TablaSpec, campo: CampoSpec, tablas: Map<string, TablaSpec>, sub?: CampoSpec): NoxUiNode[] {
   const fuente = menu_fuente_unidad(spec, campo, tablas);
   const unidad = (placeholder: string) => [
     nodo("nox.input-text", { name: "unidad", label: "Unidad (opcional)", placeholder, value: campo.unidad ?? "" }),
@@ -968,13 +971,10 @@ function entradas_de_tipo(spec: TablaSpec, campo: CampoSpec, tablas: Map<string,
         menu("dato_a", "Dato A", datos),
         menu("dato_b", "Dato B", datos),
         nodo("nox.input-number", { name: "numero_b", label: "…o B es este número", placeholder: "Ej.: 1.16" }),
-        nodo("nox.input-text", {
-          name: "formula",
-          label: "Fórmula",
-          value: formula,
-          placeholder: "{Precio} × {Cantidad}",
-          help: ayuda_formula(spec, "", campo.clave, otras),
-        }),
+        editor_formula(
+          { name: "formula", label: "Fórmula", value: formula, placeholder: "{Precio} × {Cantidad}", help: AYUDA_EDITOR },
+          catalogo_formula(spec, otras, { excepto: campo.clave, ...(sub ? { subtabla: sub } : {}) }),
+        ),
         ...referencias_subtablas(spec, campo.clave),
         ...constructor_de_formula(spec, campo, otras),
         ...unidad("$, km, %…"),
@@ -1018,13 +1018,17 @@ function entradas_de_tipo(spec: TablaSpec, campo: CampoSpec, tablas: Map<string,
         menu("escaner_destino", "Copiar el código también a", [{ value: "", label: "A ninguna otra columna" }, ...destinos.map((c) => ({ value: c.clave, label: c.etiqueta }))], {
           value: e.destino ?? "",
         }),
-        nodo("nox.input-text", {
-          name: "escaner_plantilla",
-          label: "Abrir esta dirección",
-          placeholder: "https://ejemplo.mx/consulta?codigo={valor}",
-          help: "Pon {valor} donde va el código. Solo http://, https:// o una ruta del sistema que empiece con «/». Vacío: no abre nada.",
-          value: e.plantilla ?? "",
-        }),
+        editor_formula(
+          {
+            name: "escaner_plantilla",
+            label: "Abrir esta dirección",
+            placeholder: "https://ejemplo.mx/consulta?codigo={valor}",
+            help: "Pon {valor} donde va el código. Solo http://, https:// o una ruta del sistema que empiece con «/». Vacío: no abre nada.",
+            value: e.plantilla ?? "",
+          },
+          CATALOGO_URL_ESCANER,
+          { min: 1, max: 3 },
+        ),
         nodo("nox.input-checkbox", {
           name: "escaner_abrir_url",
           label: "Si el código es una dirección web, ofrecer abrirla",
@@ -1173,6 +1177,7 @@ async function seccion_opcion(data: Datos, spec: TablaSpec, campo: CampoSpec, de
   const columnas = destino.campos.filter((c) => !TIPOS_FOTO.has(c.tipo));
   const fotos = destino.campos.filter((c) => TIPOS_FOTO.has(c.tipo));
   const nombres = columnas.map((c) => `{${c.etiqueta}}`);
+  const plantilla_catalogo = catalogo_plantilla(destino, [...(await tablas_por_id(data)).values()]);
   return [
     titulo("Cómo se ve cada opción"),
     nodo("nox.markdown-view", {
@@ -1210,12 +1215,16 @@ async function seccion_opcion(data: Datos, spec: TablaSpec, campo: CampoSpec, de
       nodo("nox.form", { method: "PATCH", action, then: THEN_DISENO }, [
         ...PARTES_REF.map((p, i) => {
           const ejemplo = columnas[i % columnas.length]?.etiqueta;
-          return nodo("nox.input-text", {
-            name: `plantilla_${p.campo}`,
-            label: PARTES_UI[p.campo],
-            value: plantilla_con_etiquetas(destino, campo[p.campo]),
-            placeholder: !ejemplo ? "" : i === 0 ? `Ej.: {${ejemplo}}` : `Ej.: ${ejemplo}: {${ejemplo}}`,
-          });
+          return editor_formula(
+            {
+              name: `plantilla_${p.campo}`,
+              label: PARTES_UI[p.campo],
+              value: plantilla_con_etiquetas(destino, campo[p.campo]),
+              placeholder: !ejemplo ? "" : i === 0 ? `Ej.: {${ejemplo}}` : `Ej.: ${ejemplo}: {${ejemplo}}`,
+            },
+            plantilla_catalogo,
+            { min: 1, max: 3 },
+          );
         }),
         boton("Guardar plantillas", { icon: "fa-floppy-disk" }),
       ]),
@@ -1358,7 +1367,7 @@ export async function pagina_campo(data: Datos, spec_tabla: TablaSpec, clave: st
       value: campo.tipo,
       help: "Si cambias el tipo, al guardar verás sus ajustes.",
     }),
-    ...entradas_de_tipo(spec, campo, tablas),
+    ...entradas_de_tipo(spec, campo, tablas, sub),
   ];
   if (CON_VALOR_INICIAL.has(campo.tipo) && !es_calculado(campo)) {
     entradas.push(

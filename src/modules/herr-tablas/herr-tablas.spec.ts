@@ -762,7 +762,7 @@ describe("diseñador", () => {
     await call("PATCH", `/herr-tablas/${motos.id}/campos/placas`, { etiqueta: "Matrícula" });
     const editor = await pagina(`/pages/herramientas.herr-tabla?id=${jornadas.id}&modo=campo&campo=moto`);
     const props = (name: string) =>
-      [...nodos(editor, "nox.input-menu"), ...nodos(editor, "nox.input-text")].find((n) => n.props!.name === name)!.props!;
+      [...nodos(editor, "nox.input-menu"), ...nodos(editor, "nox.input-code-editor")].find((n) => n.props!.name === name)!.props!;
     expect(props("columna_ref_leyenda").value).toBe("(plantilla)");
     expect(props("columna_ref_leyenda").options).toContainEqual({ value: "(plantilla)", label: "La plantilla «{Nombre} ({Color})»" });
     expect(props("columna_ref_descripcion").value).toBe("color");
@@ -1063,8 +1063,12 @@ describe("páginas del diseñador", () => {
     const calculo = await pagina(`/pages/herramientas.herr-tabla?id=${t.id}&modo=campo&campo=col_calculado`);
     const [previa] = nodos(calculo, "nox.detail");
     expect(previa!.props!.items).toEqual([{ label: "Con el último registro da", value: "10.00", emphasis: true }]);
-    const formula = nodos(calculo, "nox.input-text").find((n) => n.props!.name === "formula")!;
+    const formula = nodos(calculo, "nox.input-code-editor").find((n) => n.props!.name === "formula")!;
     expect(formula.props!.value).toBe("{Monto} * 2");
+    // Autocompletado con la documentación de cada columna, para el editor de código.
+    const catalogo = formula.props!.code_editor_completions as { items: { label: string; documentation?: string }[]; documentation?: string };
+    expect(catalogo.items.find((i) => i.label === "{Monto}")?.documentation).toContain("**Monto**");
+    expect(catalogo.documentation).toContain("Funciones");
 
     const disenar = await pagina(`/pages/herramientas.herr-tabla?id=${t.id}&modo=disenar`);
     const visibles = nodos(disenar, "nox.detail").flatMap((d) => [

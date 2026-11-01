@@ -15,6 +15,11 @@ const VACIOS = /\(\s*\)|\[\s*\]/g;
 /** Separadores sueltos en las orillas; el guion solo si va aparte, para no comerse el signo de `-50`. */
 const ORILLAS = /^(?:[\s·•|,;:/–—]|-(?=\s))+|(?:[\s·•|,;:/–—]|(?<=\s)-)+$/g;
 
+/** Las plantillas son de un renglón: lo que se pegue con Enter queda unido por `separador`. */
+export function una_linea(v: string, separador = " "): string {
+  return v.replace(/\s*[\r\n]+\s*/g, separador);
+}
+
 /** Cada `{Nombre}` (sin importar mayúsculas ni acentos) o `{clave}` pasa a `{clave}`; lo que no es columna se reporta. */
 export function plantilla_con_claves(spec: TablaSpec, entrada: string): { plantilla: string; desconocidos: string[] } {
   const por_nombre = new Map<string, string>();
@@ -23,7 +28,7 @@ export function plantilla_con_claves(spec: TablaSpec, entrada: string): { planti
     por_nombre.set(c.clave, c.clave);
   }
   const desconocidos: string[] = [];
-  const plantilla = texto(entrada).replace(LLAVE, (todo, dentro: string) => {
+  const plantilla = una_linea(texto(entrada)).replace(LLAVE, (todo, dentro: string) => {
     const clave = por_nombre.get(dentro.trim()) ?? por_nombre.get(normalizar(dentro));
     if (clave) return `{${clave}}`;
     desconocidos.push(dentro.trim());

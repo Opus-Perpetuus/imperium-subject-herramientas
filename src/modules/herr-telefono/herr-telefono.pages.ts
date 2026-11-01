@@ -6,6 +6,27 @@ import {
   type NoxUiNode,
 } from "@opus-perpetuus/imperium-core-kit";
 import { texto } from "../../lib/comun.ts";
+import { catalogo_marcadores } from "../../lib/formulas/autocompletado.ts";
+
+const CATALOGO_LOCUCION = catalogo_marcadores(
+  [{ nombre: "nombre", que: "Quién llama: el nombre del contacto en la agenda o, si no está, su número." }],
+  "Lo que dice el teléfono al recibir la llamada. Escribe `{` para poner `{nombre}` donde va quién llama.\n\nEjemplo: `Llamada de {nombre}`.",
+  "Ayuda: plantilla de la locución",
+);
+
+/** Una plantilla de un renglón con `{nombre}`: el editor de código con su autocompletado. */
+function plantilla_locucion(name: string, label: string, help: string): FeatureShellFieldDescriptor {
+  return {
+    name,
+    component: "input-code-editor",
+    label,
+    help,
+    code_editor_language: "plaintext",
+    code_editor_min_lines: 1,
+    code_editor_max_lines: 3,
+    code_editor_completions: CATALOGO_LOCUCION,
+  };
+}
 
 const API = "api://m/subject-herramientas";
 const PERMISO = "subject.herramientas.herr-telefono.read";
@@ -127,12 +148,12 @@ const perfil = pagina_crud({
     },
     { name: "retardo_s", component: "input-number", label: "Segundos antes de descolgar", min: 0, max: 60, step: 1, help: "Da tiempo a oír la locución y a cancelar a mano" },
     interruptor("anuncio_activo", "Locutar quién llama"),
-    { name: "anuncio_plantilla", component: "input-text", label: "Plantilla de la locución", help: "«{nombre}» se sustituye por el contacto o por el número" },
+    plantilla_locucion("anuncio_plantilla", "Plantilla de la locución", "«{nombre}» se sustituye por el contacto o por el número"),
     { name: "anuncio_repeticiones", component: "input-number", label: "Repeticiones de la locución", min: 1, max: 10, step: 1 },
     interruptor("anunciar_desconocidos", "Locutar también a desconocidos", "Lee los dígitos del número"),
     { name: "anuncio_idioma", component: "input-text", label: "Idioma de la voz", placeholder: "es-MX" },
     interruptor("whatsapp_activo", "Atender llamadas de WhatsApp"),
-    { name: "whatsapp_plantilla", component: "input-text", label: "Plantilla para WhatsApp" },
+    plantilla_locucion("whatsapp_plantilla", "Plantilla para WhatsApp", "«{nombre}» se sustituye por el contacto de WhatsApp"),
     interruptor("conduciendo_activo", "Modo conduciendo", "En marcha se enciende el contestador y se rechazan los desconocidos; al parar vuelve todo como estaba"),
   ],
 });
