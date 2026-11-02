@@ -11,4 +11,10 @@ describe("hojas en el /manifest en vivo", () => {
     expect(with_leaf).toEqual(Object.keys(PAGE_LEAVES).sort());
     expect(with_leaf.length).toBeGreaterThan(0);
   });
+
+  test("herr-registro: la hoja pide .write como la página y el menú", () => {
+    const page = SUBJECT.manifest().pages.find((p) => p.id === "herramientas.herr-registro");
+    expect(page?.permission).toBe("subject.herramientas.herr-registros.write");
+    expect(page?.leaf?.permission).toBe("subject.herramientas.herr-registros.write");
+  });
 });
