@@ -1,6 +1,4 @@
 {
-  "$schema": "https://schemas.opus-perpetuus.dev/imperium/kirlet-manifest/1.0.json",
-  "manifestVersion": 1,
   "id": "SUBJECT-herramientas",
   "technicalId": "subject-herramientas",
   "name": "Herramientas",
@@ -530,7 +528,8 @@
       "permission": "subject.herramientas.herr-inicio.read",
       "leaf": {
         "kind": "page",
-        "icon": "fa-toolbox"
+        "icon": "fa-toolbox",
+        "permission": "subject.herramientas.herr-inicio.read"
       }
     },
     {
@@ -558,7 +557,8 @@
             "version_esquema": "Versión",
             "updated_at": "Actualizada"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-tablas.read"
       }
     },
     {
@@ -567,7 +567,8 @@
       "permission": "subject.herramientas.herr-tablas.read",
       "leaf": {
         "kind": "page",
-        "icon": "fa-table"
+        "icon": "fa-table",
+        "permission": "subject.herramientas.herr-tablas.read"
       }
     },
     {
@@ -593,7 +594,8 @@
             "tabla_id": "Tabla",
             "updated_at": "Actualizado"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-registros.read"
       }
     },
     {
@@ -629,7 +631,8 @@
             "cierre_id": "Cierre",
             "cerrado_at": "Cerrado"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-cierres.read"
       }
     },
     {
@@ -659,7 +662,8 @@
             "km_recorridos": "Km",
             "ganancia_neta": "Ganancia"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-jornadas.read"
       }
     },
     {
@@ -668,7 +672,8 @@
       "permission": "subject.herramientas.herr-jornadas.read",
       "leaf": {
         "kind": "page",
-        "icon": "fa-motorcycle"
+        "icon": "fa-motorcycle",
+        "permission": "subject.herramientas.herr-jornadas.read"
       }
     },
     {
@@ -677,7 +682,8 @@
       "permission": "subject.herramientas.herr-jornadas.read",
       "leaf": {
         "kind": "page",
-        "icon": "fa-hand-holding-dollar"
+        "icon": "fa-hand-holding-dollar",
+        "permission": "subject.herramientas.herr-jornadas.read"
       }
     },
     {
@@ -705,7 +711,8 @@
             "estado": "Estado",
             "hora": "Hora"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-pedidos.read"
       }
     },
     {
@@ -733,7 +740,8 @@
             "fuente": "Fuente",
             "descontado": "Descontado"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-gastos.read"
       }
     },
     {
@@ -759,7 +767,8 @@
             "cantidad": "Cantidad",
             "saldado": "Saldado"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-caja.read"
       }
     },
     {
@@ -781,7 +790,8 @@
             "name": "Nombre",
             "columna_precio": "Columna de precio"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-menu-categorias.read"
       }
     },
     {
@@ -809,7 +819,8 @@
             "precio_3": "Precio 3",
             "divisible": "Partes"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-menu-tamanos.read"
       }
     },
     {
@@ -833,7 +844,8 @@
             "categoria_id": "Categoría",
             "activo": "Activo"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-menu-productos.read"
       }
     },
     {
@@ -857,7 +869,8 @@
             "precio": "Precio",
             "activo": "Activo"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-menu-extras.read"
       }
     },
     {
@@ -883,7 +896,8 @@
             "precio": "Precio",
             "activo": "Activo"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-menu-complementos.read"
       }
     },
     {
@@ -909,7 +923,8 @@
             "descuento_pct": "Descuento %",
             "activa": "Activa"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-menu-promos.read"
       }
     },
     {
@@ -937,7 +952,8 @@
             "medidor": "Medidor",
             "solo_gps": "Solo GPS"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-vehiculos.read"
       }
     },
     {
@@ -967,7 +983,8 @@
             "veces": "Entregas",
             "ultima_entrega": "Última"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-domicilios.read"
       }
     },
     {
@@ -989,7 +1006,8 @@
             "name": "Nombre",
             "color": "Color"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-etiquetas.read"
       }
     },
     {
@@ -1019,7 +1037,8 @@
             "km": "Km",
             "tanque_lleno": "Lleno"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-recargas.read"
       }
     },
     {
@@ -1047,7 +1066,8 @@
             "distancia_m": "Distancia (m)",
             "jornada_id": "Jornada"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-rutas.read"
       }
     },
     {
@@ -1075,7 +1095,8 @@
             "ambito": "Contesta a",
             "accion_desconocidos": "Desconocidos"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-telefono.read"
       }
     },
     {
@@ -1101,7 +1122,8 @@
             "telefono": "Teléfono",
             "regla_id": "Perfil"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-telefono.read"
       }
     },
     {
@@ -1129,7 +1151,8 @@
             "numero": "Número",
             "origen": "Origen"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-telefono.read"
       }
     },
     {
@@ -1162,7 +1185,8 @@
             "confirmar_antes": "Confirmar antes",
             "idioma": "Idioma"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-voz.read"
       }
     },
     {
@@ -1171,7 +1195,8 @@
       "permission": "subject.herramientas.herr-voz.read",
       "leaf": {
         "kind": "page",
-        "icon": "fa-microphone-lines"
+        "icon": "fa-microphone-lines",
+        "permission": "subject.herramientas.herr-voz.read"
       }
     },
     {
@@ -1201,7 +1226,8 @@
             "confianza": "Confianza",
             "respuesta": "Respuesta"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-voz.read"
       }
     },
     {
@@ -1229,7 +1255,8 @@
             "hecho": "Hecho",
             "alarma": "Alarma"
           }
-        }
+        },
+        "permission": "subject.herramientas.herr-agenda.read"
       }
     },
     {
@@ -1238,7 +1265,8 @@
       "permission": "subject.herramientas.herr-agenda.read",
       "leaf": {
         "kind": "page",
-        "icon": "fa-calendar-day"
+        "icon": "fa-calendar-day",
+        "permission": "subject.herramientas.herr-agenda.read"
       }
     },
     {
@@ -1247,7 +1275,8 @@
       "permission": "subject.herramientas.herr-utilidades.read",
       "leaf": {
         "kind": "page",
-        "icon": "fa-screwdriver-wrench"
+        "icon": "fa-screwdriver-wrench",
+        "permission": "subject.herramientas.herr-utilidades.read"
       }
     }
   ],
@@ -1282,5 +1311,7 @@
   },
   "dependsOn": [
     "subject-vehiculos"
-  ]
+  ],
+  "manifestVersion": 1,
+  "$schema": "https://schemas.opus-perpetuus.dev/imperium/kirlet-manifest/1.0.json"
 }

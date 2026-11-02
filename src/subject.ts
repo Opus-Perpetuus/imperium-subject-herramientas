@@ -1,5 +1,6 @@
 import { define_subject } from "@opus-perpetuus/imperium-core-kit";
 import pkg from "../package.json" with { type: "json" };
+import { con_hojas } from "./page-leaves.ts";
 import { MODULOS } from "./modules/index.ts";
 import { seed_demo } from "./seed.ts";
 
@@ -18,7 +19,7 @@ export const SUBJECT = define_subject({
     label: "Herramientas",
     order: 0,
   },
-  modules: MODULOS,
+  modules: con_hojas(MODULOS),
   seed: seed_demo,
 });
 
