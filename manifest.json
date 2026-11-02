@@ -2,8 +2,8 @@
   "id": "SUBJECT-herramientas",
   "technicalId": "subject-herramientas",
   "name": "Herramientas",
-  "version": "0.19.2",
-  "image": "ghcr.io/opus-perpetuus/subject-herramientas:0.19.2",
+  "version": "0.19.3",
+  "image": "ghcr.io/opus-perpetuus/subject-herramientas:0.19.3",
   "compat": {
     "nox": ">=0.5.0",
     "kit": "^0.5.0"
