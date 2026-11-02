@@ -42,7 +42,8 @@ export const herr_domicilios_module = define_module({
         lat: { type: "number" },
         lon: { type: "number" },
         calle: { type: "string", search: true },
-        numero: { type: "string", search: true },
+        // Número exterior/interior del domicilio: PII, sin field-values.
+        numero: { type: "string", search: true, secret: true },
         colonia: { type: "string", search: true },
         referencia: { type: "string", search: true },
         contacto_nombre: { type: "string", search: true },

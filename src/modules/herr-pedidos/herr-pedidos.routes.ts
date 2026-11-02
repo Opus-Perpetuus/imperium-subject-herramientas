@@ -42,7 +42,7 @@ export const herr_pedidos_module = define_module({
         recibido: { type: "number", normalize: vacio_a_null },
         propina: { type: "number", normalize: vacio_a_null },
         domicilio_texto: { type: "string", search: true },
-        domicilio_id: { type: "string" },
+        domicilio_id: { type: "string", ref: "herr-domicilios" },
         contacto_nombre: { type: "string", search: true },
         telefono: { type: "string", search: true },
         detalle: { type: "string", search: true },
