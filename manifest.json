@@ -605,7 +605,7 @@
       "leaf": {
         "kind": "page",
         "icon": "fa-pen-to-square",
-        "permission": "subject.herramientas.herr-registros.write"
+        "permission": "subject.herramientas.herr-registros.read"
       }
     },
     {

@@ -5,10 +5,10 @@ import type { KirletManifestLeaf, KirletModuleDef } from "@opus-perpetuus/imperi
  * Antes solo vivían en `manifest.json`; el kit sirve el manifest desde el
  * código, así que sin esto el /manifest salía sin hojas.
  *
- * `herr-registro` es solo para capturar: hoja, página y menú piden `.write`.
- * Con `.read` el núcleo le daba la ruta a quien solo lee (hoja visible de más);
- * el kit y el núcleo admiten `.write` en la hoja y solo la sirven a quien crea
- * o actualiza (herr-tablas.lectura.spec).
+ * El contrato 1.0 solo admite `<recurso>.read` en `leaf.permission`. En
+ * `herr-registro` la hoja deja entrar a la ruta con `.read`, pero la página y el
+ * menú siguen pidiendo `.write`: quien solo lee recibe 403 al construirla y no
+ * ve enlaces a capturar (herr-tablas.lectura.spec).
  */
 export const PAGE_LEAVES: Record<string, KirletManifestLeaf> = {
   "herramientas.herr-inicio": {
@@ -66,7 +66,7 @@ export const PAGE_LEAVES: Record<string, KirletManifestLeaf> = {
   "herramientas.herr-registro": {
     "kind": "page",
     "icon": "fa-pen-to-square",
-    "permission": "subject.herramientas.herr-registros.write"
+    "permission": "subject.herramientas.herr-registros.read"
   },
   "herramientas.herr-cierres": {
     "kind": "crud",

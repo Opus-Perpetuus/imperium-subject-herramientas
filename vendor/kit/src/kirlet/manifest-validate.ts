@@ -538,11 +538,10 @@ function relative_resource_issue(value: string): string | null {
   return null;
 }
 
-/** `.read`, o `.write` para una hoja que solo sirve para capturar (quien solo lee no la recibe). */
-function is_leaf_permission(id: string, slug: string): boolean {
+function is_leaf_read_permission(id: string, slug: string): boolean {
   if (!slug) return false;
   return new RegExp(
-    `^(?:kirlet|subject)\\.${slug}\\.[a-z][a-z0-9-]*\\.(?:read|write)$`,
+    `^(?:kirlet|subject)\\.${slug}\\.[a-z][a-z0-9-]*\\.read$`,
   ).test(id);
 }
 
@@ -609,11 +608,11 @@ function parse_page_leaf(
   const permission = is_nonempty_string(raw["permission"])
     ? raw["permission"]
     : page_permission;
-  if (!permission || !is_leaf_permission(permission, slug)) {
+  if (!permission || !is_leaf_read_permission(permission, slug)) {
     issues.push({
       path: `${path}.permission`,
       message: slug
-        ? `permission must match subject.${slug}.<resource>.(read|write) or kirlet.${slug}.<resource>.(read|write)`
+        ? `permission must match subject.${slug}.<resource>.read or kirlet.${slug}.<resource>.read`
         : "permission is required",
     });
   }
@@ -672,7 +671,7 @@ function parse_page_leaf(
   if (form_labels) leaf.formLabels = form_labels;
   if (list_only !== undefined) leaf.listOnly = list_only;
   if (min_shell) leaf.minShellVersion = min_shell;
-  if (permission && is_leaf_permission(permission, slug)) {
+  if (permission && is_leaf_read_permission(permission, slug)) {
     leaf.permission = permission;
   }
   return leaf;
