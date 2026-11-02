@@ -346,6 +346,11 @@ export function define_crud(opts: DefineCrudOptions): KirletRouteTable {
             if (!/^[a-z_][a-z0-9_]*$/i.test(field)) {
               throw new KirletHttpError(400, "validation_error", "Campo inválido");
             }
+            // Un campo que la tabla no tiene llegaba al SQL y salía 500.
+            const columna_base = field === "id" || field === "created_at" || field === "updated_at" || field === soft_field;
+            if (!columna_base && !fields[field]) {
+              throw new KirletHttpError(400, "validation_error", `Campo desconocido: ${field}`, { field });
+            }
             const termino = String(ctx.query.get("termino") ?? "");
             const values = await ctx.data.distinct(table, field, termino);
             const data = values.map((value) => ({
