@@ -1,6 +1,6 @@
 //   #region FEATURE SHELL DESCRIPTOR
 
-import type { CodeCompletionCatalog } from "./code-completions.js";
+import { code_completions_issues, type CodeCompletionCatalog } from "./code-completions.js";
 import type {
   NoxPageDescriptor,
   NoxUiValidationIssue,
@@ -175,7 +175,11 @@ export type FeatureShellFieldDescriptor = {
   type?: "text" | "email" | "search" | "url" | "tel";
   /** Opciones fijas de los tipos de selección. */
   options?: FeatureShellFieldOption[];
-  /** Opciones desde el API (`api://…?as=options` → `{ value, label }[]`). */
+  /**
+   * Opciones desde el API (`api://…?as=options` → `{ value, label }[]`).
+   * Un campo que no es estatus usa `general_option_list_options_source`.
+   * El estatus es `input-status` (status-option-control), no esta URL.
+   */
   optionsSource?: string;
   /** `input-number` / `input-money`. */
   min?: number;
@@ -327,6 +331,12 @@ function validate_field_options(
         path: `${path}.${key}`,
         message: `${key} must be one of ${allowed.join("|")}`,
       });
+    }
+  }
+
+  if (field["code_editor_completions"] !== undefined) {
+    for (const message of code_completions_issues(field["code_editor_completions"])) {
+      issues.push({ path: `${path}.code_editor_completions`, message });
     }
   }
 
