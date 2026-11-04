@@ -157,10 +157,11 @@ const llamadas = define_crud({
   default_sort: "fecha_hora:desc",
   id_prefix: "herr-llam",
   fields: {
-    // El alta desde Android no trae nombre: se compone en el hook.
-    name: { type: "string", search: true },
+    // El alta desde Android no trae nombre: se compone en el hook (lleva el del llamante).
+    // name y numero son PII: field-values solo con sesión interna.
+    name: { type: "string", search: true, pii: true },
     ...BASE_FIELDS,
-    numero: { type: "string", search: true },
+    numero: { type: "string", search: true, pii: true },
     contacto_nombre: { type: "string", search: true },
     decision: { type: "string", required: true, validate: opcion_de(DECISIONES, "decision") },
     motivo: { type: "string" },
