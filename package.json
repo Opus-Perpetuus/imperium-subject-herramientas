@@ -1,6 +1,6 @@
 {
   "name": "subject-herramientas",
-  "version": "0.19.10",
+  "version": "0.20.0",
   "private": true,
   "type": "module",
   "scripts": {
