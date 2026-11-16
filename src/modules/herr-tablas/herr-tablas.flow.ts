@@ -629,10 +629,76 @@ export function con_foto_de_enlace(campo: CampoSpec): boolean {
 }
 
 /**
- * El `nox.table` de unos registros: cada foto como miniatura que abre la
+ * Columnas de una lista de registros: cada foto como miniatura que abre la
  * completa en el visor (varias, como galería), las fotos de lo enlazado en su
- * propia columna si se pidieron y, con `destino`, cada fila abre lo que diga.
+ * propia columna si se pidieron y los códigos dibujados con su metadata.
  */
+export function columnas_de_registros(columnas: CampoSpec[]): Record<string, unknown>[] {
+  const de_imagen = (key: string, label: string) => ({ key, label, image_key: llave_miniatura(key), image_full_key: llave_foto(key) });
+  return columnas.flatMap((c) => {
+    if (TIPOS_FOTO.has(c.tipo)) return [de_imagen(c.clave, c.etiqueta)];
+    if (con_foto_de_enlace(c)) return [{ key: c.clave, label: c.etiqueta }, de_imagen(clave_foto_enlace(c.clave), `Foto · ${c.etiqueta}`)];
+    if (dibuja_codigo(c)) {
+      // Un lanzador anterior ignora `code_display` y sigue pintando el texto.
+      return [
+        {
+          key: c.clave,
+          label: c.etiqueta,
+          code_display: c.escaner!.mostrar,
+          code_meta_key: llave_metadata_codigo(c.clave),
+          code_values_key: llave_codigos(c.clave),
+          // Formato para lo que no trae formato leído; el núcleo antes lo dibujaba QR siempre.
+          ...(formato_regenerado(c.escaner!.formatos) ? { code_format: formato_regenerado(c.escaner!.formatos) } : {}),
+        },
+      ];
+    }
+    return [{ key: c.clave, label: c.etiqueta }];
+  });
+}
+
+/** Una fila de la lista: el texto de cada columna y, aparte, sus fotos, códigos y destino. */
+export function fila_de_registros(
+  columnas: CampoSpec[],
+  f: Registro,
+  p: Presentacion,
+  destino?: (fila: Registro) => string,
+): Record<string, unknown> {
+  const poner_fotos = (fila: Record<string, unknown>, key: string, fotos: FotosCelda) => {
+    if (!fotos.urls.length) return;
+    fila[llave_miniatura(key)] = fotos.minis[0] || fotos.urls[0];
+    fila[llave_foto(key)] = fotos.urls.length > 1 ? fotos.urls : fotos.urls[0];
+  };
+  const fila: Record<string, unknown> = {};
+  for (const c of columnas) {
+    const raw = f.valores[c.clave] ?? "";
+    fila[c.clave] = presentar(c, f, p);
+    // Las notas por código van en el texto; dibujado, el lanzador las lee de la metadata.
+    if (c.tipo === "codigo" && c.escaner?.notas && !dibuja_codigo(c)) fila[c.clave] = codigos_con_notas(c, raw, f.codigos?.[c.clave]);
+    if (c.tipo === "foto" && es_foto_guardada(raw)) {
+      // Una columna que fue «Varias fotos» trae varias: «Foto» enseña la primera.
+      const url = lista_de(raw)[0]!;
+      fila[llave_miniatura(c.clave)] = partir(f.miniaturas?.[c.clave])[0] || url;
+      fila[llave_foto(c.clave)] = url;
+    }
+    if (c.tipo === "fotos") poner_fotos(fila, c.clave, fotos_de_registro(f, c.clave));
+    if (dibuja_codigo(c)) {
+      fila[llave_codigos(c.clave)] = codigos_de(c, raw);
+      const meta = f.codigos?.[c.clave];
+      if (meta) fila[llave_metadata_codigo(c.clave)] = meta;
+    }
+    if (con_foto_de_enlace(c)) {
+      const fotos = p.fotos_enlace(c, f);
+      fila[clave_foto_enlace(c.clave)] = cuantas_son(fotos.urls.length);
+      poner_fotos(fila, clave_foto_enlace(c.clave), fotos);
+    }
+  }
+  // Con su id, ocultar una fila en un enlace o una regla no depende de quién puede abrirla.
+  fila._id = f.id;
+  if (destino) fila._href = destino(f);
+  return fila;
+}
+
+/** El `nox.table` de unos registros (columnas y filas como en `columnas_de_registros` / `fila_de_registros`). */
 export function tabla_de_registros(
   columnas: CampoSpec[],
   filas: Registro[],
@@ -640,62 +706,9 @@ export function tabla_de_registros(
   destino?: (fila: Registro) => string,
   vacio = "Sin registros",
 ): NoxUiNode {
-  const de_imagen = (key: string, label: string) => ({ key, label, image_key: llave_miniatura(key), image_full_key: llave_foto(key) });
-  const poner_fotos = (fila: Record<string, unknown>, key: string, fotos: FotosCelda) => {
-    if (!fotos.urls.length) return;
-    fila[llave_miniatura(key)] = fotos.minis[0] || fotos.urls[0];
-    fila[llave_foto(key)] = fotos.urls.length > 1 ? fotos.urls : fotos.urls[0];
-  };
   return nodo("nox.table", {
-    columns: columnas.flatMap((c) => {
-      if (TIPOS_FOTO.has(c.tipo)) return [de_imagen(c.clave, c.etiqueta)];
-      if (con_foto_de_enlace(c)) return [{ key: c.clave, label: c.etiqueta }, de_imagen(clave_foto_enlace(c.clave), `Foto · ${c.etiqueta}`)];
-      if (dibuja_codigo(c)) {
-        // Un lanzador anterior ignora `code_display` y sigue pintando el texto.
-        return [
-          {
-            key: c.clave,
-            label: c.etiqueta,
-            code_display: c.escaner!.mostrar,
-            code_meta_key: llave_metadata_codigo(c.clave),
-            code_values_key: llave_codigos(c.clave),
-            // Formato para lo que no trae formato leído; el núcleo antes lo dibujaba QR siempre.
-            ...(formato_regenerado(c.escaner!.formatos) ? { code_format: formato_regenerado(c.escaner!.formatos) } : {}),
-          },
-        ];
-      }
-      return [{ key: c.clave, label: c.etiqueta }];
-    }),
-    rows: filas.map((f) => {
-      const fila: Record<string, unknown> = {};
-      for (const c of columnas) {
-        const raw = f.valores[c.clave] ?? "";
-        fila[c.clave] = presentar(c, f, p);
-        // Las notas por código van en el texto; dibujado, el lanzador las lee de la metadata.
-        if (c.tipo === "codigo" && c.escaner?.notas && !dibuja_codigo(c)) fila[c.clave] = codigos_con_notas(c, raw, f.codigos?.[c.clave]);
-        if (c.tipo === "foto" && es_foto_guardada(raw)) {
-          // Una columna que fue «Varias fotos» trae varias: «Foto» enseña la primera.
-          const url = lista_de(raw)[0]!;
-          fila[llave_miniatura(c.clave)] = partir(f.miniaturas?.[c.clave])[0] || url;
-          fila[llave_foto(c.clave)] = url;
-        }
-        if (c.tipo === "fotos") poner_fotos(fila, c.clave, fotos_de_registro(f, c.clave));
-        if (dibuja_codigo(c)) {
-          fila[llave_codigos(c.clave)] = codigos_de(c, raw);
-          const meta = f.codigos?.[c.clave];
-          if (meta) fila[llave_metadata_codigo(c.clave)] = meta;
-        }
-        if (con_foto_de_enlace(c)) {
-          const fotos = p.fotos_enlace(c, f);
-          fila[clave_foto_enlace(c.clave)] = cuantas_son(fotos.urls.length);
-          poner_fotos(fila, clave_foto_enlace(c.clave), fotos);
-        }
-      }
-      // Con su id, ocultar una fila en un enlace o una regla no depende de quién puede abrirla.
-      fila._id = f.id;
-      if (destino) fila._href = destino(f);
-      return fila;
-    }),
+    columns: columnas_de_registros(columnas),
+    rows: filas.map((f) => fila_de_registros(columnas, f, p, destino)),
     text: vacio,
   });
 }

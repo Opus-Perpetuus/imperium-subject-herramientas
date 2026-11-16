@@ -3,6 +3,7 @@ import { herr_tablas_cierres } from "./herr-tablas.cierres.ts";
 import { herr_tablas_disenio, preparar_tabla, quitar_reglas_que_usan } from "./herr-tablas.disenio.ts";
 import { herr_tablas_flow } from "./herr-tablas.flow.ts";
 import { herr_tablas_impresion } from "./herr-tablas.impresion.ts";
+import { herr_tablas_lista } from "./herr-tablas.lista.ts";
 import { herr_tablas_pages } from "./herr-tablas.pages.ts";
 import { herr_tablas_tables } from "./herr-tablas.tables.ts";
 
@@ -16,6 +17,7 @@ export const herr_tablas_module = define_module({
   },
   routes: [
     ...herr_tablas_flow,
+    ...herr_tablas_lista,
     ...herr_tablas_cierres,
     ...herr_tablas_disenio,
     ...herr_tablas_impresion,

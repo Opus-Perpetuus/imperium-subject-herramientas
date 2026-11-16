@@ -1,6 +1,6 @@
 import { CATALOGO_URL_ESCANER, catalogo_formula, catalogo_plantilla } from "../../lib/formulas/autocompletado.ts";
 import { es_calculado } from "../../lib/formulas/automatico.ts";
-import type { CodeCompletionCatalog, DomainRow, KirletCtx, KirletIdentity, NoxPageDescriptor, NoxUiNode } from "@opus-perpetuus/imperium-core-kit";
+import { nox_view_list, type CodeCompletionCatalog, type DomainRow, type KirletCtx, type KirletIdentity, type NoxPageDescriptor, type NoxUiNode } from "@opus-perpetuus/imperium-core-kit";
 import { filas_de, puede, texto } from "../../lib/comun.ts";
 import { valores_resumen } from "../../lib/formulas/calculadora.ts";
 import {
@@ -113,6 +113,50 @@ function lista_corta(nombres: string[], max = 6): string {
 
 // #region Inicio: mis tablas y crear una
 
+/**
+ * «Tus tablas» con el view-list de Imperium: una fila por tabla que abre la
+ * tabla, con sus acciones (Abrir, Capturar, Diseñar) en una celda de enlaces.
+ * Los hijos son las tarjetas de antes, para un lanzador sin `nox.view-list`.
+ */
+export async function lista_de_tablas(data: Datos, tablas: DomainRow[]): Promise<NoxUiNode> {
+  const filas = await Promise.all(
+    tablas.map(async (fila) => {
+      const spec = spec_de_fila(fila);
+      const registros = await data.count("herr_registros", { tabla_id: spec.id, is_active: true });
+      return {
+        _id: spec.id,
+        _href: href_tabla(spec.id),
+        nombre: spec.name,
+        descripcion: spec.description ?? "",
+        columnas: spec.campos.length,
+        registros,
+        acciones: [
+          { text: "Abrir", href: href_tabla(spec.id), icon: "fa-table" },
+          { text: "Capturar", href: href_captura(spec.id), icon: "fa-plus" },
+          { text: "Diseñar", href: href_tabla(spec.id, { modo: "disenar" }), icon: "fa-pen-ruler" },
+        ],
+      };
+    }),
+  );
+  return nox_view_list(
+    {
+      columns: [
+        { key: "nombre", label: "Tabla", mobile: true },
+        { key: "descripcion", label: "Descripción" },
+        { key: "columnas", label: "Columnas" },
+        { key: "registros", label: "Registros" },
+        { key: "acciones", label: "Acciones", cells: [{ kind: "links" }] },
+      ],
+      rows: filas,
+      search: "Buscar tabla",
+      title_key: "nombre",
+      empty: "Sin tablas",
+      anchor: "herr-tablas-mis-tablas",
+    },
+    [nodo("nox.stack", { layout: "grid" }, await Promise.all(tablas.map((t) => tarjeta_tabla(data, t))))],
+  );
+}
+
 async function tarjeta_tabla(data: Datos, fila: DomainRow): Promise<NoxUiNode> {
   const spec = spec_de_fila(fila);
   const registros = await data.count("herr_registros", { tabla_id: spec.id, is_active: true });
@@ -140,7 +184,7 @@ export async function pagina_inicio(data: Datos, aviso: string, identity: Kirlet
   );
   if (tablas.length) {
     hijos.push(titulo("Tus tablas"));
-    hijos.push(nodo("nox.stack", { layout: "grid" }, await Promise.all(tablas.map((t) => tarjeta_tabla(data, t)))));
+    hijos.push(await lista_de_tablas(data, tablas));
   }
   if (!puede(identity, "herr-tablas", "create")) return pagina(ID_TABLA, "Mis tablas", hijos);
   hijos.push(titulo("Crear una tabla"));

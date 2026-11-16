@@ -58,7 +58,7 @@ export const ESCANER_VACIO: EscanerCampo = {
   notas: false,
 };
 
-const FORMATOS_NUCLEO: Record<Exclude<FormatosEscaner, "todos">, string[]> = {
+export const FORMATOS_NUCLEO: Record<Exclude<FormatosEscaner, "todos">, string[]> = {
   qr: ["qr_code", "micro_qr_code", "rm_qr_code"],
   barras: ["ean_13", "ean_8", "upc_a", "upc_e", "code_39", "code_93", "code_128", "itf", "codabar", "databar", "databar_limited", "databar_expanded"],
 };

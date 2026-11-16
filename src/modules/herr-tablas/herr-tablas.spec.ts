@@ -973,7 +973,7 @@ describe("diseñador", () => {
  * en pantalla como una etiqueta gris sin que nada falle.
  */
 const RENDERIZABLES = new Set([
-  "nox.page", "nox.stack", "nox.link", "nox.image-viewer", "nox.carousel", "nox.stats", "nox.collapsible",
+  "nox.page", "nox.stack", "nox.view-list", "nox.link", "nox.image-viewer", "nox.carousel", "nox.stats", "nox.collapsible",
   "nox.card", "nox.form", "nox.markdown-view", "nox.html", "nox.button", "nox.alert", "nox.empty",
   "nox.catalog-grid", "nox.search", "nox.tabs", "nox.filters", "nox.split", "nox.paginator", "nox.detail",
   "nox.timeline", "nox.status-progress", "nox.toolbar", "nox.table", "nox.badge", "nox.tag",

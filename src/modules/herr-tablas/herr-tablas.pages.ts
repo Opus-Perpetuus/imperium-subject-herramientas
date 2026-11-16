@@ -12,6 +12,7 @@ import { ID_TABLA, href_registro, href_tabla, migas, pagina_campo, pagina_disena
 import { filtrar_filas, registros_paginados, tabla_de_registros, vista_de_tabla } from "./herr-tablas.flow.ts";
 import { pagina_cerrar, pagina_cierre, pagina_cierres, pagina_comparar } from "./herr-tablas.cierres.ts";
 import { pagina_impreso, pagina_imprimir } from "./herr-tablas.impresion.ts";
+import { lista_de_registros } from "./herr-tablas.lista.ts";
 import { API, OWNER, boton, con_unidad, nodo, pagina } from "./herr-tablas.nox.ts";
 
 export const herr_tablas_pages: KirletPageDecl[] = [
@@ -133,11 +134,11 @@ export const herr_tablas_pages: KirletPageDecl[] = [
           }),
         );
       }
-      hijos.push(
-        ...registros_paginados(params, filas.length, filtrar_filas(spec, filas, presentacion, texto(params.get("q"))), (visibles, vacio) =>
-          tabla_de_registros(columnas, visibles, presentacion, anotar ? (f) => href_registro(spec.id, f.id) : undefined, vacio),
-        ),
+      // view-list como el resto de Imperium; el respaldo es la tabla de antes para un lanzador sin `nox.view-list`.
+      const respaldo = registros_paginados(params, filas.length, filtrar_filas(spec, filas, presentacion, texto(params.get("q"))), (visibles, vacio) =>
+        tabla_de_registros(columnas, visibles, presentacion, anotar ? (f) => href_registro(spec.id, f.id) : undefined, vacio),
       );
+      hijos.push(lista_de_registros(spec, columnas, params, respaldo));
       if (operar && spec.cerrable && filas.length) {
         hijos.push(boton("Hacer cierre", { href: href_tabla(spec.id, { modo: "cerrar" }), icon: "fa-box-archive", variant: "secondary" }));
       }
