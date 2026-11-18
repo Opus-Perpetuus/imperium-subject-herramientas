@@ -254,7 +254,7 @@ describe("páginas", () => {
     expect(res.status).toBe(200);
     const doc = (await res.json()) as { page: { children: Array<{ component: string; props?: { rows?: unknown[] } }> } };
     const componentes = doc.page.children.map((c) => c.component);
-    expect(componentes).toEqual(["nox.alert", "nox.markdown-view", "nox.link", "nox.table"]);
+    expect(componentes).toEqual(["nox.alert", "nox.markdown-view", "nox.link", "nox.view-list"]);
     expect(doc.page.children[3]!.props!.rows).toHaveLength(1);
   });
 });

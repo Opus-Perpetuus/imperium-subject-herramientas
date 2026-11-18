@@ -7,6 +7,7 @@ import {
 } from "@opus-perpetuus/imperium-core-kit";
 import { texto } from "../../lib/comun.ts";
 import { catalogo_marcadores } from "../../lib/formulas/autocompletado.ts";
+import { view_list_de_tabla } from "../../lib/view-list.ts";
 
 const CATALOGO_LOCUCION = catalogo_marcadores(
   [{ nombre: "nombre", que: "Quién llama: el nombre del contacto en la agenda o, si no está, su número." }],
@@ -280,7 +281,7 @@ const android: KirletPageDecl = {
           { component: "nox.markdown-view", props: { content: EXPLICACION } },
           { component: "nox.link", props: { href: "/internal/herr-telefono", text: "Editar las reglas" }, text: "Editar las reglas" },
           filas.length
-            ? { component: "nox.table", props: { columns: COLUMNAS_LLAMADAS, rows: filas } }
+            ? view_list_de_tabla({ component: "nox.table", props: { columns: COLUMNAS_LLAMADAS, rows: filas } }, { anchor: "herr-telefono-llamadas", search: "Buscar llamada" })
             : { component: "nox.empty", props: { description: "Las llamadas aparecen aquí conforme el teléfono las atiende." }, text: "Sin llamadas todavía" },
         ],
       },

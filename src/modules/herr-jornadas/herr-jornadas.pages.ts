@@ -10,6 +10,7 @@ import { filas_de, numero, texto } from "../../lib/comun.ts";
 import type { Parte } from "../../lib/liquidacion/liquidacion.ts";
 import { ETIQUETA_ESTADO, es_abierto, es_entregado, estado_de, type Estado } from "../../lib/pedidos/estado.ts";
 import { jornada_activa, vista_liquidacion } from "../../lib/reparto/servicios.ts";
+import { view_list_de_tabla } from "../../lib/view-list.ts";
 
 const API = "api://m/subject-herramientas";
 const OWNER = "subject-herramientas";
@@ -91,7 +92,7 @@ async function pagina_jornada(args: KirletPageBuildArgs): Promise<NoxPageDescrip
       ],
     }),
     abiertos.length
-      ? nodo("nox.table", {
+      ? view_list_de_tabla(nodo("nox.table", {
           columns: [
             { key: "domicilio", label: "Domicilio" },
             { key: "orden", label: "Orden" },
@@ -104,7 +105,7 @@ async function pagina_jornada(args: KirletPageBuildArgs): Promise<NoxPageDescrip
             cobrar: pesos(numero(p.cobrar) ?? 0),
             estado: ETIQUETA_ESTADO[estado_de(p) as Estado] ?? texto(p.estado),
           })),
-        })
+        }), { anchor: "herr-jornada-pedidos-abiertos", search: "Buscar pedido" })
       : nodo("nox.empty", { title: "Sin pedidos abiertos", description: "Los pedidos capturados, surtidos o en ruta aparecen aquí." }),
     nodo("nox.toolbar", {}, [
       ...(abierta
