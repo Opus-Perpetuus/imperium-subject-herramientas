@@ -27,7 +27,12 @@ import {
 export const SUBJECT = define_subject({
   id: "SUBJECT-demo",
   name: "Demo",
-  compat: { nox: ">=0.5.0", kit: "^0.5.0" },
+  compat: { nox: ">=13.83.0", kit: "^13.0.0" },
+  // Núcleo y front mínimos (I+D #432): la autoactualización no aplica esta
+  // versión en un servidor más viejo (needs_core / needs_front). Usar la más
+  // baja que ya corren todos los servidores y subirla solo cuando la app
+  // empiece a depender de algo más nuevo.
+  requires: { core: "13.83.0", front: "13.83.0" },
   modules: [
     define_module({
       resource: "notes",
