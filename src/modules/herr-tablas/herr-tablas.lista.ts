@@ -8,6 +8,9 @@ import {
   type NoxViewListProps,
 } from "@opus-perpetuus/imperium-core-kit";
 import { puede } from "../../lib/comun.ts";
+import { columna_view_list } from "../../lib/view-list.ts";
+
+export { columna_view_list };
 import { spec_de_fila, type CampoSpec, type TablaSpec } from "../../lib/formulas/esquema.ts";
 import { FORMATOS_NUCLEO } from "../../lib/formulas/escaner.ts";
 import { href_registro } from "./herr-tablas.disenador.ts";
@@ -18,33 +21,6 @@ import { columnas_de_registros, filtrar_filas, fila_de_registros, tabla_activa, 
  * (`columnas_de_registros`), con fotos y códigos como celdas compuestas, y la
  * página que pide el navegador (`GET …/vista`), buscada y paginada aquí.
  */
-
-const texto_de = (v: unknown) => (typeof v === "string" ? v : "");
-
-/** Una columna de `nox.table` (con `image_key` / `code_display`) a columna de `nox.view-list`. */
-export function columna_view_list(col: Record<string, unknown>): NoxViewListColumn {
-  const key = texto_de(col.key);
-  const label = texto_de(col.label) || key;
-  if (col.image_key) {
-    return { key, label, cells: [{ kind: "image", key: texto_de(col.image_key), full_key: texto_de(col.image_full_key) }] };
-  }
-  if (col.code_display) {
-    return {
-      key,
-      label,
-      cells: [
-        {
-          kind: "code",
-          display: col.code_display === "codigo" ? "codigo" : "ambos",
-          meta_key: texto_de(col.code_meta_key),
-          values_key: texto_de(col.code_values_key),
-          ...(col.code_format ? { format: texto_de(col.code_format) } : {}),
-        },
-      ],
-    };
-  }
-  return { key, label };
-}
 
 export function columnas_view_list(columnas: CampoSpec[]): NoxViewListColumn[] {
   return columnas_de_registros(columnas).map(columna_view_list);

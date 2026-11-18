@@ -6,6 +6,7 @@ import {
 } from "@opus-perpetuus/imperium-core-kit";
 import { INTENCIONES } from "../../lib/nlu/intenciones.ts";
 import { texto } from "../../lib/comun.ts";
+import { view_list_de_tabla } from "../../lib/view-list.ts";
 
 const API = "api://m/subject-herramientas";
 const PERMISO = "subject.herramientas.herr-voz.read";
@@ -195,7 +196,7 @@ export function construir_asistente(rows: Array<Record<string, unknown>>): NoxPa
       { component: "nox.button", text: "Ejecutar" },
     ],
   };
-  const tabla: NoxUiNode = {
+  const respaldo: NoxUiNode = {
     component: "nox.table",
     text: "Sin órdenes todavía",
     props: {
@@ -208,6 +209,8 @@ export function construir_asistente(rows: Array<Record<string, unknown>>): NoxPa
       rows: filas_bitacora(rows),
     },
   };
+  // «Últimas órdenes» con el view-list de Imperium; la tabla queda de respaldo.
+  const tabla = view_list_de_tabla(respaldo, { anchor: "herr-asistente-ultimas-ordenes", search: "Buscar orden" });
   return {
     id: "herramientas.herr-asistente",
     owner: "subject-herramientas",

@@ -59,6 +59,7 @@ import {
   type Presentacion,
 } from "./herr-tablas.flow.ts";
 import { boton, con_unidad, nodo, pagina } from "./herr-tablas.nox.ts";
+import { view_list_de_tabla } from "../../lib/view-list.ts";
 
 /**
  * Cierres con nombre: el formulario para cerrar (nombre, fecha y los datos que
@@ -287,7 +288,7 @@ export async function pagina_cierres(data: Datos, spec: TablaSpec, identity: Kir
     return pagina(ID_TABLA, `Cierres · ${spec.name}`, hijos);
   }
   hijos.push(
-    nodo("nox.table", {
+    view_list_de_tabla(nodo("nox.table", {
       columns: [
         { key: "nombre", label: "Cierre" },
         { key: "fecha", label: "Fecha" },
@@ -301,11 +302,12 @@ export async function pagina_cierres(data: Datos, spec: TablaSpec, identity: Kir
           fecha: dia_legible(texto(cab.fecha)),
           filas: String(Number(cab.filas ?? 0)),
           ...Object.fromEntries(spec.resumenes.map((r) => [`r_${r.clave}`, con_unidad(resumenes[r.clave] ?? "", r.unidad) || "—"])),
+          _id: String(cab.id),
           _href: href_cierre(spec.id, String(cab.id)),
         };
       }),
       text: "Sin cierres",
-    }),
+    }), { anchor: "herr-tabla-cierres", search: "Buscar cierre", title_key: "nombre" }),
   );
   if (!operar) return pagina(ID_TABLA, `Cierres · ${spec.name}`, hijos);
   const elegibles = lista.slice(0, MAX_ELEGIBLES);
@@ -387,12 +389,17 @@ export async function pagina_cierre(
       }),
       boton("Todos los cierres", { href: href_cierres(spec.id), icon: "fa-box-archive" }),
     ]),
-    ...registros_paginados(
-      params,
-      filas.length,
-      filtrar_filas(spec, filas, presentacion, texto(params.get("q"))),
-      (visibles, vacio) => tabla_de_registros(columnas_de_lista(spec), visibles, presentacion, undefined, vacio),
-      "Este cierre no tiene registros",
+    // view-list como «Ver tabla»; el buscador + tabla + paginador de antes queda de respaldo.
+    view_list_de_tabla(
+      tabla_de_registros(columnas_de_lista(spec), filas, presentacion, undefined, "Este cierre no tiene registros"),
+      { anchor: "herr-tabla-cierre-registros", search: "Buscar en los registros" },
+      registros_paginados(
+        params,
+        filas.length,
+        filtrar_filas(spec, filas, presentacion, texto(params.get("q"))),
+        (visibles, vacio) => tabla_de_registros(columnas_de_lista(spec), visibles, presentacion, undefined, vacio),
+        "Este cierre no tiene registros",
+      ),
     ),
   );
   if (!puede(identity, "herr-tablas", "update")) return pagina(ID_TABLA, `${nombre} · ${spec.name}`, hijos);
@@ -412,8 +419,8 @@ export async function pagina_cierre(
   return pagina(ID_TABLA, `${nombre} · ${spec.name}`, hijos);
 }
 
-function tabla_comparada(periodos: Periodo[], filas: FilaComparada[], titulo_dato: string, vacio: string): NoxUiNode {
-  return nodo("nox.table", {
+function tabla_comparada(periodos: Periodo[], filas: FilaComparada[], titulo_dato: string, vacio: string, anchor: string): NoxUiNode {
+  return view_list_de_tabla(nodo("nox.table", {
     columns: [
       { key: "dato", label: titulo_dato },
       ...periodos.map((p, i) => ({ key: `p${i}`, label: p.titulo })),
@@ -425,7 +432,7 @@ function tabla_comparada(periodos: Periodo[], filas: FilaComparada[], titulo_dat
       diferencia: f.diferencia,
     })),
     text: vacio,
-  });
+  }), { anchor, search: false });
 }
 
 export async function pagina_comparar(data: Datos, spec: TablaSpec, params: URLSearchParams): Promise<NoxPageDescriptor> {
@@ -490,13 +497,13 @@ export async function pagina_comparar(data: Datos, spec: TablaSpec, params: URLS
 
   hijos.push(
     nodo("nox.markdown-view", { content: `### Totales\n«Diferencia» es ${periodos.at(-1)!.titulo} menos ${periodos[0]!.titulo}.` }),
-    tabla_comparada(periodos, comparar_totales(spec, periodos), "Dato", "Sin datos"),
+    tabla_comparada(periodos, comparar_totales(spec, periodos), "Dato", "Sin datos", "herr-tabla-comparar-totales"),
   );
   if (agrupar) {
     const que = medir ? `suma de «${medir.etiqueta}»` : "registros";
     hijos.push(
       nodo("nox.markdown-view", { content: `### Por ${agrupar.etiqueta}\nEn cada uno, ${que}.` }),
-      tabla_comparada(periodos, comparar_grupos(spec, periodos, medir), agrupar.etiqueta, "Sin registros"),
+      tabla_comparada(periodos, comparar_grupos(spec, periodos, medir), agrupar.etiqueta, "Sin registros", "herr-tabla-comparar-grupos"),
     );
   }
   if (agrupables.length) {

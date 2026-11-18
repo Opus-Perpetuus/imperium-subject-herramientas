@@ -7,6 +7,7 @@ import {
 import { numero, sello_ahora, solo_dia, texto } from "../../lib/comun.ts";
 import { ADELANTOS, fecha_valida, hoy_en_zona, ordenar_eventos, zona_valida } from "../../lib/agenda/recordatorio.ts";
 import { zona_de } from "./herr-agenda.flow.ts";
+import { view_list_de_tabla } from "../../lib/view-list.ts";
 
 const API = "api://m/subject-herramientas";
 const PERMISO = "subject.herramientas.herr-agenda.read";
@@ -145,19 +146,22 @@ const dia: KirletPageDecl = {
             ],
           },
           rows.length
-            ? {
-                component: "nox.table",
-                props: {
-                  columns: [
-                    { key: "titulo", label: "Evento" },
-                    { key: "hora", label: "Hora" },
-                    { key: "duracion", label: "Duración" },
-                    { key: "aviso", label: "Aviso" },
-                    { key: "hecho", label: "Hecho" },
-                  ],
-                  rows,
+            ? view_list_de_tabla(
+                {
+                  component: "nox.table",
+                  props: {
+                    columns: [
+                      { key: "titulo", label: "Evento" },
+                      { key: "hora", label: "Hora" },
+                      { key: "duracion", label: "Duración" },
+                      { key: "aviso", label: "Aviso" },
+                      { key: "hecho", label: "Hecho" },
+                    ],
+                    rows,
+                  },
                 },
-              }
+                { anchor: "herr-agenda-dia-eventos", search: "Buscar evento" },
+              )
             : { component: "nox.empty", props: { description: "Nada agendado para este día." }, text: "Sin eventos" },
         ],
       },

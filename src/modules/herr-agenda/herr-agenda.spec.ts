@@ -192,8 +192,8 @@ describe("páginas", () => {
       "/internal/herr-agenda",
     ]);
     const tabla = doc.page.children[1]!;
-    expect(tabla.component).toBe("nox.table");
-    expect(tabla.props!.rows).toEqual([{ hora: "09:30", titulo: "Junta", duracion: "60 min", aviso: "2026-09-28 09:15", hecho: "No" }]);
+    expect(tabla.component).toBe("nox.view-list");
+    expect(tabla.props!.rows).toEqual([{ _id: "1", hora: "09:30", titulo: "Junta", duracion: "60 min", aviso: "2026-09-28 09:15", hecho: "No" }]);
 
     await evento({ name: "Temprano", fecha: "2026-09-30", inicio_minuto: 10, recordatorio_min: 30 });
     const temprano = await server.fetch(new Request("http://t/pages/herramientas.herr-agenda-dia?fecha=2026-09-30"));
